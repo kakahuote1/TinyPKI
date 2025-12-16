@@ -1,131 +1,52 @@
-# 面向航空系统的轻量化 PKI 体系构建（第一阶段）
+# Lightweight ECQV-SM2 SDK for Aviation Systems
 
-**Aviation Lightweight PKI System**
+A high-performance, autonomous PKI infrastructure library designed for resource-constrained aviation networks (UAV swarms). It implements the **ECQV Implicit Certificate** scheme over **SM2** curves, offering significant bandwidth savings compared to X.509.
 
-## 1. 项目简介
+---
 
-本项目旨在构建一套面向航空系统（如无人机集群）的轻量化、自主可控 PKI 基础设施。针对航空环境资源受限（存储空间小、带宽低）和链路不稳定的特性，本项目摒弃了传统的 X.509 显式证书架构，采用 **ECQV 隐式证书机制** 结合 **国密算法（SM2/SM3）**，实现了证书体积的大幅压缩与高效认证。
+## Key Features
 
-## 2. 核心特性
+* **Implicit Certificates (ECQV)**: eliminates explicit signatures and public keys, reducing certificate size by **~85%**.
+* **National Standard (SM2/SM3)**: fully compliant with Chinese cryptography standards (GM/T).
+* **Point Compression**: optimized storage using 33-byte compressed elliptic curve points.
+* **Embedded Friendly**: 
+    * Zero-dependency CBOR encoding.
+    * Endian-safe hashing for cross-architecture consistency (x86/ARM).
+    * Modular design suitable for RTOS/Bare-metal.
 
-- **自主可控**：底层完全采用国产密码算法 **SM2**（椭圆曲线公钥密码）和 **SM3**（杂凑算法）。
-- **极致轻量**：
-  - 采用 **ECQV (Elliptic Curve Qu-Vanstone)** 隐式证书协议，移除显式公钥与签名。
-  - 集成 **SM2 点压缩技术**，公钥及重构值仅占 **33 字节**。
-  - 使用 **CBOR (Concise Binary Object Representation)** 紧凑二进制编码，替代 ASN.1/DER 编码。
-  - **实验结果**：证书体积约为传统 X.509 证书的 **30%**。
-- **工程健壮性**：
-  - **跨平台兼容**：修复了字节序（Endianness）问题，确保在 x86 服务器与 ARM/MIPS 嵌入式终端间计算一致性。
-  - **零依赖设计**：内置轻量级 CBOR 编解码实现，未引入额外第三方库。
-  - **模块化设计**：核心算法与业务逻辑分离，易于移植至嵌入式 RTOS 或裸机环境。
+## Project Structure
 
-## 3. 项目结构
-
-- **include/**
-  - `sm2_implicit_cert.h` : 核心头文件，定义数据结构、常量与 API。
-- **src/**
-  - `sm2_implicit_cert.c` : 核心实现，包含 ECQV 流程、CBOR 编码及数学运算。
-  - `main.c` : 演示程序，展示证书申请、签发及重构的完整流程。
-  - `test_suite.c` : 测试套件，包含单元测试、安全性测试与性能基准测试。
-- **根目录**
-  - `Makefile` : 跨平台构建脚本 (Windows/Linux)。
-  - `README.md` : 项目说明文档。
-
-## 4. 快速开始
-
-### 4.1 环境依赖
-
-- **编译器**: GCC 或 MinGW-w64
-- **依赖库**: OpenSSL (用于基础大数运算 BN 及 SM2/SM3 原语)
-  - *Windows*: 建议使用预编译 OpenSSL 库或通过 MSYS2 安装。
-  - *Linux*: `sudo apt-get install libssl-dev`
-
-### 4.2 编译项目
-
-在项目根目录下打开终端：
-
-Bash
-
+```bash
+├── include/
+│   └── sm2_implicit_cert.h   # API Contracts & Data Structures
+├── src/
+│   ├── sm2_implicit_cert.c   # Core Logic (ECQV, CBOR, Math)
+│   ├── main.c                # Demo Application
+│   └── test_suite.c          # Unit Tests & Benchmarks
+└── Makefile                  # Build Script
 ```
-# 编译演示程序 (默认目标)
+
+## Quick Start
+
+### Prerequisites
+
+- GCC / MinGW
+- OpenSSL Development Libraries (`libssl-dev`)
+
+### Build & Run
+
+```bash
+# Build the demo
 make
 
-# 或者显式编译
-make all
-```
-
-### 4.3 运行演示
-
-运行 `main` 程序，查看 ECQV 隐式证书的全生命周期演示及压缩率数据：
-
-Bash
-
-```
-# Windows / Linux
+# Run the demo (Certificate Lifecycle)
 make run
 ```
 
-**预期输出示例**：
+### Benchmarks
 
-> [成功] 证书签发完成，耗时: 1.25 ms
->
-> 编码后大小: 121 Bytes
->
-> 相比 X.509 空间节省率: ~88.18%
-
-### 4.4 运行测试
-
-执行单元测试套件，验证安全性（如防篡改检测）和鲁棒性：
-
-Bash
-
-```
-make test
+```bash
+[PERF] Avg Issuance Time: ~1.2 ms
+Certificate Size: < 130 Bytes (vs 1KB X.509)
 ```
 
-### 4.5 清理构建
-
-Bash
-
-```
-# Windows
-make clean
-
-# Linux / Mac
-make clean_linux
-```
-
-## 5. 技术原理（第一阶段）
-
-本项目目前已完成第一阶段核心目标：**轻量化证书裁剪**。
-
-1. **证书申请**：设备生成临时公钥 $R$，发送至 CA。
-2. **隐式签发**：
-   - CA 计算公钥重构数据 $P_{Recon} = R + k \cdot G$。
-   - CA 利用私钥 $d_{CA}$ 生成私钥重构数据 $S$。
-   - 生成的证书仅包含 $P_{Recon}$ 和元数据（ID、有效期等），**不包含**显式签名。
-3. **密钥重构**：
-   - 设备接收证书，利用 $S$ 和临时私钥 $r$ 恢复出完整的设备私钥 $d_{User}$。
-   - $d_{User}$ 的成功恢复即证明了证书的合法性（自认证特性）。
-
-## 6. 性能指标
-
-| **指标项**       | **传统方案 (X.509/RSA)** | **本方案 (ECQV/SM2/CBOR)** | **优势**              |
-| ---------------- | ------------------------ | -------------------------- | --------------------- |
-| **证书编码大小** | ~800 - 1024 Bytes        | **< 130 Bytes**            | **体积减少 85% 以上** |
-| **公钥存储**     | 64 Bytes (非压缩)        | **33 Bytes (压缩)**        | **存储空间减半**      |
-| **解析复杂度**   | 高 (ASN.1 解析器复杂)    | **低 (位操作即可解析)**    | **适合嵌入式环境**    |
-
-## 7. 后续计划
-
-- [x] **第一阶段**: 基于 SM2 的 ECQV 隐式证书生成与验证 (已完成)
-- [ ] **第二阶段**: 证书撤销管理
-  - 引入 **布谷鸟过滤器 ** 实现本地高效查重
-  - 实现增量 CRL 更新机制
-- [ ] **第三阶段**: 统一身份认证
-  - 实现基于预计算池的快速签名
-  - 实现验证端的批量验签 (Batch Verification)
-
-------
-
-Copyright © 2025 Aviation PKI Project. All Rights Reserved.
