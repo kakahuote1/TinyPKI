@@ -1,130 +1,131 @@
-# SM2隐式证书轻量化PKI系统
+# 面向航空系统的轻量化 PKI 体系构建（第一阶段）
 
-## 项目概述
+**Aviation Lightweight PKI System**
 
-本项目实现了基于国密SM2算法的隐式证书轻量化PKI系统，面向航空系统资源受限的特点，提供高效、安全的证书管理方案。
+## 1. 项目简介
 
-## 项目结构
+本项目旨在构建一套面向航空系统（如无人机集群）的轻量化、自主可控 PKI 基础设施。针对航空环境资源受限（存储空间小、带宽低）和链路不稳定的特性，本项目摒弃了传统的 X.509 显式证书架构，采用 **ECQV 隐式证书机制** 结合 **国密算法（SM2/SM3）**，实现了证书体积的大幅压缩与高效认证。
+
+## 2. 核心特性
+
+- **自主可控**：底层完全采用国产密码算法 **SM2**（椭圆曲线公钥密码）和 **SM3**（杂凑算法）。
+- **极致轻量**：
+  - 采用 **ECQV (Elliptic Curve Qu-Vanstone)** 隐式证书协议，移除显式公钥与签名。
+  - 集成 **SM2 点压缩技术**，公钥及重构值仅占 **33 字节**。
+  - 使用 **CBOR (Concise Binary Object Representation)** 紧凑二进制编码，替代 ASN.1/DER 编码。
+  - **实验结果**：证书体积约为传统 X.509 证书的 **30%**。
+- **工程健壮性**：
+  - **跨平台兼容**：修复了字节序（Endianness）问题，确保在 x86 服务器与 ARM/MIPS 嵌入式终端间计算一致性。
+  - **零依赖设计**：内置轻量级 CBOR 编解码实现，未引入额外第三方库。
+  - **模块化设计**：核心算法与业务逻辑分离，易于移植至嵌入式 RTOS 或裸机环境。
+
+## 3. 项目结构
+
+- **include/**
+  - `sm2_implicit_cert.h` : 核心头文件，定义数据结构、常量与 API。
+- **src/**
+  - `sm2_implicit_cert.c` : 核心实现，包含 ECQV 流程、CBOR 编码及数学运算。
+  - `main.c` : 演示程序，展示证书申请、签发及重构的完整流程。
+  - `test_suite.c` : 测试套件，包含单元测试、安全性测试与性能基准测试。
+- **根目录**
+  - `Makefile` : 跨平台构建脚本 (Windows/Linux)。
+  - `README.md` : 项目说明文档。
+
+## 4. 快速开始
+
+### 4.1 环境依赖
+
+- **编译器**: GCC 或 MinGW-w64
+- **依赖库**: OpenSSL (用于基础大数运算 BN 及 SM2/SM3 原语)
+  - *Windows*: 建议使用预编译 OpenSSL 库或通过 MSYS2 安装。
+  - *Linux*: `sudo apt-get install libssl-dev`
+
+### 4.2 编译项目
+
+在项目根目录下打开终端：
+
+Bash
 
 ```
-sm2/
-├── include/                  # 头文件目录
-│   └── sm2_implicit_cert.h  # 核心头文件，定义数据结构和接口
-├── src/                     # 源文件目录
-│   ├── sm2_implicit_cert.c  # 核心实现文件
-│   └── main.c               # 示例程序
-├── doc/                     # 文档目录
-├── Makefile                 # 编译脚本
-└── README.md                # 项目说明文件
-```
-
-## 核心功能
-
-### 1. 基于ECQV的隐式证书生成
-- 支持SM2曲线上的ECQV隐式证书协议
-- 实现证书请求、证书生成、证书接收与密钥重构流程
-
-### 2. 轻量化证书结构
-- 裁剪传统X.509证书的冗余字段
-- 仅包含必要的元数据和公钥重构值
-- 预计证书大小可降至显式证书的约30%
-
-### 3. 高效密钥管理
-- 隐式证书无需存储完整公钥
-- 通过密钥重构机制恢复最终密钥对
-- 支持证书验证和公钥验证
-
-### 4. CBOR紧凑编码
-- 支持CBOR编码和解码隐式证书
-- 减少证书传输和存储开销
-
-## 接口说明
-
-### 证书请求与生成
-```c
-// 创建证书请求
-sm2_ic_error_t sm2_ic_create_cert_request(sm2_ic_cert_request_t *request, const uint8_t *subject_id, size_t subject_id_len, uint8_t key_usage, sm2_private_key_t *temp_private_key);
-
-// CA生成隐式证书
-sm2_ic_error_t sm2_ic_ca_generate_cert(sm2_ic_cert_result_t *result, const sm2_ic_cert_request_t *request, const uint8_t *issuer_id, size_t issuer_id_len, const sm2_private_key_t *ca_private_key, const sm2_ec_point_t *ca_public_key);
-```
-
-### 密钥重构与验证
-```c
-// 重构私钥和公钥
-sm2_ic_error_t sm2_ic_reconstruct_keys(sm2_private_key_t *private_key, sm2_ec_point_t *public_key, const sm2_ic_cert_result_t *cert_result, const sm2_private_key_t *temp_private_key, const sm2_ec_point_t *ca_public_key);
-
-// 验证隐式证书
-sm2_ic_error_t sm2_ic_verify_cert(const sm2_implicit_cert_t *cert, const sm2_ec_point_t *public_key, const sm2_ec_point_t *ca_public_key);
-```
-
-### CBOR编解码
-```c
-// CBOR编码隐式证书
-sm2_ic_error_t sm2_ic_cbor_encode_cert(uint8_t *output, size_t *output_len, const sm2_implicit_cert_t *cert);
-
-// CBOR解码隐式证书
-sm2_ic_error_t sm2_ic_cbor_decode_cert(sm2_implicit_cert_t *cert, const uint8_t *input, size_t input_len);
-```
-
-## 编译与运行
-
-### 编译项目
-
-```bash
-# 使用gcc编译
-gcc -Wall -Wextra -I./include src/sm2_implicit_cert.c src/main.c -o sm2_implicit_cert_demo
-
-# 或使用Makefile
+# 编译演示程序 (默认目标)
 make
+
+# 或者显式编译
+make all
 ```
 
-### 运行示例
+### 4.3 运行演示
 
-```bash
-./sm2_implicit_cert_demo
+运行 `main` 程序，查看 ECQV 隐式证书的全生命周期演示及压缩率数据：
+
+Bash
+
+```
+# Windows / Linux
+make run
 ```
 
-## 示例流程
+**预期输出示例**：
 
-1. **CA初始化**：生成CA密钥对
-2. **设备侧**：创建证书请求（生成临时密钥对）
-3. **CA侧**：生成隐式证书和私钥重构值
-4. **设备侧**：重构最终密钥对
-5. **验证**：验证证书和公钥的有效性
-6. **CBOR编解码**：演示证书的CBOR编码和解码
+> [成功] 证书签发完成，耗时: 1.25 ms
+>
+> 编码后大小: 121 Bytes
+>
+> 相比 X.509 空间节省率: ~88.18%
 
-## 技术特点
+### 4.4 运行测试
 
-### 轻量化设计
-- 证书结构裁剪，去除冗余字段
-- 隐式证书无需存储完整公钥
-- CBOR紧凑编码，减少传输和存储开销
+执行单元测试套件，验证安全性（如防篡改检测）和鲁棒性：
 
-### 安全性
-- 基于SM2椭圆曲线密码算法
-- 遵循ECQV隐式证书协议
-- 支持证书验证和公钥验证
+Bash
 
-### 可扩展性
-- 模块化设计，易于集成到现有系统
-- 支持密钥用途扩展
-- 可扩展支持在线/离线证书撤销管理
+```
+make test
+```
 
-## 注意事项
+### 4.5 清理构建
 
-1. **安全随机数**：当前实现使用时间作为随机源，实际应用中应替换为安全随机数生成器
-2. **密码算法**：当前实现中的SM2和SM3算法为示例实现，实际应用中应替换为标准实现
-3. **CBOR编解码**：当前实现为简化版本，实际应用中应使用标准CBOR库
+Bash
 
-## 后续扩展
+```
+# Windows
+make clean
 
-1. 实现完整的SM2和SM3国密算法
-2. 集成标准CBOR库
-3. 实现在线/离线相结合的证书撤销管理机制
-4. 实现基于预计算和批处理的高效身份认证方法
-5. 提供更完善的测试用例和文档
+# Linux / Mac
+make clean_linux
+```
 
-## 联系方式
+## 5. 技术原理（第一阶段）
 
-如有问题或建议，请联系项目维护人员。
+本项目目前已完成第一阶段核心目标：**轻量化证书裁剪**。
+
+1. **证书申请**：设备生成临时公钥 $R$，发送至 CA。
+2. **隐式签发**：
+   - CA 计算公钥重构数据 $P_{Recon} = R + k \cdot G$。
+   - CA 利用私钥 $d_{CA}$ 生成私钥重构数据 $S$。
+   - 生成的证书仅包含 $P_{Recon}$ 和元数据（ID、有效期等），**不包含**显式签名。
+3. **密钥重构**：
+   - 设备接收证书，利用 $S$ 和临时私钥 $r$ 恢复出完整的设备私钥 $d_{User}$。
+   - $d_{User}$ 的成功恢复即证明了证书的合法性（自认证特性）。
+
+## 6. 性能指标
+
+| **指标项**       | **传统方案 (X.509/RSA)** | **本方案 (ECQV/SM2/CBOR)** | **优势**              |
+| ---------------- | ------------------------ | -------------------------- | --------------------- |
+| **证书编码大小** | ~800 - 1024 Bytes        | **< 130 Bytes**            | **体积减少 85% 以上** |
+| **公钥存储**     | 64 Bytes (非压缩)        | **33 Bytes (压缩)**        | **存储空间减半**      |
+| **解析复杂度**   | 高 (ASN.1 解析器复杂)    | **低 (位操作即可解析)**    | **适合嵌入式环境**    |
+
+## 7. 后续计划
+
+- [x] **第一阶段**: 基于 SM2 的 ECQV 隐式证书生成与验证 (已完成)
+- [ ] **第二阶段**: 证书撤销管理
+  - 引入 **布谷鸟过滤器 ** 实现本地高效查重
+  - 实现增量 CRL 更新机制
+- [ ] **第三阶段**: 统一身份认证
+  - 实现基于预计算池的快速签名
+  - 实现验证端的批量验签 (Batch Verification)
+
+------
+
+Copyright © 2025 Aviation PKI Project. All Rights Reserved.

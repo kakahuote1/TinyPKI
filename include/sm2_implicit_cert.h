@@ -2,7 +2,7 @@
  * @file sm2_implicit_cert.h
  * @brief 面向航空系统的 SM2 轻量化隐式证书核心定义
  * @details 定义了 ECQV 隐式证书的数据结构、错误码及核心算法接口
- * @version 1.0.0
+ * @version 1.1.0 (Optimized)
  */
 
 #ifndef SM2_IMPLICIT_CERT_H
@@ -45,8 +45,8 @@ extern "C" {
 // ==========================================
 
 /**
- * @brief SM2 椭圆曲线点 (公钥/重构值)
- * @note 存储 256 位大整数 X 和 Y 分量
+ * @brief SM2 椭圆曲线点 (用于内存中计算)
+ * @note 存储 256 位大整数 X 和 Y 分量，主要用于运行时计算接口
  */
 typedef struct {
     uint8_t x[SM2_KEY_LEN];
@@ -79,7 +79,10 @@ typedef struct {
     
     uint8_t key_usage;                  ///< 密钥用途位掩码
     
-    sm2_ec_point_t public_recon_key;    ///< 公钥重构值 V (核心字段)
+    /** * @brief 公钥重构值 V (核心字段)
+     * @note [优化] 使用压缩格式 (33字节) 以节省存储空间和传输带宽
+     */
+    uint8_t public_recon_key[SM2_COMPRESSED_KEY_LEN]; 
 } sm2_implicit_cert_t;
 
 /**

@@ -95,9 +95,10 @@ void test_tampered_cert() {
     sm2_ic_error_t ret = sm2_ic_verify_cert(&res.cert, &user_pub, &g_ca_pub);
     TEST_ASSERT(ret != SM2_IC_SUCCESS, "Tampered Cert Should FAIL Verify");
 
-    // 攻击：篡改 V
-    res.cert.serial_number--;
-    res.cert.public_recon_key.x[0] ^= 0xFF;
+    // 攻击：篡改 V (公钥重构值)
+    res.cert.serial_number--; // 恢复序列号
+    // [变动] public_recon_key 现在是 flat 数组，直接修改其中一个字节
+    res.cert.public_recon_key[3] ^= 0xFF; 
     ret = sm2_ic_verify_cert(&res.cert, &user_pub, &g_ca_pub);
     TEST_ASSERT(ret != SM2_IC_SUCCESS, "Tampered V Should FAIL Verify");
 
@@ -110,6 +111,7 @@ void test_cbor_robustness() {
     memset(&cert, 0, sizeof(cert));
     cert.subject_id_len = 5;
     
+    // [变动] 扩大测试缓冲区
     uint8_t buf[1024];
     size_t len = sizeof(buf);
     
@@ -150,7 +152,7 @@ void test_performance() {
 
 int main() {
     printf("========================================\n");
-    printf("   Aviation PKI Test Suite (v1.0)       \n");
+    printf("   Aviation PKI Test Suite (v1.1)       \n");
     printf("========================================\n");
 
     RUN_TEST(test_setup_ca);

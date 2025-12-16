@@ -5,7 +5,7 @@
  */
 
 #include <stdio.h>
-#include <stdlib.h> // [修复1] 添加 stdlib.h 以支持 system()
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include "sm2_implicit_cert.h"
@@ -15,18 +15,17 @@
 // ==========================================
 #define FMT_RESET     "\033[0m"
 #define FMT_BOLD      "\033[1m"
-#define COLOR_ERROR   "\033[31m"      // 红色
-#define COLOR_SUCCESS "\033[32m"      // 绿色 (用于成功提示)
-#define COLOR_GREEN   "\033[32m"      // [修复2] 补充定义 COLOR_GREEN (用于表格)
-#define COLOR_KEY     "\033[33m"      // 黄色
-#define COLOR_TITLE   "\033[36m"      // 青色
-#define COLOR_INFO    "\033[34m"      // 蓝色
+#define COLOR_ERROR   "\033[31m"
+#define COLOR_SUCCESS "\033[32m"
+#define COLOR_GREEN   "\033[32m"
+#define COLOR_KEY     "\033[33m"
+#define COLOR_TITLE   "\033[36m"
+#define COLOR_INFO    "\033[34m"
 
 #define ESTIMATED_X509_SIZE 1024 
 
 static void print_hex_data(const char *label, const uint8_t *data, size_t len) {
-    // 使用 %s 传入颜色，避免宏拼接错误
-    printf("%s  %-24s: %s", COLOR_INFO, label, COLOR_KEY);
+    printf("%s  %-26s: %s", COLOR_INFO, label, COLOR_KEY);
     for (size_t i = 0; i < len; i++) {
         printf("%02X", data[i]);
     }
@@ -108,14 +107,16 @@ int main() {
     
     printf("%s  [成功] 证书签发完成，耗时: %.2f ms%s\n", COLOR_SUCCESS, time_ms, FMT_RESET);
     printf("  证书序列号 (Serial)     : %llu\n", issue_result.cert.serial_number);
-    print_ec_point("  公钥重构值 (V)", &issue_result.cert.public_recon_key);
+    // [变动] 打印压缩后的 V (33字节)
+    print_hex_data("公钥重构值 V (Compressed)", issue_result.cert.public_recon_key, SM2_COMPRESSED_KEY_LEN);
     print_hex_data("私钥重构数据 (S)", issue_result.private_recon_value, 32);
     printf("\n\n");
 
     // Step 3
     printf("%s[Step 3] 编码效率分析 %s\n", COLOR_TITLE, FMT_RESET);
     
-    uint8_t cbor_buf[256];
+    // [变动] 扩大缓冲区
+    uint8_t cbor_buf[1024];
     size_t cbor_len = sizeof(cbor_buf);
 
     ret = sm2_ic_cbor_encode_cert(cbor_buf, &cbor_len, &issue_result.cert);
@@ -133,7 +134,6 @@ int main() {
         printf("  |-----------------------------|----------------------------|\n");
         printf("  | 传统 X.509 证书大小 (估算)  | %4d Bytes                 |\n", ESTIMATED_X509_SIZE);
         printf("  | 本系统内存结构体大小        | %4zu Bytes                 |\n", struct_size);
-        // 使用 COLOR_GREEN 打印
         printf("  | %sECQV 隐式证书编码后大小%s     | %s%4zu Bytes%s                 |\n", 
                COLOR_GREEN, FMT_RESET, COLOR_GREEN, cbor_len, FMT_RESET);
         printf("  |-----------------------------|----------------------------|\n");

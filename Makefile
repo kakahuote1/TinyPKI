@@ -1,6 +1,6 @@
 # =========================================================================
 # 面向航空系统的轻量化 PKI 体系 - 项目构建脚本 (Makefile)
-# 适用环境: Windows (MinGW)
+# 适用环境: Windows (MinGW) / Linux
 # =========================================================================
 
 # -------------------------------------------------------------------------
@@ -40,9 +40,9 @@ TEST_SRC = src/test_suite.c
 TEST_OBJ = src/test_suite.o
 
 # -------------------------------------------------------------------------
-# 4. 伪目标定义 (防止文件名冲突)
+# 4. 伪目标定义
 # -------------------------------------------------------------------------
-.PHONY: all clean run test help
+.PHONY: all clean clean_linux run test help
 
 # -------------------------------------------------------------------------
 # 5. 构建规则
@@ -80,20 +80,26 @@ test: $(TARGET_TEST)
 	@.\$(TARGET_TEST)
 
 # 清理构建产物 (Windows 适配版)
-# 使用 del 命令，并添加错误忽略 (-) 和输出屏蔽 (2>NUL)
 clean:
-	@echo [CLEAN] Cleaning build files...
+	@echo [CLEAN] Cleaning build files (Windows)...
 	-@del /Q /S src\*.o 2>NUL
 	-@del /Q /S *.o 2>NUL
 	-@del /Q /S *.exe 2>NUL
+	@echo [CLEAN] Done.
+
+# 清理构建产物 (Linux/Mac 适配版 - 供跨平台使用)
+clean_linux:
+	@echo [CLEAN] Cleaning build files (Linux)...
+	rm -f src/*.o *.o *.exe $(TARGET_DEMO) $(TARGET_TEST)
 	@echo [CLEAN] Done.
 
 # 显示帮助信息
 help:
 	@echo.
 	@echo Build Options:
-	@echo   mingw32-make all    - Build the main demo program
-	@echo   mingw32-make run    - Build and run the demo
-	@echo   mingw32-make test   - Build and run the test suite
-	@echo   mingw32-make clean  - Clean all build artifacts
+	@echo   make all           - Build the main demo program
+	@echo   make run           - Build and run the demo
+	@echo   make test          - Build and run the test suite
+	@echo   make clean         - Clean artifacts (Windows cmd)
+	@echo   make clean_linux   - Clean artifacts (Linux bash)
 	@echo.

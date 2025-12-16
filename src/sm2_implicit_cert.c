@@ -1,7 +1,7 @@
 /**
  * @file sm2_implicit_cert.c
  * @brief ECQV 隐式证书算法核心实现
- * @details 基于 OpenSSL 实现了 SM2 曲线下的 ECQV 协议，包含点乘、大数运算及 CBOR 编解码。
+ * @details 基于 OpenSSL 实现了 SM2 曲线下的 ECQV 协议，优化了字节序处理和点压缩。
  */
 
 #include "sm2_implicit_cert.h"
@@ -14,19 +14,13 @@
 #include <openssl/obj_mac.h>
 
 // ==========================================
-// 内部静态辅助函数 (不暴露给外部)
+// 内部静态辅助函数
 // ==========================================
 
-/**
- * @brief 二进制转 BIGNUM
- */
 static BIGNUM* utils_bin_to_bn(const uint8_t *buf, size_t len) {
     return BN_bin2bn(buf, len, NULL);
 }
 
-/**
- * @brief BIGNUM 转定长二进制 (左补0)
- */
 static void utils_bn_to_bin(const BIGNUM *bn, uint8_t *buf, size_t len) {
     int num_bytes = BN_num_bytes(bn);
     int offset = len - num_bytes;
@@ -35,41 +29,31 @@ static void utils_bn_to_bin(const BIGNUM *bn, uint8_t *buf, size_t len) {
     BN_bn2bin(bn, buf + offset);
 }
 
-/**
- * @brief 获取 SM2 椭圆曲线群对象
- */
 static EC_GROUP* utils_get_sm2_group() {
     return EC_GROUP_new_by_curve_name(NID_sm2);
 }
 
 /**
  * @brief 内部哈希计算：h = Hash(Cert_Encoding)
- * @note 这里的序列化仅用于哈希计算绑定，非传输格式
+ * @note [修正] 之前直接 memcpy 结构体存在大小端问题。
+ * 现在先调用 CBOR 编码获取标准化的二进制流，再进行哈希，确保跨平台一致性。
  */
 static sm2_ic_error_t utils_calc_cert_hash(const sm2_implicit_cert_t *cert, BIGNUM *h_bn, const BIGNUM *order, BN_CTX *ctx) {
+    (void)ctx; // 避免未使用警告
     uint8_t hash_buf[SM3_DIGEST_LENGTH];
-    uint8_t buffer[1024]; 
-    size_t offset = 0;
     
-    // 简单序列化关键字段以进行哈希绑定
-    buffer[offset++] = cert->type;
-    // 序列号
-    memcpy(buffer + offset, &cert->serial_number, 8); offset += 8;
-    // 主体ID
-    memcpy(buffer + offset, cert->subject_id, cert->subject_id_len); offset += cert->subject_id_len;
-    // 有效期
-    memcpy(buffer + offset, &cert->valid_from, 8); offset += 8;
-    memcpy(buffer + offset, &cert->valid_duration, 8); offset += 8;
-    // 密钥用途
-    buffer[offset++] = cert->key_usage;
-    // 公钥重构值 V
-    memcpy(buffer + offset, cert->public_recon_key.x, 32); offset += 32;
-    memcpy(buffer + offset, cert->public_recon_key.y, 32); offset += 32;
+    // 分配足够大的缓冲区进行临时编码 (预估 1024 字节足够)
+    uint8_t cbor_temp[1024];
+    size_t cbor_len = sizeof(cbor_temp);
     
-    // 计算 SM3
-    if (sm2_ic_sm3_hash(buffer, offset, hash_buf) != SM2_IC_SUCCESS) return SM2_IC_ERR_CRYPTO;
+    // 1. 调用 CBOR 编码获取规范化数据 (Big-Endian)
+    sm2_ic_error_t ret = sm2_ic_cbor_encode_cert(cbor_temp, &cbor_len, cert);
+    if (ret != SM2_IC_SUCCESS) return ret;
     
-    // 转为大数并模 n
+    // 2. 计算 SM3
+    if (sm2_ic_sm3_hash(cbor_temp, cbor_len, hash_buf) != SM2_IC_SUCCESS) return SM2_IC_ERR_CRYPTO;
+    
+    // 3. 转为大数并模 n
     BN_bin2bn(hash_buf, SM3_DIGEST_LENGTH, h_bn);
     if (!BN_nnmod(h_bn, h_bn, order, ctx)) {
         return SM2_IC_ERR_CRYPTO;
@@ -82,6 +66,8 @@ static sm2_ic_error_t utils_calc_cert_hash(const sm2_implicit_cert_t *cert, BIGN
 // ==========================================
 
 sm2_ic_error_t sm2_ic_generate_random(uint8_t *buf, size_t len) {
+    // TODO: 在航空嵌入式设备上，应替换为硬件真随机数生成器 (TRNG) 接口
+    // 例如: HAL_RNG_Generate(&hrng, buf, len);
     if (RAND_bytes(buf, len) != 1) {
         return SM2_IC_ERR_CRYPTO;
     }
@@ -185,7 +171,7 @@ sm2_ic_error_t sm2_ic_create_cert_request(sm2_ic_cert_request_t *request, const 
 }
 
 sm2_ic_error_t sm2_ic_ca_generate_cert(sm2_ic_cert_result_t *result, const sm2_ic_cert_request_t *request, const uint8_t *issuer_id, size_t issuer_id_len, const sm2_private_key_t *ca_private_key, const sm2_ec_point_t *ca_public_key) {
-    (void)ca_public_key; // 避免未使用参数警告
+    (void)ca_public_key;
     if (!result || !request || !ca_private_key) return SM2_IC_ERR_PARAM;
 
     EC_GROUP *group = utils_get_sm2_group();
@@ -208,16 +194,14 @@ sm2_ic_error_t sm2_ic_ca_generate_cert(sm2_ic_cert_result_t *result, const sm2_i
     memcpy(point_buf + 33, request->temp_public_key.y, 32);
     EC_POINT_oct2point(group, X, point_buf, 65, ctx);
 
-    // 1. CA 生成 k
+    // 1. CA 生成 k, 计算 V = X + k*G
     BN_rand_range(k, order);
-
-    // 2. 计算 V = X + k * G
     EC_POINT_mul(group, kG, k, NULL, NULL, ctx); 
     EC_POINT_add(group, V, X, kG, ctx);         
 
-    // 3. 填充证书信息
+    // 2. 填充证书基本信息
     result->cert.type = SM2_CERT_TYPE_IMPLICIT;
-    result->cert.serial_number = (uint64_t)time(NULL); // 生产环境应使用序列号生成器
+    result->cert.serial_number = (uint64_t)time(NULL); 
     
     memcpy(result->cert.subject_id, request->subject_id, request->subject_id_len);
     result->cert.subject_id_len = request->subject_id_len;
@@ -226,15 +210,17 @@ sm2_ic_error_t sm2_ic_ca_generate_cert(sm2_ic_cert_result_t *result, const sm2_i
     result->cert.issuer_id_len = issuer_id_len;
     
     result->cert.valid_from = (uint64_t)time(NULL);
-    result->cert.valid_duration = 365 * 24 * 3600; // 默认一年
+    result->cert.valid_duration = 365 * 24 * 3600; 
     result->cert.key_usage = request->key_usage;
 
-    // 导出 V
-    EC_POINT_point2oct(group, V, POINT_CONVERSION_UNCOMPRESSED, point_buf, 65, ctx);
-    memcpy(result->cert.public_recon_key.x, point_buf + 1, 32);
-    memcpy(result->cert.public_recon_key.y, point_buf + 33, 32);
+    // 3. [优化] 导出 V 为压缩格式 (33字节)
+    // POINT_CONVERSION_COMPRESSED: 02/03 + X
+    size_t len = EC_POINT_point2oct(group, V, POINT_CONVERSION_COMPRESSED, result->cert.public_recon_key, SM2_COMPRESSED_KEY_LEN, ctx);
+    if (len != SM2_COMPRESSED_KEY_LEN) {
+        goto clean_up;
+    }
 
-    // 4. 计算 h = SM3(Cert)
+    // 4. 计算 h = SM3(Cert) - 内部会自动调用 CBOR 编码
     sm2_ic_error_t hash_ret = utils_calc_cert_hash(&result->cert, h, order, ctx);
     if (hash_ret != SM2_IC_SUCCESS) {
         goto clean_up;
@@ -244,7 +230,6 @@ sm2_ic_error_t sm2_ic_ca_generate_cert(sm2_ic_cert_result_t *result, const sm2_i
     BN_mod_mul(tmp, h, k, order, ctx);      
     BN_mod_add(s, tmp, d_ca, order, ctx);   
 
-    // 导出 S
     utils_bn_to_bin(s, result->private_recon_value, 32);
     hash_ret = SM2_IC_SUCCESS;
 
@@ -269,7 +254,7 @@ sm2_ic_error_t sm2_ic_reconstruct_keys(sm2_private_key_t *private_key, sm2_ec_po
     BIGNUM *tmp = BN_new();
     EC_POINT *Q = EC_POINT_new(group);
     
-    // 1. 计算 h = SM3(Cert)
+    // 1. 计算 h (基于 CBOR 编码)
     if (utils_calc_cert_hash(&cert_result->cert, h, order, ctx) != SM2_IC_SUCCESS) {
         EC_GROUP_free(group); BN_CTX_free(ctx); BN_free(x); BN_free(s);
         BN_free(h); BN_free(d_u); BN_free(tmp); EC_POINT_free(Q);
@@ -280,13 +265,11 @@ sm2_ic_error_t sm2_ic_reconstruct_keys(sm2_private_key_t *private_key, sm2_ec_po
     BN_mod_mul(tmp, h, x, order, ctx);    
     BN_mod_add(d_u, tmp, s, order, ctx);  
     
-    // 导出最终私钥
     utils_bn_to_bin(d_u, private_key->d, 32);
 
     // 3. 计算最终公钥 Q_U = d_U * G
     EC_POINT_mul(group, Q, d_u, NULL, NULL, ctx);
     
-    // 导出最终公钥
     uint8_t point_buf[65];
     EC_POINT_point2oct(group, Q, POINT_CONVERSION_UNCOMPRESSED, point_buf, 65, ctx);
     memcpy(public_key->x, point_buf + 1, 32);
@@ -320,10 +303,15 @@ sm2_ic_error_t sm2_ic_verify_cert(const sm2_implicit_cert_t *cert, const sm2_ec_
     memcpy(buf+1, ca_public_key->x, 32); memcpy(buf+33, ca_public_key->y, 32);
     EC_POINT_oct2point(group, P_CA, buf, 65, ctx);
     
-    memcpy(buf+1, cert->public_recon_key.x, 32); memcpy(buf+33, cert->public_recon_key.y, 32);
-    EC_POINT_oct2point(group, V, buf, 65, ctx);
+    // [优化] 从压缩格式恢复点 V
+    if (!EC_POINT_oct2point(group, V, cert->public_recon_key, SM2_COMPRESSED_KEY_LEN, ctx)) {
+        EC_GROUP_free(group); BN_CTX_free(ctx); BN_free(h);
+        EC_POINT_free(Q_U); EC_POINT_free(P_CA); EC_POINT_free(V); 
+        EC_POINT_free(Calc_Q); EC_POINT_free(hV);
+        return SM2_IC_ERR_PARAM; 
+    }
 
-    // 1. 计算 h = SM3(Cert)
+    // 1. 计算 h (基于 CBOR 编码)
     if (utils_calc_cert_hash(cert, h, order, ctx) != SM2_IC_SUCCESS) {
         EC_GROUP_free(group); BN_CTX_free(ctx); BN_free(h);
         EC_POINT_free(Q_U); EC_POINT_free(P_CA); EC_POINT_free(V); 
@@ -422,33 +410,38 @@ static sm2_ic_error_t utils_cbor_read_head(const uint8_t *buf, size_t len, size_
 sm2_ic_error_t sm2_ic_cbor_encode_cert(uint8_t *output, size_t *output_len, const sm2_implicit_cert_t *cert) {
     if (!output || !output_len || !cert) return SM2_IC_ERR_PARAM;
     
-    size_t offset = 0;
-    if (*output_len < 256) return SM2_IC_ERR_MEMORY; 
+    // [健壮性] 确保缓冲区有最小空间 (假设至少 128 字节)
+    if (*output_len < 128) return SM2_IC_ERR_MEMORY; 
 
+    size_t offset = 0;
+    
     // CBOR 数组头：8个元素
     utils_cbor_write_head(output, &offset, 4, 8);
-
-    // 1. Type (Int)
+    // 1. Type
     utils_cbor_write_head(output, &offset, 0, cert->type);
-    // 2. Serial (Int)
+    // 2. Serial
     utils_cbor_write_head(output, &offset, 0, cert->serial_number);
-    // 3. SubjectID (Bytes)
+    // 3. SubjectID
     utils_cbor_write_head(output, &offset, 2, cert->subject_id_len);
     memcpy(output + offset, cert->subject_id, cert->subject_id_len); offset += cert->subject_id_len;
-    // 4. IssuerID (Bytes)
+    // 4. IssuerID
     utils_cbor_write_head(output, &offset, 2, cert->issuer_id_len);
     memcpy(output + offset, cert->issuer_id, cert->issuer_id_len); offset += cert->issuer_id_len;
-    // 5. ValidFrom (Int)
+    // 5. ValidFrom
     utils_cbor_write_head(output, &offset, 0, cert->valid_from);
-    // 6. Duration (Int)
+    // 6. Duration
     utils_cbor_write_head(output, &offset, 0, cert->valid_duration);
-    // 7. KeyUsage (Int)
+    // 7. KeyUsage
     utils_cbor_write_head(output, &offset, 0, cert->key_usage);
-    // 8. PublicReconKey V (Bytes, 64 bytes)
-    utils_cbor_write_head(output, &offset, 2, 64);
-    memcpy(output + offset, cert->public_recon_key.x, 32);
-    memcpy(output + offset + 32, cert->public_recon_key.y, 32);
-    offset += 64;
+    
+    // 8. PublicReconKey V
+    // [优化] 现在写入的是压缩后的 33 字节
+    utils_cbor_write_head(output, &offset, 2, SM2_COMPRESSED_KEY_LEN);
+    memcpy(output + offset, cert->public_recon_key, SM2_COMPRESSED_KEY_LEN);
+    offset += SM2_COMPRESSED_KEY_LEN;
+
+    // 边界检查
+    if (offset > *output_len) return SM2_IC_ERR_MEMORY;
 
     *output_len = offset;
     return SM2_IC_SUCCESS;
@@ -486,12 +479,13 @@ sm2_ic_error_t sm2_ic_cbor_decode_cert(sm2_implicit_cert_t *cert, const uint8_t 
     // 7. KeyUsage
     if (utils_cbor_read_head(input, input_len, &offset, 0, &val) != SM2_IC_SUCCESS) return SM2_IC_ERR_CBOR;
     cert->key_usage = (uint8_t)val;
-    // 8. V
-    if (utils_cbor_read_head(input, input_len, &offset, 2, &val) != SM2_IC_SUCCESS || val != 64) return SM2_IC_ERR_CBOR;
-    if (offset + 64 > input_len) return SM2_IC_ERR_CBOR;
-    memcpy(cert->public_recon_key.x, input + offset, 32);
-    memcpy(cert->public_recon_key.y, input + offset + 32, 32);
-    offset += 64;
+    
+    // 8. V (Compressed)
+    // [优化] 期望读取 33 字节
+    if (utils_cbor_read_head(input, input_len, &offset, 2, &val) != SM2_IC_SUCCESS || val != SM2_COMPRESSED_KEY_LEN) return SM2_IC_ERR_CBOR;
+    if (offset + SM2_COMPRESSED_KEY_LEN > input_len) return SM2_IC_ERR_CBOR;
+    memcpy(cert->public_recon_key, input + offset, SM2_COMPRESSED_KEY_LEN);
+    offset += SM2_COMPRESSED_KEY_LEN;
 
     return SM2_IC_SUCCESS;
 }
