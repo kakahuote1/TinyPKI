@@ -658,8 +658,7 @@ sm2_ic_error_t multiproof_reserve_unique_hashes(
         return SM2_IC_ERR_MEMORY;
 
     uint8_t (*new_mem)[SM2_REV_MERKLE_HASH_LEN]
-        = (uint8_t (*)[SM2_REV_MERKLE_HASH_LEN])calloc(
-            new_capacity, SM2_REV_MERKLE_HASH_LEN);
+        = calloc(new_capacity, sizeof(*new_mem));
     if (!new_mem)
         return SM2_IC_ERR_MEMORY;
 
@@ -988,8 +987,7 @@ sm2_ic_error_t sm2_revocation_merkle_cbor_decode_multiproof(
     if (hash_count > SIZE_MAX / SM2_REV_MERKLE_HASH_LEN)
         return SM2_IC_ERR_CBOR;
 
-    proof->unique_hashes = (uint8_t (*)[SM2_REV_MERKLE_HASH_LEN])calloc(
-        hash_count, SM2_REV_MERKLE_HASH_LEN);
+    proof->unique_hashes = calloc(hash_count, sizeof(*proof->unique_hashes));
     if (!proof->unique_hashes)
     {
         sm2_revocation_merkle_multiproof_cleanup(proof);
@@ -1429,8 +1427,8 @@ sm2_ic_error_t sm2_revocation_merkle_cbor_decode_epoch_directory(
     }
 
     directory->cached_hash_count = total_hashes;
-    directory->cached_hashes = (uint8_t (*)[SM2_REV_MERKLE_HASH_LEN])calloc(
-        total_hashes, SM2_REV_MERKLE_HASH_LEN);
+    directory->cached_hashes
+        = calloc(total_hashes, sizeof(*directory->cached_hashes));
     if (!directory->cached_hashes)
     {
         ret = SM2_IC_ERR_MEMORY;

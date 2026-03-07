@@ -1,1 +1,0 @@
- libsm2ecqv.a "D:/MinGW-W64/ucrt64/lib/libssl.dll.a" "D:/MinGW-W64/ucrt64/lib/libcrypto.dll.a" -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32 

@@ -1,4 +1,4 @@
-﻿# AeroPKI-Lite
+﻿# TinyPKI
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Language](https://img.shields.io/badge/Language-C11-orange.svg)]()
@@ -6,10 +6,10 @@
 [![Build](https://img.shields.io/badge/Build-CMake-brightgreen.svg)]()
 
 <p align="center">
-  <img src="https://img.shields.io/badge/AeroPKI-Lite-black?style=for-the-badge&logo=c&logoColor=white" alt="AeroPKI-Lite Logo">
+  <img src="https://img.shields.io/badge/TinyPKI-black?style=for-the-badge&logo=c&logoColor=white" alt="TinyPKI Logo">
   <br>
   <span style="font-size:16px">
-    <b>AeroPKI-Lite</b> 是一个纯 C11 实现的极轻量级、高安全的公钥基础设施（PKI）原型系统。基于 OpenSSL 3.0 EVP 接口与完整的国密算法套件（SM2/SM3/SM4），专为<b>航空（无人机自组网）</b>与<b>极度资源受限的物联网 (IoT)</b> 场景设计。
+    <b>TinyPKI</b> 是一个纯 C11 实现的极轻量级、高安全的公钥基础设施（PKI）原型系统。基于 OpenSSL 3.0 EVP 接口与完整的国密算法套件（SM2/SM3/SM4），专为<b>极度资源受限的物联网 (IoT)</b> 场景设计。
   </span>
 </p>
 
@@ -17,7 +17,7 @@
 
 ## 🌟 核心理念与亮点
 
-传统 X.509 PKI 体系在由于证书体积庞大、撤销列表查询开销高，往往难以在嵌入式系统或窄带无线电环境中落地。AeroPKI-Lite 通过以下两大核心技术彻底重构了设备认证链路：
+传统 X.509 PKI 体系在由于证书体积庞大、撤销列表查询开销高，往往难以在嵌入式系统或窄带无线电环境中落地。TinyPKI 通过以下两大核心技术彻底重构了设备认证链路：
 
 **1. 极轻量隐式证书 (ECQV)**
 - 摒弃了传统的 X.509 DER 编码，采用 Elliptic Curve Qu-Vanstone (ECQV) 隐式证书模型。
@@ -34,7 +34,7 @@
 整个库采用严格的模块化 C11 开发，零第三方逻辑混入，内存安全与生命周期边界清晰：
 
 ```text
-AeroPKI-Lite/
+TinyPKI/
 ├── include/                   # 核心公开 API 头文件
 │   └── sm2ecqv/               # 对外暴露的业务逻辑接口
 ├── src/
@@ -47,7 +47,7 @@ AeroPKI-Lite/
 │   │   └── revoke.c           # 高吞吐 P2P 信任评估矩阵、路由调配与共识
 │   ├── auth/                  # 证书认证、预计算并发验证、SM4 AEAD 会话协商
 │   ├── pki/                   # CA 签发服务端逻辑与终端 Client 状态机
-│   └── app/                   # 使用 AeroPKI-Lite 库编写的演示入口
+│   └── app/                   # 使用 TinyPKI 库编写的演示入口
 ├── tests/                     # 覆盖超过 75+ 用例的全量 CTest 套件 (含负面/边界测试)
 ├── CMakeLists.txt             # 现代 CMake 跨平台构建脚本
 └── Makefile                   # 通用快捷构建包装
@@ -138,7 +138,7 @@ cmake --build build_local --target sm2_test_merkle_flow -j 1
 ```
 
 ## English Summary
-AeroPKI-Lite is a C11 lightweight PKI prototype based on OpenSSL EVP.
+TinyPKI is a C11 lightweight PKI prototype based on OpenSSL EVP.
 
 Current revocation path is Merkle-only, featuring:
 - verifiable membership/non-membership proofs,

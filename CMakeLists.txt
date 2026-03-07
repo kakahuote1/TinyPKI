@@ -1,6 +1,6 @@
 ﻿cmake_minimum_required(VERSION 3.14)
 
-project(sm2-ecqv-pki VERSION 0.5.0 LANGUAGES C)
+project(TinyPKI VERSION 1.0.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)

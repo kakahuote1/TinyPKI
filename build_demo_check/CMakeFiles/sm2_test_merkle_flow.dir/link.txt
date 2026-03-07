@@ -1,3 +1,0 @@
-"C:\Program Files\CMake\bin\cmake.exe" -E rm -f CMakeFiles\sm2_test_merkle_flow.dir/objects.a
-D:\MinGW-W64\ucrt64\bin\ar.exe qc CMakeFiles\sm2_test_merkle_flow.dir/objects.a @CMakeFiles\sm2_test_merkle_flow.dir\objects1.rsp
-D:\MinGW-W64\ucrt64\bin\gcc.exe -O3 -DNDEBUG -Wl,--whole-archive CMakeFiles\sm2_test_merkle_flow.dir/objects.a -Wl,--no-whole-archive -o sm2_test_merkle_flow.exe -Wl,--out-implib,libsm2_test_merkle_flow.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles\sm2_test_merkle_flow.dir\linkLibs.rsp

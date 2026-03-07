@@ -81,7 +81,7 @@ CMAKE_FIND_PACKAGE_REDIRECTS_DIR:STATIC=D:/cursor/workplace/AeroPKI-Lite/build_l
 CMAKE_GNUtoMS:BOOL=OFF
 
 //Install path prefix, prepended onto install directories.
-CMAKE_INSTALL_PREFIX:PATH=C:/Program Files (x86)/sm2-ecqv-pki
+CMAKE_INSTALL_PREFIX:PATH=C:/Program Files (x86)/TinyPKI
 
 //Path to a program.
 CMAKE_LINKER:FILEPATH=D:/MinGW-W64/ucrt64/bin/ld.exe
@@ -128,19 +128,19 @@ CMAKE_PROJECT_DESCRIPTION:STATIC=
 CMAKE_PROJECT_HOMEPAGE_URL:STATIC=
 
 //Value Computed by CMake
-CMAKE_PROJECT_NAME:STATIC=sm2-ecqv-pki
+CMAKE_PROJECT_NAME:STATIC=TinyPKI
 
 //Value Computed by CMake
 CMAKE_PROJECT_SPDX_LICENSE:STATIC=
 
 //Value Computed by CMake
-CMAKE_PROJECT_VERSION:STATIC=0.5.0
+CMAKE_PROJECT_VERSION:STATIC=1.0.0
 
 //Value Computed by CMake
-CMAKE_PROJECT_VERSION_MAJOR:STATIC=0
+CMAKE_PROJECT_VERSION_MAJOR:STATIC=1
 
 //Value Computed by CMake
-CMAKE_PROJECT_VERSION_MINOR:STATIC=5
+CMAKE_PROJECT_VERSION_MINOR:STATIC=0
 
 //Value Computed by CMake
 CMAKE_PROJECT_VERSION_PATCH:STATIC=0
@@ -241,13 +241,13 @@ OPENSSL_INCLUDE_DIR:PATH=OPENSSL_INCLUDE_DIR-NOTFOUND
 SSL_EAY:FILEPATH=SSL_EAY-NOTFOUND
 
 //Value Computed by CMake
-sm2-ecqv-pki_BINARY_DIR:STATIC=D:/cursor/workplace/AeroPKI-Lite/build_local
+TinyPKI_BINARY_DIR:STATIC=D:/cursor/workplace/AeroPKI-Lite/build_local
 
 //Value Computed by CMake
-sm2-ecqv-pki_IS_TOP_LEVEL:STATIC=ON
+TinyPKI_IS_TOP_LEVEL:STATIC=ON
 
 //Value Computed by CMake
-sm2-ecqv-pki_SOURCE_DIR:STATIC=D:/cursor/workplace/AeroPKI-Lite
+TinyPKI_SOURCE_DIR:STATIC=D:/cursor/workplace/AeroPKI-Lite
 
 
 ########################

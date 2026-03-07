@@ -205,8 +205,8 @@ sm2_ic_error_t merkle_epoch_directory_clone(
         if (src->cached_hash_count > SIZE_MAX / SM2_REV_MERKLE_HASH_LEN)
             return SM2_IC_ERR_MEMORY;
 
-        tmp.cached_hashes = (uint8_t (*)[SM2_REV_MERKLE_HASH_LEN])calloc(
-            src->cached_hash_count, SM2_REV_MERKLE_HASH_LEN);
+        tmp.cached_hashes
+            = calloc(src->cached_hash_count, sizeof(*tmp.cached_hashes));
         if (!tmp.cached_hashes)
             return SM2_IC_ERR_MEMORY;
 
@@ -309,8 +309,8 @@ sm2_ic_error_t sm2_revocation_merkle_build_epoch_directory(
             return SM2_IC_ERR_MEMORY;
         }
 
-        directory->cached_hashes = (uint8_t (*)[SM2_REV_MERKLE_HASH_LEN])calloc(
-            total_hashes, SM2_REV_MERKLE_HASH_LEN);
+        directory->cached_hashes
+            = calloc(total_hashes, sizeof(*directory->cached_hashes));
         if (!directory->cached_hashes)
         {
             sm2_revocation_merkle_epoch_directory_cleanup(directory);

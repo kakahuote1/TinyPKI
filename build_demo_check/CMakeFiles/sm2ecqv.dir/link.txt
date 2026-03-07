@@ -1,2 +1,0 @@
-D:\MinGW-W64\ucrt64\bin\ar.exe qc libsm2ecqv.a CMakeFiles/sm2ecqv.dir/src/ecqv/ecqv.c.obj CMakeFiles/sm2ecqv.dir/src/revoke/revoke.c.obj CMakeFiles/sm2ecqv.dir/src/revoke/merkle.c.obj CMakeFiles/sm2ecqv.dir/src/revoke/merkle_cbor.c.obj CMakeFiles/sm2ecqv.dir/src/revoke/merkle_epoch.c.obj CMakeFiles/sm2ecqv.dir/src/revoke/merkle_k_anon.c.obj CMakeFiles/sm2ecqv.dir/src/auth/auth.c.obj CMakeFiles/sm2ecqv.dir/src/pki/crypto.c.obj CMakeFiles/sm2ecqv.dir/src/pki/service.c.obj CMakeFiles/sm2ecqv.dir/src/pki/client.c.obj
-D:\MinGW-W64\ucrt64\bin\ranlib.exe libsm2ecqv.a
