@@ -21,3 +21,8 @@ internal_doc/
 *.ilk
 *.stackdump
 *.core
+build_local*/
+build_*check/
+build_demo_check/
+build_log.txt
+test_log.txt

@@ -656,9 +656,7 @@ sm2_ic_error_t multiproof_reserve_unique_hashes(
 
     if (new_capacity > (SIZE_MAX / SM2_REV_MERKLE_HASH_LEN))
         return SM2_IC_ERR_MEMORY;
-
-    uint8_t (*new_mem)[SM2_REV_MERKLE_HASH_LEN]
-        = calloc(new_capacity, sizeof(*new_mem));
+    void *new_mem = calloc(new_capacity, sizeof(*proof->unique_hashes));
     if (!new_mem)
         return SM2_IC_ERR_MEMORY;
 
