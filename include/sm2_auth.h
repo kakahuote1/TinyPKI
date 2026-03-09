@@ -98,8 +98,6 @@ extern "C"
         bool allow_local_revocation_state;
     } sm2_auth_request_t;
 
-#define SM2_AUTH_REQUEST_INIT { 0 }
-
     typedef struct
     {
         const sm2_ec_point_t *public_key;
