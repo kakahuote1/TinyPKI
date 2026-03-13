@@ -267,11 +267,17 @@ void sm2_rev_internal_snapshot_restore(
 
 sm2_ic_error_t sm2_rev_internal_prepare_root_publication(
     const sm2_rev_ctx_t *ctx, uint64_t now_ts, sm2_rev_sync_sign_fn sign_fn,
-    void *sign_user_ctx, sm2_rev_tree_t **tree,
-    sm2_rev_root_record_t *root_record, uint64_t *root_valid_until)
+    void *sign_user_ctx, const uint8_t *authority_id, size_t authority_id_len,
+    sm2_rev_tree_t **tree, sm2_rev_root_record_t *root_record,
+    uint64_t *root_valid_until)
 {
     if (!ctx || !tree || !root_record || !sign_fn || !root_valid_until)
         return SM2_IC_ERR_PARAM;
+    if ((!authority_id && authority_id_len > 0)
+        || authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
+    {
+        return SM2_IC_ERR_PARAM;
+    }
 
     *tree = NULL;
     *root_valid_until = 0;
@@ -293,8 +299,9 @@ sm2_ic_error_t sm2_rev_internal_prepare_root_publication(
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    ret = sm2_rev_root_sign(
-        *tree, valid_from, valid_until, sign_fn, sign_user_ctx, root_record);
+    ret = sm2_rev_root_sign_with_authority(*tree, authority_id,
+        authority_id_len, valid_from, valid_until, sign_fn, sign_user_ctx,
+        root_record);
     if (ret != SM2_IC_SUCCESS)
     {
         sm2_rev_tree_cleanup(tree);

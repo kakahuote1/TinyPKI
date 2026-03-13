@@ -73,14 +73,20 @@ sm2_ic_error_t merkle_epoch_serialize_for_auth(
 
     if (!directory || !output || !output_len)
         return SM2_IC_ERR_PARAM;
+    if (directory->root_record.authority_id_len
+        > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
+    {
+        return SM2_IC_ERR_PARAM;
+    }
 
     sm2_ic_error_t ret = merkle_calc_patch_digest(
         directory->patch_items, directory->patch_item_count, patch_digest);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    size_t need = (sizeof(tag) - 1U) + 8U + 8U + SM2_REV_MERKLE_HASH_LEN + 8U
-        + 8U + 8U + 8U + 8U + SM2_REV_MERKLE_HASH_LEN;
+    size_t need = (sizeof(tag) - 1U) + 8U + SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN
+        + 8U + 8U + SM2_REV_MERKLE_HASH_LEN + 8U + 8U + 8U + 8U + 8U
+        + SM2_REV_MERKLE_HASH_LEN;
     if (output_cap < need)
         return SM2_IC_ERR_MEMORY;
 
@@ -90,6 +96,13 @@ sm2_ic_error_t merkle_epoch_serialize_for_auth(
 
     merkle_u64_to_be(directory->epoch_id, output + off);
     off += 8U;
+
+    merkle_u64_to_be(
+        (uint64_t)directory->root_record.authority_id_len, output + off);
+    off += 8U;
+    memcpy(output + off, directory->root_record.authority_id,
+        directory->root_record.authority_id_len);
+    off += directory->root_record.authority_id_len;
 
     merkle_u64_to_be(directory->root_record.root_version, output + off);
     off += 8U;
@@ -257,15 +270,22 @@ sm2_ic_error_t merkle_epoch_directory_clone(
     return SM2_IC_SUCCESS;
 }
 
-sm2_ic_error_t sm2_rev_epoch_dir_build(const sm2_rev_tree_t *tree,
-    uint64_t epoch_id, size_t cache_top_levels, uint64_t valid_from,
-    uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
+sm2_ic_error_t sm2_rev_epoch_dir_build_with_authority(
+    const sm2_rev_tree_t *tree, uint64_t epoch_id,
+    const uint8_t *authority_id, size_t authority_id_len,
+    size_t cache_top_levels, uint64_t valid_from, uint64_t valid_until,
+    sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
     sm2_rev_epoch_dir_t **directory)
 {
     if (!tree || !directory || !sign_fn)
         return SM2_IC_ERR_PARAM;
     if (!tree->node_hashes || tree->level_count == 0)
         return SM2_IC_ERR_PARAM;
+    if ((!authority_id && authority_id_len > 0)
+        || authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
+    {
+        return SM2_IC_ERR_PARAM;
+    }
     if (valid_until < valid_from)
         return SM2_IC_ERR_PARAM;
     if (cache_top_levels == 0
@@ -283,8 +303,9 @@ sm2_ic_error_t sm2_rev_epoch_dir_build(const sm2_rev_tree_t *tree,
     state->epoch_id = epoch_id;
     state->tree_level_count = tree->level_count;
 
-    ret = sm2_rev_root_sign(tree, valid_from, valid_until, sign_fn,
-        sign_user_ctx, &state->root_record);
+    ret = sm2_rev_root_sign_with_authority(tree, authority_id,
+        authority_id_len, valid_from, valid_until, sign_fn, sign_user_ctx,
+        &state->root_record);
     if (ret != SM2_IC_SUCCESS)
     {
         epoch_dir_reset(state);
@@ -376,6 +397,16 @@ sm2_ic_error_t sm2_rev_epoch_dir_build(const sm2_rev_tree_t *tree,
 
     state->directory_signature_len = sig_len;
     return SM2_IC_SUCCESS;
+}
+
+sm2_ic_error_t sm2_rev_epoch_dir_build(const sm2_rev_tree_t *tree,
+    uint64_t epoch_id, size_t cache_top_levels, uint64_t valid_from,
+    uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
+    sm2_rev_epoch_dir_t **directory)
+{
+    return sm2_rev_epoch_dir_build_with_authority(tree, epoch_id, NULL, 0,
+        cache_top_levels, valid_from, valid_until, sign_fn, sign_user_ctx,
+        directory);
 }
 
 sm2_ic_error_t sm2_rev_epoch_dir_verify(const sm2_rev_epoch_dir_t *directory,

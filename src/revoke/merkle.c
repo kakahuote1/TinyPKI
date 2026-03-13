@@ -465,9 +465,12 @@ sm2_ic_error_t merkle_serialize_root_for_auth(
     size_t output_cap, size_t *output_len)
 {
     static const uint8_t tag[] = "SM2REV_MERKLE_ROOT_V1";
-    size_t need = (sizeof(tag) - 1U) + 8U + SM2_REV_MERKLE_HASH_LEN + 8U + 8U;
+    size_t need = (sizeof(tag) - 1U) + 8U + SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN
+        + 8U + SM2_REV_MERKLE_HASH_LEN + 8U + 8U;
 
     if (!root_record || !output || !output_len)
+        return SM2_IC_ERR_PARAM;
+    if (root_record->authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
         return SM2_IC_ERR_PARAM;
     if (output_cap < need)
         return SM2_IC_ERR_MEMORY;
@@ -475,6 +478,11 @@ sm2_ic_error_t merkle_serialize_root_for_auth(
     size_t off = 0;
     memcpy(output + off, tag, sizeof(tag) - 1U);
     off += (sizeof(tag) - 1U);
+
+    merkle_u64_to_be((uint64_t)root_record->authority_id_len, output + off);
+    off += 8U;
+    memcpy(output + off, root_record->authority_id, root_record->authority_id_len);
+    off += root_record->authority_id_len;
 
     merkle_u64_to_be(root_record->root_version, output + off);
     off += 8U;
@@ -492,24 +500,35 @@ sm2_ic_error_t merkle_serialize_root_for_auth(
     return SM2_IC_SUCCESS;
 }
 
-sm2_ic_error_t sm2_rev_root_sign(const sm2_rev_tree_t *tree,
-    uint64_t valid_from, uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn,
-    void *sign_user_ctx, sm2_rev_root_record_t *root_record)
+sm2_ic_error_t sm2_rev_root_sign_with_authority(const sm2_rev_tree_t *tree,
+    const uint8_t *authority_id, size_t authority_id_len, uint64_t valid_from,
+    uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
+    sm2_rev_root_record_t *root_record)
 {
     if (!tree || !root_record || !sign_fn)
         return SM2_IC_ERR_PARAM;
     if (!tree->node_hashes || tree->level_count == 0)
         return SM2_IC_ERR_PARAM;
+    if ((!authority_id && authority_id_len > 0)
+        || authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
+    {
+        return SM2_IC_ERR_PARAM;
+    }
     if (valid_until < valid_from)
         return SM2_IC_ERR_PARAM;
 
     memset(root_record, 0, sizeof(*root_record));
+    if (authority_id_len > 0)
+    {
+        memcpy(root_record->authority_id, authority_id, authority_id_len);
+        root_record->authority_id_len = authority_id_len;
+    }
     root_record->root_version = tree->root_version;
     root_record->valid_from = valid_from;
     root_record->valid_until = valid_until;
     memcpy(root_record->root_hash, tree->root_hash, SM2_REV_MERKLE_HASH_LEN);
 
-    uint8_t auth_buf[128];
+    uint8_t auth_buf[256];
     size_t auth_len = 0;
     sm2_ic_error_t ret = merkle_serialize_root_for_auth(
         root_record, auth_buf, sizeof(auth_buf), &auth_len);
@@ -528,11 +547,21 @@ sm2_ic_error_t sm2_rev_root_sign(const sm2_rev_tree_t *tree,
     return SM2_IC_SUCCESS;
 }
 
+sm2_ic_error_t sm2_rev_root_sign(const sm2_rev_tree_t *tree,
+    uint64_t valid_from, uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn,
+    void *sign_user_ctx, sm2_rev_root_record_t *root_record)
+{
+    return sm2_rev_root_sign_with_authority(tree, NULL, 0, valid_from,
+        valid_until, sign_fn, sign_user_ctx, root_record);
+}
+
 sm2_ic_error_t sm2_rev_root_verify(const sm2_rev_root_record_t *root_record,
     uint64_t now_ts, sm2_rev_sync_verify_fn verify_fn, void *verify_user_ctx)
 {
     if (!root_record || !verify_fn)
         return SM2_IC_ERR_PARAM;
+    if (root_record->authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
+        return SM2_IC_ERR_VERIFY;
     if (root_record->signature_len == 0
         || root_record->signature_len > sizeof(root_record->signature))
     {
@@ -543,7 +572,7 @@ sm2_ic_error_t sm2_rev_root_verify(const sm2_rev_root_record_t *root_record,
     if (now_ts < root_record->valid_from || now_ts > root_record->valid_until)
         return SM2_IC_ERR_VERIFY;
 
-    uint8_t auth_buf[128];
+    uint8_t auth_buf[256];
     size_t auth_len = 0;
     sm2_ic_error_t ret = merkle_serialize_root_for_auth(
         root_record, auth_buf, sizeof(auth_buf), &auth_len);

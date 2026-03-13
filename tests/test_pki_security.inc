@@ -521,3 +521,344 @@ static void test_phase134_pki_verify_rejects_request_level_revocation_override()
     sm2_pki_service_destroy(&service);
     TEST_PASS();
 }
+
+static void test_phase137_client_root_cache_import_refresh_and_rollback()
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P137_ROOT_CA";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 16, 60, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+
+    const uint8_t identity[] = "P137_NODE";
+    TEST_ASSERT(sm2_pki_identity_register(service, identity,
+                    sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Identity Register");
+
+    sm2_ic_cert_request_t req;
+    sm2_private_key_t temp_priv;
+    sm2_ic_cert_result_t cert_res;
+    TEST_ASSERT(
+        pki_create_and_authorize_request(service, identity,
+            sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE, &req, &temp_priv),
+        "Create Request");
+    TEST_ASSERT(
+        test_pki_issue_cert(service, &req, &cert_res) == SM2_PKI_SUCCESS,
+        "Issue Cert");
+
+    sm2_ec_point_t ca_pub;
+    TEST_ASSERT(
+        sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
+        "Get CA Pub");
+
+    sm2_pki_client_ctx_t *client = NULL;
+    TEST_ASSERT(
+        sm2_pki_client_create(&client, &ca_pub, NULL) == SM2_PKI_SUCCESS,
+        "Client Init");
+
+    sm2_rev_root_record_t root_initial;
+    memset(&root_initial, 0, sizeof(root_initial));
+    TEST_ASSERT(sm2_pki_service_get_root_record(service, &root_initial)
+            == SM2_PKI_SUCCESS,
+        "Get Initial Root");
+    TEST_ASSERT(root_initial.authority_id_len == sizeof(issuer) - 1,
+        "Initial Root Authority Len");
+    TEST_ASSERT(memcmp(root_initial.authority_id, issuer, sizeof(issuer) - 1)
+            == 0,
+        "Initial Root Authority Match");
+    sm2_rev_root_record_t root_tampered = root_initial;
+    root_tampered.authority_id[0] ^= 0x01;
+    TEST_ASSERT(sm2_pki_client_import_root_record(
+                    client, &root_tampered, root_initial.valid_from)
+            == SM2_PKI_ERR_VERIFY,
+        "Tampered Authority Reject");
+    TEST_ASSERT(sm2_pki_client_import_root_record(
+                    client, &root_initial, root_initial.valid_from)
+            == SM2_PKI_SUCCESS,
+        "Import Initial Root");
+
+    sm2_rev_root_record_t cached_root;
+    memset(&cached_root, 0, sizeof(cached_root));
+    TEST_ASSERT(sm2_pki_client_get_cached_root_record(client, &cached_root)
+            == SM2_PKI_SUCCESS,
+        "Get Cached Root");
+    TEST_ASSERT(sm2_pki_client_get_cached_root_record_for_authority(client,
+                    issuer, sizeof(issuer) - 1, &cached_root)
+            == SM2_PKI_SUCCESS,
+        "Get Cached Root By Authority");
+    TEST_ASSERT(cached_root.root_version == root_initial.root_version,
+        "Initial Root Version Cached");
+    TEST_ASSERT(memcmp(cached_root.root_hash, root_initial.root_hash,
+                    sizeof(cached_root.root_hash))
+            == 0,
+        "Initial Root Hash Cached");
+
+    TEST_ASSERT(
+        sm2_pki_service_refresh_root(service, base_now + 10) == SM2_PKI_SUCCESS,
+        "Refresh Same Version Root");
+    sm2_rev_root_record_t root_refreshed;
+    memset(&root_refreshed, 0, sizeof(root_refreshed));
+    TEST_ASSERT(sm2_pki_service_get_root_record(service, &root_refreshed)
+            == SM2_PKI_SUCCESS,
+        "Get Refreshed Root");
+    TEST_ASSERT(root_refreshed.root_version == root_initial.root_version,
+        "Same Version Refresh");
+    TEST_ASSERT(root_refreshed.valid_until > root_initial.valid_until,
+        "Refresh Extends Validity");
+    TEST_ASSERT(sm2_pki_client_import_root_record(
+                    client, &root_refreshed, base_now + 10)
+            == SM2_PKI_SUCCESS,
+        "Import Refreshed Root");
+    TEST_ASSERT(sm2_pki_client_get_cached_root_record(client, &cached_root)
+            == SM2_PKI_SUCCESS,
+        "Get Cached Refreshed Root");
+    TEST_ASSERT(cached_root.valid_until == root_refreshed.valid_until,
+        "Cached Validity Extended");
+
+    TEST_ASSERT(sm2_pki_service_revoke(
+                    service, cert_res.cert.serial_number, base_now + 20)
+            == SM2_PKI_SUCCESS,
+        "Revoke Cert");
+    sm2_rev_root_record_t root_newer;
+    memset(&root_newer, 0, sizeof(root_newer));
+    TEST_ASSERT(sm2_pki_service_get_root_record(service, &root_newer)
+            == SM2_PKI_SUCCESS,
+        "Get Newer Root");
+    TEST_ASSERT(root_newer.root_version > root_refreshed.root_version,
+        "Newer Root Version");
+    TEST_ASSERT(sm2_pki_client_import_root_record(
+                    client, &root_newer, base_now + 20)
+            == SM2_PKI_SUCCESS,
+        "Import Newer Root");
+    TEST_ASSERT(sm2_pki_client_import_root_record(
+                    client, &root_initial, base_now + 30)
+            == SM2_PKI_ERR_VERIFY,
+        "Rollback Root Reject");
+
+    sm2_pki_client_destroy(&client);
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
+static void test_phase138_service_binding_tracks_newer_root_versions()
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P138_ROOT_CA";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 32, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+
+    const uint8_t signer_id[] = "P138_SIGNER";
+    const uint8_t aux_id[] = "P138_AUX";
+    TEST_ASSERT(sm2_pki_identity_register(service, signer_id,
+                    sizeof(signer_id) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Signer Register");
+    TEST_ASSERT(sm2_pki_identity_register(service, aux_id,
+                    sizeof(aux_id) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Aux Register");
+
+    sm2_ic_cert_request_t req_signer;
+    sm2_ic_cert_request_t req_aux;
+    sm2_private_key_t temp_signer;
+    sm2_private_key_t temp_aux;
+    sm2_ic_cert_result_t cert_signer;
+    sm2_ic_cert_result_t cert_aux;
+    TEST_ASSERT(pki_create_and_authorize_request(service, signer_id,
+                    sizeof(signer_id) - 1, SM2_KU_DIGITAL_SIGNATURE,
+                    &req_signer, &temp_signer),
+        "Signer Request");
+    TEST_ASSERT(
+        test_pki_issue_cert(service, &req_signer, &cert_signer)
+            == SM2_PKI_SUCCESS,
+        "Signer Issue");
+    TEST_ASSERT(
+        pki_issue_identity_cert(service, aux_id, sizeof(aux_id) - 1,
+            SM2_KU_DIGITAL_SIGNATURE, &cert_aux, &temp_aux),
+        "Aux Issue");
+    uint64_t auth_now = test_cert_now(&cert_signer.cert);
+
+    sm2_ec_point_t ca_pub;
+    TEST_ASSERT(
+        sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
+        "Get CA Pub");
+
+    sm2_pki_client_ctx_t *signer = NULL;
+    TEST_ASSERT(
+        sm2_pki_client_create(&signer, &ca_pub, NULL) == SM2_PKI_SUCCESS,
+        "Signer Init");
+    TEST_ASSERT(
+        sm2_pki_client_import_cert(signer, &cert_signer, &temp_signer, &ca_pub)
+            == SM2_PKI_SUCCESS,
+        "Signer Import");
+
+    const uint8_t msg[] = "P138_TRACK_ROOT";
+    sm2_auth_signature_t sig;
+    TEST_ASSERT(
+        sm2_pki_sign(signer, msg, sizeof(msg) - 1, &sig) == SM2_PKI_SUCCESS,
+        "Signer Sign");
+    const sm2_implicit_cert_t *signer_cert = NULL;
+    const sm2_ec_point_t *signer_pub = NULL;
+    TEST_ASSERT(
+        pki_client_get_identity_material(signer, &signer_cert, &signer_pub),
+        "Get Signer Material");
+
+    sm2_pki_verify_request_t request = { .cert = signer_cert,
+        .public_key = signer_pub,
+        .message = msg,
+        .message_len = sizeof(msg) - 1,
+        .signature = &sig };
+
+    sm2_pki_client_ctx_t *verifier = NULL;
+    TEST_ASSERT(
+        sm2_pki_client_create(&verifier, &ca_pub, service) == SM2_PKI_SUCCESS,
+        "Verifier Init");
+
+    sm2_rev_root_record_t cached_root;
+    memset(&cached_root, 0, sizeof(cached_root));
+    TEST_ASSERT(
+        sm2_pki_client_get_cached_root_record(verifier, &cached_root)
+            == SM2_PKI_ERR_STATE,
+        "No Cached Root Before Refresh");
+    TEST_ASSERT(
+        sm2_pki_client_refresh_root(verifier, auth_now) == SM2_PKI_SUCCESS,
+        "Initial Root Refresh");
+    TEST_ASSERT(sm2_pki_client_get_cached_root_record(verifier, &cached_root)
+            == SM2_PKI_SUCCESS,
+        "Get Refreshed Cached Root");
+    TEST_ASSERT(sm2_pki_client_get_cached_root_record_for_authority(verifier,
+                    issuer, sizeof(issuer) - 1, &cached_root)
+            == SM2_PKI_SUCCESS,
+        "Get Cached Root By Issuer");
+    uint64_t initial_version = cached_root.root_version;
+
+    TEST_ASSERT(sm2_pki_service_revoke(
+                    service, cert_aux.cert.serial_number, auth_now + 10)
+            == SM2_PKI_SUCCESS,
+        "Revoke Aux Cert");
+
+    size_t matched = 0;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now + 20, &matched)
+            == SM2_PKI_SUCCESS,
+        "Verify With Updated Root");
+    TEST_ASSERT(sm2_pki_client_get_cached_root_record(verifier, &cached_root)
+            == SM2_PKI_SUCCESS,
+        "Get Updated Cached Root");
+    TEST_ASSERT(cached_root.root_version > initial_version,
+        "Cached Root Advanced");
+
+    sm2_pki_client_destroy(&verifier);
+    sm2_pki_client_destroy(&signer);
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
+static void test_phase139_root_versions_are_scoped_per_authority()
+{
+    sm2_pki_service_ctx_t *service_a = NULL;
+    sm2_pki_service_ctx_t *service_b = NULL;
+    const uint8_t issuer_a[] = "P139_CA_A";
+    const uint8_t issuer_b[] = "P139_CA_B";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(&service_a, issuer_a,
+                    sizeof(issuer_a) - 1, 16, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service A Init");
+    TEST_ASSERT(sm2_pki_service_create(&service_b, issuer_b,
+                    sizeof(issuer_b) - 1, 16, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service B Init");
+
+    const uint8_t identity_a[] = "P139_NODE_A";
+    TEST_ASSERT(sm2_pki_identity_register(service_a, identity_a,
+                    sizeof(identity_a) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Identity A Register");
+
+    sm2_ic_cert_request_t req_a;
+    sm2_private_key_t temp_a;
+    sm2_ic_cert_result_t cert_a;
+    TEST_ASSERT(pki_create_and_authorize_request(service_a, identity_a,
+                    sizeof(identity_a) - 1, SM2_KU_DIGITAL_SIGNATURE, &req_a,
+                    &temp_a),
+        "Request A");
+    TEST_ASSERT(
+        test_pki_issue_cert(service_a, &req_a, &cert_a) == SM2_PKI_SUCCESS,
+        "Issue A");
+    TEST_ASSERT(sm2_pki_service_revoke(
+                    service_a, cert_a.cert.serial_number, base_now + 10)
+            == SM2_PKI_SUCCESS,
+        "Revoke A");
+
+    sm2_ec_point_t ca_pub_a;
+    sm2_ec_point_t ca_pub_b;
+    TEST_ASSERT(sm2_pki_service_get_ca_public_key(service_a, &ca_pub_a)
+            == SM2_PKI_SUCCESS,
+        "Get CA A");
+    TEST_ASSERT(sm2_pki_service_get_ca_public_key(service_b, &ca_pub_b)
+            == SM2_PKI_SUCCESS,
+        "Get CA B");
+
+    sm2_pki_client_ctx_t *client = NULL;
+    TEST_ASSERT(
+        sm2_pki_client_create(&client, &ca_pub_a, NULL) == SM2_PKI_SUCCESS,
+        "Client Init");
+    TEST_ASSERT(
+        sm2_pki_client_add_trusted_ca(client, &ca_pub_b) == SM2_PKI_SUCCESS,
+        "Add CA B");
+
+    sm2_rev_root_record_t root_a;
+    sm2_rev_root_record_t root_b;
+    memset(&root_a, 0, sizeof(root_a));
+    memset(&root_b, 0, sizeof(root_b));
+    TEST_ASSERT(sm2_pki_service_get_root_record(service_a, &root_a)
+            == SM2_PKI_SUCCESS,
+        "Get Root A");
+    TEST_ASSERT(sm2_pki_service_get_root_record(service_b, &root_b)
+            == SM2_PKI_SUCCESS,
+        "Get Root B");
+    TEST_ASSERT(root_a.root_version > root_b.root_version,
+        "Root A Version Higher");
+
+    TEST_ASSERT(sm2_pki_client_import_root_record(client, &root_a, base_now + 20)
+            == SM2_PKI_SUCCESS,
+        "Import Root A");
+    TEST_ASSERT(sm2_pki_client_import_root_record(client, &root_b, base_now + 20)
+            == SM2_PKI_SUCCESS,
+        "Import Root B With Lower Scoped Version");
+
+    sm2_rev_root_record_t cached_a;
+    sm2_rev_root_record_t cached_b;
+    memset(&cached_a, 0, sizeof(cached_a));
+    memset(&cached_b, 0, sizeof(cached_b));
+    TEST_ASSERT(sm2_pki_client_get_cached_root_record_for_authority(client,
+                    issuer_a, sizeof(issuer_a) - 1, &cached_a)
+            == SM2_PKI_SUCCESS,
+        "Cached A");
+    TEST_ASSERT(sm2_pki_client_get_cached_root_record_for_authority(client,
+                    issuer_b, sizeof(issuer_b) - 1, &cached_b)
+            == SM2_PKI_SUCCESS,
+        "Cached B");
+    TEST_ASSERT(cached_a.root_version == root_a.root_version,
+        "Cached A Version");
+    TEST_ASSERT(cached_b.root_version == root_b.root_version,
+        "Cached B Version");
+
+    TEST_ASSERT(sm2_pki_client_import_root_record(client, &root_b, base_now + 21)
+            == SM2_PKI_SUCCESS,
+        "Reimport Same Root B");
+    TEST_ASSERT(sm2_pki_client_import_root_record(client, &root_a, base_now + 21)
+            == SM2_PKI_SUCCESS,
+        "Reimport Root A");
+
+    sm2_pki_client_destroy(&client);
+    sm2_pki_service_destroy(&service_b);
+    sm2_pki_service_destroy(&service_a);
+    TEST_PASS();
+}
