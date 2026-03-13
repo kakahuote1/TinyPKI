@@ -200,7 +200,8 @@ static sm2_ic_error_t service_publish_revocation_root(
     memset(&new_root_record, 0, sizeof(new_root_record));
 
     sm2_ic_error_t ret = sm2_pki_rev_prepare_root_publication(state->rev_ctx,
-        now_ts, service_merkle_sign_cb, ctx, &new_tree, &new_root_record,
+        now_ts, service_merkle_sign_cb, ctx, state->issuer_id,
+        state->issuer_id_len, &new_tree, &new_root_record,
         &new_root_valid_until);
     if (ret != SM2_IC_SUCCESS)
         return ret;
@@ -390,6 +391,9 @@ sm2_pki_error_t sm2_pki_service_create(sm2_pki_service_ctx_t **ctx,
         return sm2_pki_error_from_ic(ic_ret);
     }
 
+    memcpy(state->issuer_id, issuer_id, issuer_id_len);
+    state->issuer_id_len = issuer_id_len;
+
     ic_ret = service_publish_revocation_root(state, now_ts);
     if (ic_ret != SM2_IC_SUCCESS)
     {
@@ -404,8 +408,6 @@ sm2_pki_error_t sm2_pki_service_create(sm2_pki_service_ctx_t **ctx,
         return sm2_pki_error_from_ic(ic_ret);
     }
 
-    memcpy(state->issuer_id, issuer_id, issuer_id_len);
-    state->issuer_id_len = issuer_id_len;
     state->initialized = true;
     *ctx = state;
     return SM2_PKI_SUCCESS;
@@ -469,7 +471,8 @@ sm2_pki_error_t sm2_pki_service_export_epoch_dir(sm2_pki_service_ctx_t *ctx,
     }
 
     return sm2_pki_error_from_ic(
-        sm2_rev_epoch_dir_build(state->rev_tree, epoch_id, cache_top_levels,
+        sm2_rev_epoch_dir_build_with_authority(state->rev_tree, epoch_id,
+            state->issuer_id, state->issuer_id_len, cache_top_levels,
             valid_from, valid_until, service_merkle_sign_cb, ctx, directory));
 }
 

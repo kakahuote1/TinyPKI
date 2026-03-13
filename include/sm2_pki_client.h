@@ -15,6 +15,7 @@
 #include "sm2_implicit_cert.h"
 #include "sm2_auth.h"
 #include "sm2_crypto.h"
+#include "sm2_revocation.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -68,6 +69,38 @@ extern "C"
     sm2_pki_error_t sm2_pki_client_set_revocation_query(
         sm2_pki_client_ctx_t *ctx, sm2_auth_revocation_query_fn query_fn,
         void *user_ctx);
+
+    /*
+     * Imports a CA-signed revocation root record into the client-side cache.
+     * The record must verify under one of the configured trusted CA keys and
+     * must not roll back the highest version previously accepted by this
+     * client. Same-version refresh is allowed only when the root hash is
+     * unchanged.
+     */
+    sm2_pki_error_t sm2_pki_client_import_root_record(
+        sm2_pki_client_ctx_t *ctx, const sm2_rev_root_record_t *root_record,
+        uint64_t now_ts);
+
+    /*
+     * Refreshes the cached root record from a bound service-managed
+     * revocation backend. This requires a live binding created via
+     * sm2_pki_client_bind_revocation().
+     */
+    sm2_pki_error_t sm2_pki_client_refresh_root(
+        sm2_pki_client_ctx_t *ctx, uint64_t now_ts);
+
+    /*
+     * Returns the most recently accepted cached CA-signed root record.
+     */
+    sm2_pki_error_t sm2_pki_client_get_cached_root_record(
+        const sm2_pki_client_ctx_t *ctx, sm2_rev_root_record_t *root_record);
+
+    /*
+     * Returns the cached root record for the given authority/issuer.
+     */
+    sm2_pki_error_t sm2_pki_client_get_cached_root_record_for_authority(
+        const sm2_pki_client_ctx_t *ctx, const uint8_t *authority_id,
+        size_t authority_id_len, sm2_rev_root_record_t *root_record);
 
     /*
      * Reconstructs local identity keys and verifies that the certificate is

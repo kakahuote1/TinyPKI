@@ -172,6 +172,9 @@ void run_test_pki_suite(void)
     RUN_TEST(test_phase133_revocation_service_binding_lifecycle);
     RUN_TEST(
         test_phase134_pki_verify_rejects_request_level_revocation_override);
+    RUN_TEST(test_phase137_client_root_cache_import_refresh_and_rollback);
+    RUN_TEST(test_phase138_service_binding_tracks_newer_root_versions);
+    RUN_TEST(test_phase139_root_versions_are_scoped_per_authority);
     RUN_TEST(test_x509_real_baseline_size);
     RUN_TEST(test_phase93_crypto_direct_api_min_coverage);
 }

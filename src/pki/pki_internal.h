@@ -15,6 +15,7 @@ void sm2_pki_rev_snapshot_release(sm2_rev_ctx_t **snapshot);
 void sm2_pki_rev_snapshot_restore(sm2_rev_ctx_t *dst, sm2_rev_ctx_t **snapshot);
 sm2_ic_error_t sm2_pki_rev_prepare_root_publication(const sm2_rev_ctx_t *ctx,
     uint64_t now_ts, sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
+    const uint8_t *authority_id, size_t authority_id_len,
     sm2_rev_tree_t **tree, sm2_rev_root_record_t *root_record,
     uint64_t *root_valid_until);
 void sm2_pki_rev_set_root_valid_until(
@@ -26,6 +27,16 @@ void sm2_pki_service_release_revocation_binding(sm2_pki_service_state_t *state);
 sm2_ic_error_t sm2_pki_service_query_revocation_binding(
     sm2_pki_service_state_t *state, uint64_t serial_number, uint64_t now_ts,
     sm2_rev_status_t *status, sm2_rev_source_t *source);
+
+typedef struct
+{
+    bool used;
+    bool has_root_record;
+    uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
+    size_t authority_id_len;
+    sm2_rev_root_record_t root_record;
+    uint64_t highest_seen_root_version;
+} sm2_pki_root_cache_entry_t;
 
 typedef struct
 {
@@ -71,6 +82,9 @@ struct sm2_pki_client_ctx_st
     sm2_pki_service_state_t *revocation_service;
     sm2_auth_revocation_query_fn revocation_query_fn;
     void *revocation_query_user_ctx;
+    sm2_pki_root_cache_entry_t root_cache[SM2_AUTH_MAX_CA_STORE];
+    size_t last_root_cache_index;
+    bool has_last_root_cache_index;
 
     sm2_auth_sign_pool_t sign_pool;
     bool sign_pool_enabled;
