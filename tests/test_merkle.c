@@ -3,7 +3,7 @@
 /**
  * @file test_merkle.c
  * @brief Tests for Merkle tree (member/absence proofs, CBOR codec,
- *        root signature, multiproof, epoch, hot-patch, k-anonymity).
+ *        root signature, multiproof, epoch and hot-patch).
  */
 
 #include "test_common.h"
@@ -72,12 +72,7 @@ void run_test_merkle_suite(void)
     RUN_TEST(test_rev_epoch_dir_cached_proof);
     RUN_TEST(test_rev_epoch_patch_priority);
     RUN_TEST(test_rev_epoch_switch_monotonic);
-    RUN_TEST(test_rev_kanon_query_baseline);
-    RUN_TEST(test_rev_kanon_export_min_metadata);
-    RUN_TEST(test_rev_kanon_policy_tradeoff);
     RUN_TEST(test_rev_multi_proof_dynamic_growth_path);
-    RUN_TEST(test_rev_kanon_risk_weights_effective);
-    RUN_TEST(test_rev_kanon_candidate_window_limit);
     RUN_TEST(test_rev_phase8_metric_bundle);
     /* -- Phase 3 negative / boundary tests -- */
     RUN_TEST(test_merkle_empty_tree_prove_member_fails);

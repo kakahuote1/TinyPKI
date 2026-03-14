@@ -16,7 +16,6 @@ set(TINYPKI_CORE_SRCS
     src/revoke/merkle.c
     src/revoke/merkle_cbor.c
     src/revoke/merkle_epoch.c
-    src/revoke/merkle_k_anon.c
     src/auth/auth.c
     src/pki/crypto.c
     src/pki/rev_bridge.c

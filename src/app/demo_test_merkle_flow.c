@@ -4,8 +4,7 @@
  * Demo Test 2:
  * Merkle accumulator capabilities:
  * 1) member/absence proof verification,
- * 2) multiproof bandwidth reduction,
- * 3) k-anonymity query packing and risk estimate.
+ * 2) multiproof bandwidth reduction.
  */
 
 #include <stdio.h>
@@ -32,18 +31,16 @@ int main(void)
     enum
     {
         revoked_n = 1024,
-        k = 16
+        query_n = 16
     };
 
     uint64_t *revoked = NULL;
-    uint64_t *decoys = NULL;
-    size_t decoy_count = 0;
 
     sm2_rev_tree_t *tree = NULL;
     sm2_rev_member_proof_t mp_real;
     sm2_rev_absence_proof_t nmp;
-    sm2_rev_kanon_query_t kq;
     sm2_rev_multi_proof_t *multi = NULL;
+    uint64_t queries[query_n];
     uint8_t tree_root_hash[SM2_REV_MERKLE_HASH_LEN];
 
     uint8_t multi_buf[262144];
@@ -51,15 +48,13 @@ int main(void)
 
     memset(&mp_real, 0, sizeof(mp_real));
     memset(&nmp, 0, sizeof(nmp));
-    memset(&kq, 0, sizeof(kq));
+    memset(queries, 0, sizeof(queries));
     memset(tree_root_hash, 0, sizeof(tree_root_hash));
 
     revoked = (uint64_t *)calloc(revoked_n, sizeof(uint64_t));
-    decoys = (uint64_t *)calloc(revoked_n - 1, sizeof(uint64_t));
-    if (!revoked || !decoys)
+    if (!revoked)
     {
         printf("[FAIL] Allocate buffers\n");
-        free(decoys);
         free(revoked);
         return 1;
     }
@@ -70,13 +65,8 @@ int main(void)
 
     uint64_t real_serial = revoked[512];
     uint64_t good_serial = 799999ULL;
-
-    for (size_t i = 0; i < revoked_n; i++)
-    {
-        if (revoked[i] == real_serial)
-            continue;
-        decoys[decoy_count++] = revoked[i];
-    }
+    for (size_t i = 0; i < query_n; i++)
+        queries[i] = revoked[500 + i];
 
     ret = sm2_rev_tree_build(&tree, revoked, revoked_n, 2026030701ULL);
     if (!check_ic(ret, "Build Merkle Tree"))
@@ -101,12 +91,7 @@ int main(void)
     if (!check_ic(ret, "Verify Non-Member Proof"))
         goto cleanup;
 
-    ret = sm2_rev_kanon_build_query(
-        real_serial, decoys, decoy_count, k, 0xA55AA55AULL, &kq);
-    if (!check_ic(ret, "Build K-Anon Query"))
-        goto cleanup;
-
-    ret = sm2_rev_multi_proof_build(tree, kq.serials, kq.serial_count, &multi);
+    ret = sm2_rev_multi_proof_build(tree, queries, query_n, &multi);
     if (!check_ic(ret, "Build Multi-Proof"))
         goto cleanup;
 
@@ -119,14 +104,14 @@ int main(void)
         goto cleanup;
 
     size_t single_total = 0;
-    for (size_t i = 0; i < kq.serial_count; i++)
+    for (size_t i = 0; i < query_n; i++)
     {
         sm2_rev_member_proof_t mp_each;
         uint8_t mp_buf[8192];
         size_t mp_len = sizeof(mp_buf);
 
         memset(&mp_each, 0, sizeof(mp_each));
-        ret = sm2_rev_tree_prove_member(tree, kq.serials[i], &mp_each);
+        ret = sm2_rev_tree_prove_member(tree, queries[i], &mp_each);
         if (ret != SM2_IC_SUCCESS)
         {
             printf("[FAIL] Build Single Proof #%zu, err=%d\n", i, (int)ret);
@@ -147,17 +132,9 @@ int main(void)
         reduction = ((double)(single_total - multi_len) * 100.0)
             / (double)single_total;
 
-    double risk_score = 0.0;
-    uint64_t span = 0;
-    ret = sm2_rev_kanon_estimate_risk(&kq, real_serial, &risk_score, &span);
-    if (!check_ic(ret, "Estimate K-Anon Risk"))
-        goto cleanup;
-
     printf("[METRIC] single_total=%zu bytes, multiproof=%zu bytes, "
            "reduction=%.2f%%\n",
         single_total, multi_len, reduction);
-    printf("[METRIC] k=%zu, real_index=%zu, span=%llu, risk=%.6f\n",
-        kq.serial_count, kq.real_index, (unsigned long long)span, risk_score);
 
     if (!(multi_len < single_total))
     {
@@ -166,24 +143,15 @@ int main(void)
     }
     printf("[OK]   Multi-Proof bandwidth reduction confirmed\n");
 
-    if (!(risk_score >= 0.0 && risk_score <= 1.0))
-    {
-        printf("[FAIL] K-Anon risk score out of range\n");
-        goto cleanup;
-    }
-    printf("[OK]   K-Anon risk score in valid range\n");
-
     printf("[PASS] demo_test_merkle_flow\n");
     sm2_rev_multi_proof_cleanup(&multi);
     sm2_rev_tree_cleanup(&tree);
-    free(decoys);
     free(revoked);
     return 0;
 
 cleanup:
     sm2_rev_multi_proof_cleanup(&multi);
     sm2_rev_tree_cleanup(&tree);
-    free(decoys);
     free(revoked);
     return 1;
 }

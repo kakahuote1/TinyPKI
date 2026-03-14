@@ -14,6 +14,11 @@ typedef struct
     const sm2_ec_point_t *ca_pub;
 } pki_merkle_verify_ctx_t;
 
+typedef struct
+{
+    const sm2_private_key_t *ca_priv;
+} pki_merkle_sign_ctx_t;
+
 static int test_pki_sm4_gcm_available(void)
 {
     return test_openssl_cipher_available("SM4-GCM");
@@ -56,6 +61,28 @@ static sm2_ic_error_t pki_merkle_verify_cb(void *user_ctx, const uint8_t *data,
     sig.der_len = signature_len;
 
     return sm2_auth_verify_signature(ctx->ca_pub, data, data_len, &sig);
+}
+
+static sm2_ic_error_t pki_merkle_sign_cb(void *user_ctx, const uint8_t *data,
+    size_t data_len, uint8_t *signature, size_t *signature_len)
+{
+    if (!user_ctx || !data || !signature || !signature_len)
+        return SM2_IC_ERR_PARAM;
+
+    pki_merkle_sign_ctx_t *ctx = (pki_merkle_sign_ctx_t *)user_ctx;
+    if (!ctx->ca_priv)
+        return SM2_IC_ERR_PARAM;
+
+    sm2_auth_signature_t sig;
+    sm2_ic_error_t ret = sm2_auth_sign(ctx->ca_priv, data, data_len, &sig);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+    if (*signature_len < sig.der_len)
+        return SM2_IC_ERR_MEMORY;
+
+    memcpy(signature, sig.der, sig.der_len);
+    *signature_len = sig.der_len;
+    return SM2_IC_SUCCESS;
 }
 
 typedef struct
@@ -151,6 +178,40 @@ static int pki_client_get_identity_material(sm2_pki_client_ctx_t *client,
     return 1;
 }
 
+static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
+    const uint8_t *message, size_t message_len, uint64_t now_ts,
+    sm2_auth_signature_t *signature, sm2_pki_revocation_evidence_t *evidence,
+    sm2_pki_verify_request_t *request)
+{
+    const sm2_implicit_cert_t *cert = NULL;
+    const sm2_ec_point_t *public_key = NULL;
+
+    if (!signer || !message || message_len == 0 || !signature || !evidence
+        || !request)
+    {
+        return 0;
+    }
+
+    if (sm2_pki_sign(signer, message, message_len, signature) != SM2_PKI_SUCCESS)
+        return 0;
+    if (!pki_client_get_identity_material(signer, &cert, &public_key))
+        return 0;
+    if (sm2_pki_client_export_revocation_evidence(signer, now_ts, evidence)
+        != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
+
+    memset(request, 0, sizeof(*request));
+    request->cert = cert;
+    request->public_key = public_key;
+    request->message = message;
+    request->message_len = message_len;
+    request->signature = signature;
+    request->revocation_evidence = evidence;
+    return 1;
+}
+
 /* Split by theme to keep PKI tests focused on flow, revocation and security
  * policy. */
 #include "test_pki_flow.inc"
@@ -175,6 +236,7 @@ void run_test_pki_suite(void)
     RUN_TEST(test_phase137_client_root_cache_import_refresh_and_rollback);
     RUN_TEST(test_phase138_service_binding_tracks_newer_root_versions);
     RUN_TEST(test_phase139_root_versions_are_scoped_per_authority);
+    RUN_TEST(test_phase139_unpinned_multi_ca_root_import_rejects_spoofed_authority);
     RUN_TEST(test_x509_real_baseline_size);
     RUN_TEST(test_phase93_crypto_direct_api_min_coverage);
 }
