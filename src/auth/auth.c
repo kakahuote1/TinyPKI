@@ -43,6 +43,70 @@ static void utils_bn_to_fixed_bin(const BIGNUM *value, uint8_t out[SM2_KEY_LEN])
     BN_bn2bin(value, out + (SM2_KEY_LEN - value_len));
 }
 
+static sm2_ic_error_t utils_point_is_valid(
+    const EC_GROUP *group, const EC_POINT *point, BN_CTX *bn_ctx)
+{
+    if (!group || !point || !bn_ctx)
+        return SM2_IC_ERR_PARAM;
+    if (EC_POINT_is_at_infinity(group, point) == 1)
+        return SM2_IC_ERR_VERIFY;
+
+    int on_curve = EC_POINT_is_on_curve(group, point, bn_ctx);
+    if (on_curve == 1)
+        return SM2_IC_SUCCESS;
+    return on_curve == 0 ? SM2_IC_ERR_VERIFY : SM2_IC_ERR_CRYPTO;
+}
+
+static sm2_ic_error_t utils_affine_public_key_to_point_checked(
+    const sm2_ec_point_t *public_key, const EC_GROUP *group, BN_CTX *bn_ctx,
+    EC_POINT *point)
+{
+    if (!public_key || !group || !bn_ctx || !point)
+        return SM2_IC_ERR_PARAM;
+
+    uint8_t pub_buf[65];
+    memset(pub_buf, 0, sizeof(pub_buf));
+    pub_buf[0] = 0x04;
+    memcpy(pub_buf + 1, public_key->x, SM2_KEY_LEN);
+    memcpy(pub_buf + 1 + SM2_KEY_LEN, public_key->y, SM2_KEY_LEN);
+
+    if (EC_POINT_oct2point(group, point, pub_buf, sizeof(pub_buf), bn_ctx) != 1)
+    {
+        sm2_secure_memzero(pub_buf, sizeof(pub_buf));
+        return SM2_IC_ERR_VERIFY;
+    }
+
+    sm2_secure_memzero(pub_buf, sizeof(pub_buf));
+    return utils_point_is_valid(group, point, bn_ctx);
+}
+
+static sm2_ic_error_t utils_public_key_validate(
+    const sm2_ec_point_t *public_key)
+{
+    if (!public_key)
+        return SM2_IC_ERR_PARAM;
+
+    sm2_ic_error_t ret = SM2_IC_ERR_CRYPTO;
+    EC_GROUP *group = EC_GROUP_new_by_curve_name(NID_sm2);
+    BN_CTX *bn_ctx = BN_CTX_new();
+    EC_POINT *point = group ? EC_POINT_new(group) : NULL;
+
+    if (!group || !bn_ctx || !point)
+    {
+        ret = SM2_IC_ERR_MEMORY;
+        goto cleanup;
+    }
+
+    ret = utils_affine_public_key_to_point_checked(
+        public_key, group, bn_ctx, point);
+
+cleanup:
+    EC_POINT_free(point);
+    BN_CTX_free(bn_ctx);
+    EC_GROUP_free(group);
+    return ret;
+}
+
 static sm2_ic_error_t utils_generate_sm2_private_scalar(
     sm2_private_key_t *private_key)
 {
@@ -295,10 +359,8 @@ static sm2_ic_error_t utils_ecdh_shared_xy(
     BIGNUM *d = NULL;
     EC_POINT *peer = NULL;
     EC_POINT *shared = NULL;
-    uint8_t pub_buf[65];
     uint8_t shared_buf[65];
 
-    memset(pub_buf, 0, sizeof(pub_buf));
     memset(shared_buf, 0, sizeof(shared_buf));
     memset(shared_xy, 0, 64);
 
@@ -315,14 +377,18 @@ static sm2_ic_error_t utils_ecdh_shared_xy(
         goto cleanup;
     }
 
-    pub_buf[0] = 0x04;
-    memcpy(pub_buf + 1, peer_public_key->x, SM2_KEY_LEN);
-    memcpy(pub_buf + 1 + SM2_KEY_LEN, peer_public_key->y, SM2_KEY_LEN);
-
-    if (EC_POINT_oct2point(group, peer, pub_buf, sizeof(pub_buf), bn_ctx) != 1
-        || EC_POINT_mul(group, shared, NULL, peer, d, bn_ctx) != 1)
+    ret = utils_affine_public_key_to_point_checked(
+        peer_public_key, group, bn_ctx, peer);
+    if (ret != SM2_IC_SUCCESS)
+        goto cleanup;
+    if (EC_POINT_mul(group, shared, NULL, peer, d, bn_ctx) != 1)
     {
         ret = SM2_IC_ERR_CRYPTO;
+        goto cleanup;
+    }
+    if (EC_POINT_is_at_infinity(group, shared) == 1)
+    {
+        ret = SM2_IC_ERR_VERIFY;
         goto cleanup;
     }
 
@@ -339,7 +405,6 @@ static sm2_ic_error_t utils_ecdh_shared_xy(
 
 cleanup:
     sm2_secure_memzero(shared_buf, sizeof(shared_buf));
-    sm2_secure_memzero(pub_buf, sizeof(pub_buf));
     EC_POINT_free(shared);
     EC_POINT_free(peer);
     BN_clear_free(d);
@@ -405,6 +470,123 @@ static bool utils_size_to_int(size_t value, int *out)
         return false;
     *out = (int)value;
     return true;
+}
+
+static void utils_u64_to_be(uint64_t value, uint8_t out[8])
+{
+    if (!out)
+        return;
+    for (size_t i = 0; i < 8; i++)
+    {
+        out[7 - i] = (uint8_t)(value & 0xffU);
+        value >>= 8U;
+    }
+}
+
+static sm2_ic_error_t utils_handshake_binding_required_size(
+    size_t transcript_len, size_t *required_len)
+{
+    static const uint8_t tag[] = "SM2_AUTH_HANDSHAKE_V1";
+    size_t base_len = (sizeof(tag) - 1U) + sizeof(sm2_ec_point_t) * 2U + 8U;
+
+    if (!required_len)
+        return SM2_IC_ERR_PARAM;
+    if (transcript_len > SIZE_MAX - base_len)
+        return SM2_IC_ERR_PARAM;
+
+    *required_len = base_len + transcript_len;
+    return SM2_IC_SUCCESS;
+}
+
+sm2_ic_error_t sm2_auth_build_handshake_binding(
+    const sm2_ec_point_t *local_ephemeral_public_key,
+    const sm2_ec_point_t *peer_ephemeral_public_key, const uint8_t *transcript,
+    size_t transcript_len, uint8_t *output, size_t *output_len)
+{
+    static const uint8_t tag[] = "SM2_AUTH_HANDSHAKE_V1";
+    size_t required_len = 0;
+    sm2_ic_error_t ret = SM2_IC_SUCCESS;
+
+    if (!local_ephemeral_public_key || !peer_ephemeral_public_key
+        || !output_len)
+        return SM2_IC_ERR_PARAM;
+    if (transcript_len > 0 && !transcript)
+        return SM2_IC_ERR_PARAM;
+
+    ret = utils_handshake_binding_required_size(transcript_len, &required_len);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    if (!output)
+    {
+        *output_len = required_len;
+        return SM2_IC_SUCCESS;
+    }
+    if (*output_len < required_len)
+    {
+        *output_len = required_len;
+        return SM2_IC_ERR_MEMORY;
+    }
+
+    size_t off = 0;
+    memcpy(output + off, tag, sizeof(tag) - 1U);
+    off += sizeof(tag) - 1U;
+    memcpy(output + off, local_ephemeral_public_key,
+        sizeof(*local_ephemeral_public_key));
+    off += sizeof(*local_ephemeral_public_key);
+    memcpy(output + off, peer_ephemeral_public_key,
+        sizeof(*peer_ephemeral_public_key));
+    off += sizeof(*peer_ephemeral_public_key);
+    utils_u64_to_be((uint64_t)transcript_len, output + off);
+    off += 8U;
+    if (transcript_len > 0)
+    {
+        memcpy(output + off, transcript, transcript_len);
+        off += transcript_len;
+    }
+
+    *output_len = off;
+    return SM2_IC_SUCCESS;
+}
+
+static sm2_ic_error_t auth_require_handshake_binding(const uint8_t *message,
+    size_t message_len, const sm2_ec_point_t *local_ephemeral_public_key,
+    const sm2_ec_point_t *peer_ephemeral_public_key, const uint8_t *transcript,
+    size_t transcript_len)
+{
+    uint8_t *expected = NULL;
+    size_t expected_len = 0;
+    sm2_ic_error_t ret = SM2_IC_SUCCESS;
+
+    if (!message)
+        return SM2_IC_ERR_PARAM;
+
+    ret = sm2_auth_build_handshake_binding(local_ephemeral_public_key,
+        peer_ephemeral_public_key, transcript, transcript_len, NULL,
+        &expected_len);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+    if (message_len != expected_len)
+        return SM2_IC_ERR_VERIFY;
+
+    expected = (uint8_t *)malloc(expected_len);
+    if (!expected)
+        return SM2_IC_ERR_MEMORY;
+
+    size_t out_len = expected_len;
+    ret = sm2_auth_build_handshake_binding(local_ephemeral_public_key,
+        peer_ephemeral_public_key, transcript, transcript_len, expected,
+        &out_len);
+    if (ret != SM2_IC_SUCCESS)
+    {
+        free(expected);
+        return ret;
+    }
+
+    ret = memcmp(message, expected, expected_len) == 0 ? SM2_IC_SUCCESS
+                                                       : SM2_IC_ERR_VERIFY;
+    free(expected);
+    return ret;
 }
 
 sm2_ic_error_t sm2_auth_sign_pool_init(sm2_auth_sign_pool_t *pool,
@@ -533,11 +715,14 @@ sm2_ic_error_t sm2_auth_verify_signature(const sm2_ec_point_t *public_key,
     if (!public_key || !message || !signature || signature->der_len == 0)
         return SM2_IC_ERR_PARAM;
 
+    sm2_ic_error_t ret = utils_public_key_validate(public_key);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
     EVP_PKEY *pkey = utils_pkey_from_public(public_key);
     if (!pkey)
         return SM2_IC_ERR_CRYPTO;
-    sm2_ic_error_t ret
-        = utils_verify_with_pkey(pkey, message, message_len, signature);
+    ret = utils_verify_with_pkey(pkey, message, message_len, signature);
     EVP_PKEY_free(pkey);
     return ret;
 }
@@ -545,6 +730,7 @@ sm2_ic_error_t sm2_auth_verify_signature(const sm2_ec_point_t *public_key,
 sm2_ic_error_t sm2_auth_batch_verify(
     const sm2_auth_verify_item_t *items, size_t item_count, size_t *valid_count)
 {
+    sm2_ic_error_t final_ret = SM2_IC_SUCCESS;
     if (!items || item_count == 0)
         return SM2_IC_ERR_PARAM;
     if (valid_count)
@@ -557,7 +743,13 @@ sm2_ic_error_t sm2_auth_batch_verify(
     for (size_t i = 0; i < item_count; i++)
     {
         if (!items[i].public_key || !items[i].signature || !items[i].message)
-            return SM2_IC_ERR_PARAM;
+        {
+            final_ret = SM2_IC_ERR_PARAM;
+            goto cleanup;
+        }
+        final_ret = utils_public_key_validate(items[i].public_key);
+        if (final_ret != SM2_IC_SUCCESS)
+            goto cleanup;
 
         uint8_t raw[SM2_KEY_LEN * 2];
         memcpy(raw, items[i].public_key->x, SM2_KEY_LEN);
@@ -578,12 +770,8 @@ sm2_ic_error_t sm2_auth_batch_verify(
             key = utils_pkey_from_public(items[i].public_key);
             if (!key)
             {
-                for (size_t k = 0; k < sizeof(cache) / sizeof(cache[0]); k++)
-                {
-                    if (cache[k].used)
-                        EVP_PKEY_free(cache[k].pkey);
-                }
-                return SM2_IC_ERR_CRYPTO;
+                final_ret = SM2_IC_ERR_CRYPTO;
+                goto cleanup;
             }
 
             size_t pos = 0;
@@ -611,11 +799,15 @@ sm2_ic_error_t sm2_auth_batch_verify(
             ok_count++;
     }
 
+cleanup:
     for (size_t k = 0; k < sizeof(cache) / sizeof(cache[0]); k++)
     {
         if (cache[k].used)
             EVP_PKEY_free(cache[k].pkey);
     }
+
+    if (final_ret != SM2_IC_SUCCESS)
+        return final_ret;
 
     if (ok_count == item_count)
     {
@@ -653,6 +845,9 @@ sm2_ic_error_t sm2_auth_trust_store_add_ca(
 {
     if (!store || !ca_public_key)
         return SM2_IC_ERR_PARAM;
+    sm2_ic_error_t ret = utils_public_key_validate(ca_public_key);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
     if (store->count >= SM2_AUTH_MAX_CA_STORE)
         return SM2_IC_ERR_MEMORY;
     store->ca_pub_keys[store->count++] = *ca_public_key;
@@ -1061,6 +1256,17 @@ sm2_ic_error_t sm2_auth_mutual_handshake(const sm2_auth_request_t *a_to_b,
         return ret;
     ret = utils_validate_keypair(
         b_ephemeral_private_key, b_ephemeral_public_key);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    ret = auth_require_handshake_binding(a_to_b->message, a_to_b->message_len,
+        a_ephemeral_public_key, b_ephemeral_public_key, transcript,
+        transcript_len);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+    ret = auth_require_handshake_binding(b_to_a->message, b_to_a->message_len,
+        b_ephemeral_public_key, a_ephemeral_public_key, transcript,
+        transcript_len);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 

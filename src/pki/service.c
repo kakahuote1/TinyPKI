@@ -30,6 +30,8 @@ static void service_finalize_state(sm2_pki_service_state_t *state)
     if (!state)
         return;
 
+    free(state->certs);
+    state->certs = NULL;
     sm2_secure_memzero(state, sizeof(*state));
     free(state);
 }
@@ -42,6 +44,8 @@ static void service_retire_state(sm2_pki_service_state_t *state)
     size_t binding_refs = state->revocation_binding_refs;
     sm2_rev_tree_cleanup(&state->rev_tree);
     sm2_rev_cleanup(&state->rev_ctx);
+    free(state->certs);
+    state->certs = NULL;
     sm2_secure_memzero(state, sizeof(*state));
     state->revocation_binding_refs = binding_refs;
     state->revocation_binding_retired = true;
@@ -108,18 +112,18 @@ static sm2_pki_identity_entry_t *service_find_identity(
     return NULL;
 }
 
-static sm2_pki_identity_entry_t *service_find_by_serial(
+static sm2_pki_cert_entry_t *service_find_by_serial(
     sm2_pki_service_ctx_t *ctx, uint64_t serial_number)
 {
     sm2_pki_service_state_t *state = service_state(ctx);
-    if (!ctx || !state)
+    if (!ctx || !state || !state->certs)
         return NULL;
-    for (size_t i = 0; i < SM2_PKI_MAX_IDENTITIES; i++)
+    for (size_t i = 0; i < state->cert_capacity; i++)
     {
-        sm2_pki_identity_entry_t *e = &state->identities[i];
+        sm2_pki_cert_entry_t *e = &state->certs[i];
         if (!e->used)
             continue;
-        if (e->issued_serial == serial_number)
+        if (e->serial_number == serial_number)
             return e;
     }
     return NULL;
@@ -137,6 +141,112 @@ static sm2_pki_identity_entry_t *service_alloc_identity(
             return &state->identities[i];
     }
     return NULL;
+}
+
+static size_t service_identity_index(
+    const sm2_pki_service_state_t *state, const sm2_pki_identity_entry_t *entry)
+{
+    if (!state || !entry)
+        return SIZE_MAX;
+    return (size_t)(entry - state->identities);
+}
+
+static void service_compact_revoked_certificates(sm2_pki_service_state_t *state)
+{
+    if (!state || !state->certs || state->cert_capacity == 0)
+        return;
+
+    size_t write_index = 0;
+    for (size_t read_index = 0; read_index < state->cert_capacity; read_index++)
+    {
+        sm2_pki_cert_entry_t *entry = &state->certs[read_index];
+        if (!entry->used || entry->revoked)
+            continue;
+        if (write_index != read_index)
+            state->certs[write_index] = *entry;
+        write_index++;
+    }
+
+    for (size_t i = write_index; i < state->cert_capacity; i++)
+        memset(&state->certs[i], 0, sizeof(state->certs[i]));
+    state->cert_count = write_index;
+}
+
+static sm2_pki_error_t service_grow_certificate_table(
+    sm2_pki_service_ctx_t *ctx)
+{
+    sm2_pki_service_state_t *state = service_state(ctx);
+    if (!ctx || !state)
+        return SM2_PKI_ERR_PARAM;
+
+    size_t new_capacity = state->cert_capacity == 0
+        ? SM2_PKI_INITIAL_CERT_CAPACITY
+        : state->cert_capacity * 2U;
+    if (new_capacity < state->cert_capacity || new_capacity == 0)
+        return SM2_PKI_ERR_MEMORY;
+    if (new_capacity > SIZE_MAX / sizeof(*state->certs))
+        return SM2_PKI_ERR_MEMORY;
+    if (state->cert_count > new_capacity)
+        return SM2_PKI_ERR_MEMORY;
+
+    sm2_pki_cert_entry_t *new_entries
+        = (sm2_pki_cert_entry_t *)calloc(new_capacity, sizeof(*new_entries));
+    if (!new_entries)
+        return SM2_PKI_ERR_MEMORY;
+
+    if (state->certs && state->cert_count > 0)
+    {
+        memcpy(new_entries, state->certs,
+            state->cert_count * sizeof(*new_entries));
+    }
+
+    free(state->certs);
+    state->certs = new_entries;
+    state->cert_capacity = new_capacity;
+    return SM2_PKI_SUCCESS;
+}
+
+static sm2_pki_error_t service_alloc_certificate(
+    sm2_pki_service_ctx_t *ctx, sm2_pki_cert_entry_t **cert_entry)
+{
+    sm2_pki_service_state_t *state = service_state(ctx);
+    if (!ctx || !state || !cert_entry)
+        return SM2_PKI_ERR_PARAM;
+
+    *cert_entry = NULL;
+    for (size_t i = 0; i < state->cert_capacity; i++)
+    {
+        if (!state->certs[i].used)
+        {
+            *cert_entry = &state->certs[i];
+            return SM2_PKI_SUCCESS;
+        }
+    }
+
+    service_compact_revoked_certificates(state);
+    for (size_t i = 0; i < state->cert_capacity; i++)
+    {
+        if (!state->certs[i].used)
+        {
+            *cert_entry = &state->certs[i];
+            return SM2_PKI_SUCCESS;
+        }
+    }
+
+    sm2_pki_error_t ret = service_grow_certificate_table(ctx);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+
+    for (size_t i = 0; i < state->cert_capacity; i++)
+    {
+        if (!state->certs[i].used)
+        {
+            *cert_entry = &state->certs[i];
+            return SM2_PKI_SUCCESS;
+        }
+    }
+
+    return SM2_PKI_ERR_MEMORY;
 }
 
 static sm2_ic_error_t service_merkle_sign_cb(void *user_ctx,
@@ -199,10 +309,10 @@ static sm2_ic_error_t service_publish_revocation_root(
     uint64_t new_root_valid_until = 0;
     memset(&new_root_record, 0, sizeof(new_root_record));
 
-    sm2_ic_error_t ret = sm2_pki_rev_prepare_root_publication(state->rev_ctx,
-        now_ts, service_merkle_sign_cb, ctx, state->issuer_id,
-        state->issuer_id_len, &new_tree, &new_root_record,
-        &new_root_valid_until);
+    sm2_ic_error_t ret
+        = sm2_pki_rev_prepare_root_publication(state->rev_ctx, now_ts,
+            service_merkle_sign_cb, ctx, state->issuer_id, state->issuer_id_len,
+            &new_tree, &new_root_record, &new_root_valid_until);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -572,14 +682,23 @@ sm2_pki_error_t sm2_pki_cert_issue(sm2_pki_service_ctx_t *ctx,
     if (!service_request_matches_pending(entry, request))
         return SM2_PKI_ERR_VERIFY;
 
+    sm2_pki_cert_entry_t *cert_entry = NULL;
+    sm2_pki_error_t alloc_ret = service_alloc_certificate(ctx, &cert_entry);
+    if (alloc_ret != SM2_PKI_SUCCESS)
+        return alloc_ret;
+
     sm2_ic_error_t ret = sm2_ic_ca_generate_cert(result, request,
         state->issuer_id, state->issuer_id_len, &state->ca_private_key,
         &state->ca_public_key, now_ts);
     if (ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ret);
 
-    entry->issued_serial = result->cert.serial_number;
-    entry->revoked = false;
+    memset(cert_entry, 0, sizeof(*cert_entry));
+    cert_entry->used = true;
+    cert_entry->identity_index = service_identity_index(state, entry);
+    cert_entry->serial_number = result->cert.serial_number;
+    cert_entry->revoked = false;
+    state->cert_count++;
     service_clear_pending_request(entry);
     return SM2_PKI_SUCCESS;
 }
@@ -590,8 +709,7 @@ sm2_pki_error_t sm2_pki_service_revoke(
     sm2_pki_service_state_t *state = service_state(ctx);
     if (!ctx || !ctx->initialized || !state || serial_number == 0)
         return SM2_PKI_ERR_PARAM;
-    sm2_pki_identity_entry_t *entry
-        = service_find_by_serial(ctx, serial_number);
+    sm2_pki_cert_entry_t *entry = service_find_by_serial(ctx, serial_number);
     if (!entry)
         return SM2_PKI_ERR_NOT_FOUND;
 

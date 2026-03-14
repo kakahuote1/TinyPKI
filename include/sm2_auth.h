@@ -32,6 +32,11 @@ extern "C"
 
     typedef struct
     {
+        /*
+         * Backend-dependent slot payload.
+         * The current OpenSSL implementation may treat the slot as prepared
+         * signing capacity only and leave kinv/r zeroed.
+         */
         uint8_t kinv[SM2_KEY_LEN];
         uint8_t r[SM2_KEY_LEN];
         bool used;
@@ -167,6 +172,20 @@ extern "C"
         const sm2_ec_point_t *peer_ephemeral_public_key,
         const uint8_t *transcript, size_t transcript_len, uint8_t *session_key,
         size_t session_key_len);
+
+    /*
+     * Builds the canonical handshake binding payload that must be signed by
+     * each peer before calling sm2_auth_mutual_handshake().
+     *
+     * The payload direction is explicit: "local ephemeral first, peer
+     * ephemeral second". Callers may pass output == NULL to query the required
+     * buffer length via output_len.
+     */
+    sm2_ic_error_t sm2_auth_build_handshake_binding(
+        const sm2_ec_point_t *local_ephemeral_public_key,
+        const sm2_ec_point_t *peer_ephemeral_public_key,
+        const uint8_t *transcript, size_t transcript_len, uint8_t *output,
+        size_t *output_len);
 
     sm2_ic_error_t sm2_auth_mutual_handshake(const sm2_auth_request_t *a_to_b,
         const sm2_private_key_t *a_private_key,

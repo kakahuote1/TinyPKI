@@ -39,6 +39,44 @@ static EC_GROUP *utils_get_sm2_group()
     return EC_GROUP_new_by_curve_name(NID_sm2);
 }
 
+static sm2_ic_error_t utils_point_is_valid(
+    const EC_GROUP *group, const EC_POINT *point, BN_CTX *ctx)
+{
+    if (!group || !point || !ctx)
+        return SM2_IC_ERR_PARAM;
+
+    if (EC_POINT_is_at_infinity(group, point) == 1)
+        return SM2_IC_ERR_VERIFY;
+
+    int on_curve = EC_POINT_is_on_curve(group, point, ctx);
+    if (on_curve == 1)
+        return SM2_IC_SUCCESS;
+    return on_curve == 0 ? SM2_IC_ERR_VERIFY : SM2_IC_ERR_CRYPTO;
+}
+
+static sm2_ic_error_t utils_octets_to_point_checked(const EC_GROUP *group,
+    EC_POINT *point, const uint8_t *octets, size_t octets_len, BN_CTX *ctx)
+{
+    if (!group || !point || !octets || !ctx)
+        return SM2_IC_ERR_PARAM;
+    if (EC_POINT_oct2point(group, point, octets, octets_len, ctx) != 1)
+        return SM2_IC_ERR_VERIFY;
+    return utils_point_is_valid(group, point, ctx);
+}
+
+static sm2_ic_error_t utils_affine_to_point_checked(const EC_GROUP *group,
+    EC_POINT *point, const sm2_ec_point_t *affine_point, BN_CTX *ctx)
+{
+    if (!group || !point || !affine_point || !ctx)
+        return SM2_IC_ERR_PARAM;
+
+    uint8_t buf[65];
+    buf[0] = 0x04;
+    memcpy(buf + 1, affine_point->x, SM2_KEY_LEN);
+    memcpy(buf + 1 + SM2_KEY_LEN, affine_point->y, SM2_KEY_LEN);
+    return utils_octets_to_point_checked(group, point, buf, sizeof(buf), ctx);
+}
+
 static sm2_ic_error_t utils_generate_serial(uint64_t *serial_out)
 {
     if (!serial_out)
@@ -238,11 +276,8 @@ sm2_ic_error_t sm2_ic_sm2_point_mult(sm2_ec_point_t *point,
             goto clean_up;
         }
 
-        uint8_t buf[65];
-        buf[0] = 0x04; /* Uncompressed */
-        memcpy(buf + 1, base_point->x, 32);
-        memcpy(buf + 33, base_point->y, 32);
-        if (EC_POINT_oct2point(group, P, buf, 65, ctx) != 1)
+        ret = utils_affine_to_point_checked(group, P, base_point, ctx);
+        if (ret != SM2_IC_SUCCESS)
             goto clean_up;
         if (EC_POINT_mul(group, R, NULL, P, k, ctx) != 1)
             goto clean_up;
@@ -439,11 +474,9 @@ sm2_ic_error_t sm2_ic_ca_generate_cert_with_ctx(sm2_ic_cert_result_t *result,
     }
 
     /* Import Ephemeral Key X */
-    uint8_t point_buf[65];
-    point_buf[0] = 0x04;
-    memcpy(point_buf + 1, request->temp_public_key.x, 32);
-    memcpy(point_buf + 33, request->temp_public_key.y, 32);
-    if (!EC_POINT_oct2point(group, X, point_buf, 65, ctx))
+    ret = utils_affine_to_point_checked(
+        group, X, &request->temp_public_key, ctx);
+    if (ret != SM2_IC_SUCCESS)
         goto clean_up;
 
     /* 1. Calculate Public Reconstruction Key: V = X + k*G */
@@ -670,21 +703,18 @@ sm2_ic_error_t sm2_ic_verify_cert(const sm2_implicit_cert_t *cert,
     }
 
     /* Helper: Point Conversion */
-    uint8_t buf[65];
-    buf[0] = 0x04;
-    memcpy(buf + 1, public_key->x, 32);
-    memcpy(buf + 33, public_key->y, 32);
-    if (EC_POINT_oct2point(group, Q_U, buf, 65, ctx) != 1)
+    ret = utils_affine_to_point_checked(group, Q_U, public_key, ctx);
+    if (ret != SM2_IC_SUCCESS)
         goto clean_up;
 
-    memcpy(buf + 1, ca_public_key->x, 32);
-    memcpy(buf + 33, ca_public_key->y, 32);
-    if (EC_POINT_oct2point(group, P_CA, buf, 65, ctx) != 1)
+    ret = utils_affine_to_point_checked(group, P_CA, ca_public_key, ctx);
+    if (ret != SM2_IC_SUCCESS)
         goto clean_up;
 
     /* Decompress V */
-    if (!EC_POINT_oct2point(
-            group, V, cert->public_recon_key, SM2_COMPRESSED_KEY_LEN, ctx))
+    ret = utils_octets_to_point_checked(
+        group, V, cert->public_recon_key, SM2_COMPRESSED_KEY_LEN, ctx);
+    if (ret != SM2_IC_SUCCESS)
         goto clean_up;
 
     /* 1. Calculate Hash h */

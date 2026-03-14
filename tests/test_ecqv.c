@@ -464,6 +464,58 @@ static void test_verify_rejects_non_implicit_type_and_invalid_usage()
     TEST_PASS();
 }
 
+static void test_rejects_invalid_external_curve_points()
+{
+    if (!g_ca_initialized)
+        test_setup_ca();
+
+    sm2_ic_cert_request_t req;
+    sm2_private_key_t temp_priv;
+    sm2_ic_cert_result_t cert_res;
+    sm2_private_key_t user_priv;
+    sm2_ec_point_t user_pub;
+    sm2_ec_point_t invalid_point;
+
+    memset(&invalid_point, 0, sizeof(invalid_point));
+    TEST_ASSERT(sm2_ic_create_cert_request(&req, (uint8_t *)"ECQV_BAD_POINT",
+                    14, SM2_KU_DIGITAL_SIGNATURE, &temp_priv)
+            == SM2_IC_SUCCESS,
+        "Create Bad Point Request");
+    TEST_ASSERT(test_issue_cert(
+                    &cert_res, &req, (uint8_t *)"CA", 2, &g_ca_priv, &g_ca_pub)
+            == SM2_IC_SUCCESS,
+        "Issue Good Cert");
+    TEST_ASSERT(sm2_ic_reconstruct_keys(
+                    &user_priv, &user_pub, &cert_res, &temp_priv, &g_ca_pub)
+            == SM2_IC_SUCCESS,
+        "Reconstruct Good Cert");
+
+    sm2_ic_cert_request_t invalid_req = req;
+    invalid_req.temp_public_key = invalid_point;
+    sm2_ic_cert_result_t invalid_res;
+    memset(&invalid_res, 0, sizeof(invalid_res));
+    TEST_ASSERT(test_issue_cert(&invalid_res, &invalid_req, (uint8_t *)"CA", 2,
+                    &g_ca_priv, &g_ca_pub)
+            == SM2_IC_ERR_VERIFY,
+        "Reject Invalid Request Point");
+
+    TEST_ASSERT(sm2_ic_verify_cert(&cert_res.cert, &invalid_point, &g_ca_pub)
+            == SM2_IC_ERR_VERIFY,
+        "Reject Invalid Subject Public Key");
+    TEST_ASSERT(sm2_ic_verify_cert(&cert_res.cert, &user_pub, &invalid_point)
+            == SM2_IC_ERR_VERIFY,
+        "Reject Invalid CA Public Key");
+
+    sm2_implicit_cert_t invalid_cert = cert_res.cert;
+    memset(invalid_cert.public_recon_key, 0,
+        sizeof(invalid_cert.public_recon_key));
+    TEST_ASSERT(sm2_ic_verify_cert(&invalid_cert, &user_pub, &g_ca_pub)
+            == SM2_IC_ERR_VERIFY,
+        "Reject Invalid Reconstruction Point");
+
+    TEST_PASS();
+}
+
 static void test_subject_id_boundary_under_secure_mask()
 {
     if (!g_ca_initialized)
@@ -637,6 +689,7 @@ void run_test_ecqv_suite(void)
     RUN_TEST(test_ca_public_key_consistency_enforced);
     RUN_TEST(test_issue_ctx_accessor_and_param_defense);
     RUN_TEST(test_verify_rejects_non_implicit_type_and_invalid_usage);
+    RUN_TEST(test_rejects_invalid_external_curve_points);
     RUN_TEST(test_subject_id_boundary_under_secure_mask);
     RUN_TEST(test_chain_success_rate);
     RUN_TEST(test_serial_unpredictable_and_low_conflict);

@@ -360,15 +360,7 @@ static void test_auth_forward_secure_session_key()
             == SM2_IC_SUCCESS,
         "Recon B");
 
-    const uint8_t msg_a[] = "FS_MSG_A";
-    const uint8_t msg_b[] = "FS_MSG_B";
     sm2_auth_signature_t sig_a, sig_b;
-    TEST_ASSERT(sm2_auth_sign(&priv_a, msg_a, sizeof(msg_a) - 1, &sig_a)
-            == SM2_IC_SUCCESS,
-        "Sign A");
-    TEST_ASSERT(sm2_auth_sign(&priv_b, msg_b, sizeof(msg_b) - 1, &sig_b)
-            == SM2_IC_SUCCESS,
-        "Sign B");
 
     sm2_auth_trust_store_t trust_a, trust_b;
     TEST_ASSERT(
@@ -384,8 +376,8 @@ static void test_auth_forward_secure_session_key()
 
     sm2_auth_request_t a_to_b = { .cert = &cert_a.cert,
         .public_key = &pub_a,
-        .message = msg_a,
-        .message_len = sizeof(msg_a) - 1,
+        .message = NULL,
+        .message_len = 0,
         .signature = &sig_a,
         .revocation_query_fn = NULL,
         .revocation_query_user_ctx = NULL,
@@ -394,8 +386,8 @@ static void test_auth_forward_secure_session_key()
 
     sm2_auth_request_t b_to_a = { .cert = &cert_b.cert,
         .public_key = &pub_b,
-        .message = msg_b,
-        .message_len = sizeof(msg_b) - 1,
+        .message = NULL,
+        .message_len = 0,
         .signature = &sig_b,
         .revocation_query_fn = NULL,
         .revocation_query_user_ctx = NULL,
@@ -417,6 +409,28 @@ static void test_auth_forward_secure_session_key()
 
     uint8_t sk_a1[16], sk_b1[16];
     const uint8_t transcript1[] = "TRANSCRIPT_1";
+    uint8_t bind_a1[256];
+    uint8_t bind_b1[256];
+    size_t bind_a1_len = sizeof(bind_a1);
+    size_t bind_b1_len = sizeof(bind_b1);
+    TEST_ASSERT(sm2_auth_build_handshake_binding(&eph_pub_a1, &eph_pub_b1,
+                    transcript1, sizeof(transcript1) - 1, bind_a1, &bind_a1_len)
+            == SM2_IC_SUCCESS,
+        "Build Bind A1");
+    TEST_ASSERT(sm2_auth_build_handshake_binding(&eph_pub_b1, &eph_pub_a1,
+                    transcript1, sizeof(transcript1) - 1, bind_b1, &bind_b1_len)
+            == SM2_IC_SUCCESS,
+        "Build Bind B1");
+    TEST_ASSERT(sm2_auth_sign(&priv_a, bind_a1, bind_a1_len, &sig_a)
+            == SM2_IC_SUCCESS,
+        "Sign Bind A1");
+    TEST_ASSERT(sm2_auth_sign(&priv_b, bind_b1, bind_b1_len, &sig_b)
+            == SM2_IC_SUCCESS,
+        "Sign Bind B1");
+    a_to_b.message = bind_a1;
+    a_to_b.message_len = bind_a1_len;
+    b_to_a.message = bind_b1;
+    b_to_a.message_len = bind_b1_len;
     TEST_ASSERT(sm2_auth_mutual_handshake(&a_to_b, &priv_a, &eph_priv_a1,
                     &eph_pub_a1, &trust_b, NULL, &b_to_a, &priv_b, &eph_priv_b1,
                     &eph_pub_b1, &trust_a, NULL, now, transcript1,
@@ -433,6 +447,34 @@ static void test_auth_forward_secure_session_key()
         "Eph B2");
 
     uint8_t sk_a2[16], sk_b2[16];
+    TEST_ASSERT(sm2_auth_mutual_handshake(&a_to_b, &priv_a, &eph_priv_a2,
+                    &eph_pub_a2, &trust_b, NULL, &b_to_a, &priv_b, &eph_priv_b2,
+                    &eph_pub_b2, &trust_a, NULL, now, transcript1,
+                    sizeof(transcript1) - 1, sk_a2, sk_b2, sizeof(sk_a2))
+            == SM2_IC_ERR_VERIFY,
+        "Reject Stale Handshake Binding");
+    uint8_t bind_a2[256];
+    uint8_t bind_b2[256];
+    size_t bind_a2_len = sizeof(bind_a2);
+    size_t bind_b2_len = sizeof(bind_b2);
+    TEST_ASSERT(sm2_auth_build_handshake_binding(&eph_pub_a2, &eph_pub_b2,
+                    transcript1, sizeof(transcript1) - 1, bind_a2, &bind_a2_len)
+            == SM2_IC_SUCCESS,
+        "Build Bind A2");
+    TEST_ASSERT(sm2_auth_build_handshake_binding(&eph_pub_b2, &eph_pub_a2,
+                    transcript1, sizeof(transcript1) - 1, bind_b2, &bind_b2_len)
+            == SM2_IC_SUCCESS,
+        "Build Bind B2");
+    TEST_ASSERT(sm2_auth_sign(&priv_a, bind_a2, bind_a2_len, &sig_a)
+            == SM2_IC_SUCCESS,
+        "Sign Bind A2");
+    TEST_ASSERT(sm2_auth_sign(&priv_b, bind_b2, bind_b2_len, &sig_b)
+            == SM2_IC_SUCCESS,
+        "Sign Bind B2");
+    a_to_b.message = bind_a2;
+    a_to_b.message_len = bind_a2_len;
+    b_to_a.message = bind_b2;
+    b_to_a.message_len = bind_b2_len;
     TEST_ASSERT(sm2_auth_mutual_handshake(&a_to_b, &priv_a, &eph_priv_a2,
                     &eph_pub_a2, &trust_b, NULL, &b_to_a, &priv_b, &eph_priv_b2,
                     &eph_pub_b2, &trust_a, NULL, now, transcript1,

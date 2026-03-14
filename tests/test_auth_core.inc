@@ -113,6 +113,125 @@ static void test_auth_batch_verify()
     TEST_PASS();
 }
 
+static void test_auth_batch_verify_param_cleanup_path()
+{
+    if (!g_ca_initialized)
+        test_setup_ca();
+
+    sm2_ic_cert_request_t req;
+    sm2_private_key_t temp_priv;
+    sm2_ic_cert_result_t cert_res;
+    sm2_private_key_t user_priv;
+    sm2_ec_point_t user_pub;
+
+    TEST_ASSERT(sm2_ic_create_cert_request(&req, (uint8_t *)"AUTH_BATCH_PARAM",
+                    16, SM2_KU_DIGITAL_SIGNATURE, &temp_priv)
+            == SM2_IC_SUCCESS,
+        "Req");
+    TEST_ASSERT(test_issue_cert(
+                    &cert_res, &req, (uint8_t *)"CA", 2, &g_ca_priv, &g_ca_pub)
+            == SM2_IC_SUCCESS,
+        "Issue");
+    TEST_ASSERT(sm2_ic_reconstruct_keys(
+                    &user_priv, &user_pub, &cert_res, &temp_priv, &g_ca_pub)
+            == SM2_IC_SUCCESS,
+        "Recon");
+
+    const uint8_t msg[] = "AUTH_BATCH_PARAM_MSG";
+    sm2_auth_signature_t sig;
+    TEST_ASSERT(
+        sm2_auth_sign(&user_priv, msg, sizeof(msg) - 1, &sig) == SM2_IC_SUCCESS,
+        "Sign");
+
+    sm2_auth_verify_item_t items[2];
+    memset(items, 0, sizeof(items));
+    items[0].public_key = &user_pub;
+    items[0].message = msg;
+    items[0].message_len = sizeof(msg) - 1;
+    items[0].signature = &sig;
+    items[1].public_key = &user_pub;
+    items[1].message = NULL;
+    items[1].message_len = sizeof(msg) - 1;
+    items[1].signature = &sig;
+
+    size_t valid_count = 0;
+    TEST_ASSERT(
+        sm2_auth_batch_verify(items, 2, &valid_count) == SM2_IC_ERR_PARAM,
+        "Batch Param Reject After Cache Build");
+    TEST_ASSERT(valid_count == 0, "Batch Param Reject Count Reset");
+
+    TEST_ASSERT(sm2_auth_batch_verify(items, 1, &valid_count) == SM2_IC_SUCCESS,
+        "Batch Verify Still Usable");
+    TEST_ASSERT(valid_count == 1, "Batch Verify Single Count");
+
+    TEST_PASS();
+}
+
+static void test_auth_rejects_invalid_public_points()
+{
+    if (!g_ca_initialized)
+        test_setup_ca();
+
+    sm2_ic_cert_request_t req;
+    sm2_private_key_t temp_priv;
+    sm2_ic_cert_result_t cert_res;
+    sm2_private_key_t user_priv;
+    sm2_ec_point_t user_pub;
+    sm2_ec_point_t invalid_pub;
+
+    TEST_ASSERT(sm2_ic_create_cert_request(&req, (uint8_t *)"AUTH_BAD_POINT",
+                    14, SM2_KU_DIGITAL_SIGNATURE, &temp_priv)
+            == SM2_IC_SUCCESS,
+        "Req");
+    TEST_ASSERT(test_issue_cert(
+                    &cert_res, &req, (uint8_t *)"CA", 2, &g_ca_priv, &g_ca_pub)
+            == SM2_IC_SUCCESS,
+        "Issue");
+    TEST_ASSERT(sm2_ic_reconstruct_keys(
+                    &user_priv, &user_pub, &cert_res, &temp_priv, &g_ca_pub)
+            == SM2_IC_SUCCESS,
+        "Recon");
+
+    memset(&invalid_pub, 0, sizeof(invalid_pub));
+    const uint8_t msg[] = "AUTH_INVALID_POINT";
+    sm2_auth_signature_t sig;
+    TEST_ASSERT(
+        sm2_auth_sign(&user_priv, msg, sizeof(msg) - 1, &sig) == SM2_IC_SUCCESS,
+        "Sign");
+    TEST_ASSERT(
+        sm2_auth_verify_signature(&invalid_pub, msg, sizeof(msg) - 1, &sig)
+            == SM2_IC_ERR_VERIFY,
+        "Reject Invalid Verify Key");
+
+    sm2_auth_verify_item_t item;
+    memset(&item, 0, sizeof(item));
+    item.public_key = &invalid_pub;
+    item.message = msg;
+    item.message_len = sizeof(msg) - 1;
+    item.signature = &sig;
+
+    size_t valid_count = 123;
+    TEST_ASSERT(
+        sm2_auth_batch_verify(&item, 1, &valid_count) == SM2_IC_ERR_VERIFY,
+        "Batch Reject Invalid Verify Key");
+    TEST_ASSERT(valid_count == 0, "Batch Invalid Count Reset");
+
+    sm2_auth_trust_store_t store;
+    TEST_ASSERT(sm2_auth_trust_store_init(&store) == SM2_IC_SUCCESS,
+        "Trust Store Init");
+    TEST_ASSERT(
+        sm2_auth_trust_store_add_ca(&store, &invalid_pub) == SM2_IC_ERR_VERIFY,
+        "Reject Invalid CA Key");
+
+    uint8_t session_key[16];
+    TEST_ASSERT(sm2_auth_derive_session_key_static(
+                    &user_priv, &invalid_pub, session_key, sizeof(session_key))
+            == SM2_IC_ERR_VERIFY,
+        "Reject Invalid Peer KEX Key");
+
+    TEST_PASS();
+}
+
 static void test_auth_cleanup_idempotent_and_param_defense()
 {
     if (!g_ca_initialized)

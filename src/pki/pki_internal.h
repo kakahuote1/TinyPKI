@@ -15,9 +15,8 @@ void sm2_pki_rev_snapshot_release(sm2_rev_ctx_t **snapshot);
 void sm2_pki_rev_snapshot_restore(sm2_rev_ctx_t *dst, sm2_rev_ctx_t **snapshot);
 sm2_ic_error_t sm2_pki_rev_prepare_root_publication(const sm2_rev_ctx_t *ctx,
     uint64_t now_ts, sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
-    const uint8_t *authority_id, size_t authority_id_len,
-    sm2_rev_tree_t **tree, sm2_rev_root_record_t *root_record,
-    uint64_t *root_valid_until);
+    const uint8_t *authority_id, size_t authority_id_len, sm2_rev_tree_t **tree,
+    sm2_rev_root_record_t *root_record, uint64_t *root_valid_until);
 void sm2_pki_rev_set_root_valid_until(
     sm2_rev_ctx_t *ctx, uint64_t root_valid_until);
 
@@ -43,11 +42,19 @@ typedef struct
     uint8_t identity[SM2_PKI_MAX_ID_LEN];
     size_t identity_len;
     uint8_t key_usage;
-    uint64_t issued_serial;
-    bool revoked;
     bool has_pending_request;
     sm2_ec_point_t pending_temp_public_key;
 } sm2_pki_identity_entry_t;
+
+#define SM2_PKI_INITIAL_CERT_CAPACITY 16U
+
+typedef struct
+{
+    bool used;
+    size_t identity_index;
+    uint64_t serial_number;
+    bool revoked;
+} sm2_pki_cert_entry_t;
 
 struct sm2_pki_service_ctx_st
 {
@@ -60,6 +67,9 @@ struct sm2_pki_service_ctx_st
 
     sm2_pki_identity_entry_t identities[SM2_PKI_MAX_IDENTITIES];
     size_t identity_count;
+    sm2_pki_cert_entry_t *certs;
+    size_t cert_count;
+    size_t cert_capacity;
 
     sm2_rev_ctx_t *rev_ctx;
     sm2_rev_tree_t *rev_tree;

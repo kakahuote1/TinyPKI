@@ -78,9 +78,8 @@ extern "C"
      * a local identity certificate, a bound service, or a successful carried-
      * evidence verification for that authority.
      */
-    sm2_pki_error_t sm2_pki_client_import_root_record(
-        sm2_pki_client_ctx_t *ctx, const sm2_rev_root_record_t *root_record,
-        uint64_t now_ts);
+    sm2_pki_error_t sm2_pki_client_import_root_record(sm2_pki_client_ctx_t *ctx,
+        const sm2_rev_root_record_t *root_record, uint64_t now_ts);
 
     /*
      * Refreshes the cached root record from a bound service-managed
@@ -113,8 +112,14 @@ extern "C"
         sm2_pki_revocation_evidence_t *evidence);
 
     /*
-     * Reconstructs local identity keys and verifies that the certificate is
-     * consistent with the supplied issuer public key before importing it.
+     * Reconstructs local identity keys and verifies that the certificate
+     * is
+     * consistent with the supplied issuer public key before importing
+     * it.
+     * Importing a new certificate clears any existing sign pool
+     * because cached
+     * signing state is bound to the previous private
+     * key.
      */
     sm2_pki_error_t sm2_pki_client_import_cert(sm2_pki_client_ctx_t *ctx,
         const sm2_ic_cert_result_t *cert_result,
@@ -146,12 +151,36 @@ extern "C"
         sm2_private_key_t *ephemeral_private_key,
         sm2_ec_point_t *ephemeral_public_key);
 
+    /*
+     * Low-level key agreement primitive.
+     * Callers must ensure the
+     * peer identity, revocation evidence and key usage
+     * have already been
+     * verified through a higher-level flow before using it.
+     */
     sm2_pki_error_t sm2_pki_key_agreement(sm2_pki_client_ctx_t *ctx,
         const sm2_private_key_t *local_ephemeral_private_key,
         const sm2_ec_point_t *peer_public_key,
         const sm2_ec_point_t *peer_ephemeral_public_key,
         const uint8_t *transcript, size_t transcript_len, uint8_t *session_key,
         size_t session_key_len);
+
+    /*
+     * High-level secure session establishment entry point.
+     * The
+     * peer request must already carry a signature over the canonical
+     *
+     * handshake binding produced by sm2_auth_build_handshake_binding() and a
+
+     * * non-revocation evidence bundle accepted by sm2_pki_verify().
+     */
+    sm2_pki_error_t sm2_pki_secure_session_establish(sm2_pki_client_ctx_t *ctx,
+        const sm2_private_key_t *local_ephemeral_private_key,
+        const sm2_ec_point_t *local_ephemeral_public_key,
+        const sm2_pki_verify_request_t *peer_request,
+        const sm2_ec_point_t *peer_ephemeral_public_key,
+        const uint8_t *transcript, size_t transcript_len, uint64_t now_ts,
+        uint8_t *session_key, size_t session_key_len, size_t *matched_ca_index);
 
     sm2_pki_error_t sm2_pki_encrypt(sm2_pki_aead_mode_t mode,
         const uint8_t key[16], const uint8_t *iv, size_t iv_len,

@@ -192,7 +192,8 @@ static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
         return 0;
     }
 
-    if (sm2_pki_sign(signer, message, message_len, signature) != SM2_PKI_SUCCESS)
+    if (sm2_pki_sign(signer, message, message_len, signature)
+        != SM2_PKI_SUCCESS)
         return 0;
     if (!pki_client_get_identity_material(signer, &cert, &public_key))
         return 0;
@@ -229,6 +230,9 @@ void run_test_pki_suite(void)
     RUN_TEST(test_phase13_service_query_cannot_self_refresh_root);
     RUN_TEST(test_phase13_issue_requires_authorized_request_and_policy_match);
     RUN_TEST(test_phase13_key_agreement_requires_ka_usage);
+    RUN_TEST(test_phase93_reissue_preserves_old_serial_revocability);
+    RUN_TEST(test_phase93_reimport_clears_stale_sign_pool);
+    RUN_TEST(test_phase93_service_certificate_history_grows_past_legacy_cap);
     RUN_TEST(test_phase13_secure_pki_session_default_api);
     RUN_TEST(test_phase133_revocation_service_binding_lifecycle);
     RUN_TEST(
@@ -236,7 +240,8 @@ void run_test_pki_suite(void)
     RUN_TEST(test_phase137_client_root_cache_import_refresh_and_rollback);
     RUN_TEST(test_phase138_service_binding_tracks_newer_root_versions);
     RUN_TEST(test_phase139_root_versions_are_scoped_per_authority);
-    RUN_TEST(test_phase139_unpinned_multi_ca_root_import_rejects_spoofed_authority);
+    RUN_TEST(
+        test_phase139_unpinned_multi_ca_root_import_rejects_spoofed_authority);
     RUN_TEST(test_x509_real_baseline_size);
     RUN_TEST(test_phase93_crypto_direct_api_min_coverage);
 }
