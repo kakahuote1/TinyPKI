@@ -43,6 +43,9 @@ target_link_libraries(sm2_test_cert_flow PRIVATE tinypki)
 add_executable(sm2_test_merkle_flow src/app/demo_test_merkle_flow.c)
 target_link_libraries(sm2_test_merkle_flow PRIVATE tinypki)
 
+add_executable(sm2_bench_network_overhead src/app/bench_network_overhead.c)
+target_link_libraries(sm2_bench_network_overhead PRIVATE tinypki)
+
 set(TINYPKI_TEST_COMMON_SRCS
     tests/test_common.c
 )
