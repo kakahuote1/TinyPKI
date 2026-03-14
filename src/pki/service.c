@@ -342,16 +342,6 @@ void sm2_pki_service_release_revocation_binding(sm2_pki_service_state_t *state)
         service_finalize_state(state);
 }
 
-sm2_ic_error_t sm2_pki_service_query_revocation_binding(
-    sm2_pki_service_state_t *state, uint64_t serial_number, uint64_t now_ts,
-    sm2_rev_status_t *status, sm2_rev_source_t *source)
-{
-    if (!state || !status || !source || state->revocation_binding_retired)
-        return SM2_IC_ERR_VERIFY;
-
-    return sm2_rev_query(state->rev_ctx, serial_number, now_ts, status, source);
-}
-
 sm2_pki_error_t sm2_pki_service_create(sm2_pki_service_ctx_t **ctx,
     const uint8_t *issuer_id, size_t issuer_id_len,
     size_t expected_revoked_items, uint64_t filter_ttl_sec, uint64_t now_ts)

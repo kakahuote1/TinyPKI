@@ -679,6 +679,20 @@ sm2_ic_error_t sm2_rev_epoch_lookup(const sm2_rev_epoch_dir_t *directory,
     return SM2_IC_SUCCESS;
 }
 
+sm2_ic_error_t sm2_rev_epoch_lookup_cb(const sm2_implicit_cert_t *cert,
+    uint64_t now_ts, void *user_ctx, sm2_rev_status_t *status)
+{
+    if (!cert || !status || !user_ctx)
+        return SM2_IC_ERR_PARAM;
+
+    sm2_rev_lookup_ctx_t *ctx = (sm2_rev_lookup_ctx_t *)user_ctx;
+    if (!ctx->directory || !ctx->verify_fn)
+        return SM2_IC_ERR_PARAM;
+
+    return sm2_rev_epoch_lookup(ctx->directory, now_ts, cert->serial_number,
+        ctx->verify_fn, ctx->verify_user_ctx, status);
+}
+
 sm2_ic_error_t sm2_rev_epoch_switch(sm2_rev_epoch_dir_t **local_directory,
     const sm2_rev_epoch_dir_t *incoming_directory, uint64_t now_ts,
     sm2_rev_sync_verify_fn verify_fn, void *verify_user_ctx)

@@ -9,7 +9,7 @@
 
 TinyPKI 是一个专为Iot资源受限场景打造的高性能、轻量级公开密钥基础设施 C11 核心库。
 
-本项目基于 OpenSSL EVP 架构与国密算法族（SM2/SM3/SM4）深度定制，跳出了传统大体量 X.509 体系的包袱，原生提供 ECQV 隐式证书、Merkle 隐私撤销证明以及同步能力。
+本项目基于 OpenSSL EVP 架构与国密算法族（SM2/SM3/SM4）深度定制，跳出了传统大体量 X.509 体系的包袱，原生提供 ECQV 隐式证书、CA 签名的 Merkle 撤销根、携带式非吊销证明以及同步能力。
 
 无论是微控制器、智能网关还是需要极高并发吞吐的服务端集群，TinyPKI 都能提供开箱即用、安全且极简的集成体验。
 
@@ -22,9 +22,9 @@ TinyPKI 是一个专为Iot资源受限场景打造的高性能、轻量级公开
 * 🪶 **“轻量级”证书，专为弱网与物联网设计**
   
   传统数字证书动辄上千字节，在 NB-IoT、LoRa 等窄带网络中传输极其耗时。本项目采用基于国密算法的隐式证书（ECQV）技术，将证书体积极限压缩至传统证书的 **30% 以下（仅几十字节）**。极大降低了网络唤醒时间和传输功耗。
-* 🌳 **极速且保护隐私的证书吊销查询**
+* 🌳 **极速且保护隐私的证书吊销校验**
   
-  传统的 OCSP 或 CRL 往往存在查询慢、暴露用户隐私行为的缺陷。本项目采用“哈希树（Merkle Tree）”机制，轻量化设备仅需耗费极低带宽下载一小段证明，即可在本地**瞬间验证**证书是否被吊销。同时天然具备防追踪属性，保护设备侧查询的隐私安全。
+  传统的 OCSP 或 CRL 往往存在查询慢、暴露用户隐私行为的缺陷。本项目采用“CA 签名根 + 哈希树 absence proof”机制，由证书持有方在握手时直接携带精确的非吊销证明，对端仅需结合本地缓存的根记录即可**瞬间完成校验**。整个认证过程无需再向第三方在线查询，从而同时降低网络开销并隐藏具体查询目标。
 * 🛡️ **抗断网、抗恶意攻击的高可用集群**
   
   在真实的边缘计算场景下，网络离线或部分站点被黑客劫持是常态。本项目内置了分布式容错同步（Anti-Entropy）机制。只要设备能连上少数几个健康的节点，就能自动剔除恶意数据、修复状态，在**极端恶劣和不稳定的网络下依然能可靠提供身份认证服务**。
@@ -71,7 +71,7 @@ cmake --build build --target sm2_test_cert_flow -j 4
 ./build/sm2_test_cert_flow.exe
 ```
 
-**2. Merkle 撤销与大规模隐私查询性能模拟**
+**2. Merkle 撤销证明与批量压缩性能模拟**
 ```bash
 cmake --build build --target sm2_test_merkle_flow -j 4
 ./build/sm2_test_merkle_flow.exe
@@ -114,7 +114,7 @@ ctest --test-dir build --output-on-failure
 **TinyPKI** is a high-performance, C11-based PKI core framework specifically engineered for resource-constrained environments (such as IoT and edge computing nodes). Built on top of the OpenSSL EVP architecture and integrating the Chinese Commercial Cryptographic algorithms (SM2/SM3/SM4), it delivers:
 
 - **ECQV Implicit Certificates** designed for drastically reduced network transmission payloads compared to conventional X.509.
-- **Merkle-only Revocation Proofs** enabling fast, privacy-preserving non-membership checks with minimum bandwidth and scalable K-Anonymity resistance.
+- **CA-Signed Merkle Roots plus Proof-Carrying Non-Revocation Evidence** enabling exact offline revocation checks with low bandwidth and no third-party query exposure during authentication.
 - **BFT State Synchronization (Anti-Entropy)** mechanism ensuring robust consistency across decentralized edge nodes facing hostile environments, routing overrides, and temporal disconnectivity.
 - **Mutual Authentication & AEAD** session protection seamlessly bundled into one resilient pipeline utilizing SM4-GCM/CCM encryption.
 - **Misuse-Resistant Architecture** leveraging rigorous memory upper-boundaries and purely opaque contexts. Over 130+ rigorous unit & Byzantine integration edge-case tests (`test_all`) ensure flawless deployment in production from day one.

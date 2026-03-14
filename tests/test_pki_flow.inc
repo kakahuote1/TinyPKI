@@ -109,24 +109,20 @@ static void test_phase4_service_client_flow()
 
     const uint8_t msg[] = "PHASE4_FLOW_MESSAGE";
     sm2_auth_signature_t sig;
+    sm2_pki_revocation_evidence_t evidence;
+    sm2_pki_verify_request_t request;
     TEST_ASSERT(
-        sm2_pki_sign(client, msg, sizeof(msg) - 1, &sig) == SM2_PKI_SUCCESS,
-        "PKI Sign");
-    const sm2_implicit_cert_t *client_cert = NULL;
-    const sm2_ec_point_t *client_pub = NULL;
-    TEST_ASSERT(
-        pki_client_get_identity_material(client, &client_cert, &client_pub),
-        "Get Client Material");
-
-    sm2_pki_verify_request_t request
-        = { client_cert, client_pub, msg, sizeof(msg) - 1, &sig };
+        pki_build_signed_verify_request(client, msg, sizeof(msg) - 1, auth_now,
+            &sig, &evidence, &request),
+        "Build Signed Verify Request");
     size_t matched = 0;
     TEST_ASSERT(
         sm2_pki_verify(client, &request, auth_now, &matched) == SM2_PKI_SUCCESS,
         "PKI Verify");
     TEST_ASSERT(matched == 0, "Matched Default CA");
 
-    sm2_auth_verify_item_t item = { client_pub, msg, sizeof(msg) - 1, &sig };
+    sm2_auth_verify_item_t item
+        = { request.public_key, msg, sizeof(msg) - 1, &sig };
     size_t valid_count = 0;
     TEST_ASSERT(sm2_pki_batch_verify(&item, 1, &valid_count) == SM2_PKI_SUCCESS,
         "PKI Batch Verify");
@@ -140,8 +136,8 @@ static void test_phase4_service_client_flow()
 
     const uint8_t transcript[] = "PHASE4_SECURE_SESSION";
     uint8_t session_key[16];
-    TEST_ASSERT(sm2_pki_key_agreement(client, &eph_priv, client_pub, &eph_pub,
-                    transcript, sizeof(transcript) - 1, session_key,
+    TEST_ASSERT(sm2_pki_key_agreement(client, &eph_priv, request.public_key,
+                    &eph_pub, transcript, sizeof(transcript) - 1, session_key,
                     sizeof(session_key))
             == SM2_PKI_SUCCESS,
         "Key Agreement");
@@ -222,19 +218,12 @@ static void test_phase4_revocation_ocsp_and_cross_domain()
 
     const uint8_t msg[] = "CROSS_DOMAIN_AUTH";
     sm2_auth_signature_t sig_b;
+    sm2_pki_revocation_evidence_t evidence_b;
+    sm2_pki_verify_request_t req_auth;
     TEST_ASSERT(
-        sm2_pki_sign(client_b, msg, sizeof(msg) - 1, &sig_b) == SM2_PKI_SUCCESS,
-        "Sign B");
-    const sm2_implicit_cert_t *client_b_cert = NULL;
-    const sm2_ec_point_t *client_b_pub = NULL;
-    TEST_ASSERT(pki_client_get_identity_material(
-                    client_b, &client_b_cert, &client_b_pub),
-        "Get ClientB Material");
-    sm2_pki_verify_request_t req_auth = { .cert = client_b_cert,
-        .public_key = client_b_pub,
-        .message = msg,
-        .message_len = sizeof(msg) - 1,
-        .signature = &sig_b };
+        pki_build_signed_verify_request(client_b, msg, sizeof(msg) - 1,
+            auth_now + 20, &sig_b, &evidence_b, &req_auth),
+        "Build Cross Verify Request");
 
     size_t matched = 0;
     TEST_ASSERT(sm2_pki_verify(verifier, &req_auth, auth_now + 20, &matched)
@@ -251,6 +240,16 @@ static void test_phase4_revocation_ocsp_and_cross_domain()
             == SM2_PKI_SUCCESS,
         "Revoke Check Revoked");
     TEST_ASSERT(status == SM2_REV_STATUS_REVOKED, "Status Revoked");
+
+    sm2_rev_root_record_t newer_root_b;
+    memset(&newer_root_b, 0, sizeof(newer_root_b));
+    TEST_ASSERT(sm2_pki_service_get_root_record(svc_b, &newer_root_b)
+            == SM2_PKI_SUCCESS,
+        "Get New CA_B Root");
+    TEST_ASSERT(sm2_pki_client_import_root_record(
+                    verifier, &newer_root_b, auth_now + 50)
+            == SM2_PKI_SUCCESS,
+        "Import New CA_B Root");
 
     TEST_ASSERT(sm2_pki_verify(verifier, &req_auth, auth_now + 50, &matched)
             == SM2_PKI_ERR_VERIFY,
