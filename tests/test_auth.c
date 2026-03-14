@@ -41,6 +41,8 @@ void run_test_auth_suite(void)
 {
     RUN_TEST(test_auth_sign_pool);
     RUN_TEST(test_auth_batch_verify);
+    RUN_TEST(test_auth_batch_verify_param_cleanup_path);
+    RUN_TEST(test_auth_rejects_invalid_public_points);
     RUN_TEST(test_auth_cleanup_idempotent_and_param_defense);
     RUN_TEST(test_auth_cert_policy_time_and_usage);
     RUN_TEST(test_auth_cross_domain_unified);

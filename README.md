@@ -1,4 +1,4 @@
-﻿# TinyPKI: Lightweight & Resilient PKI for Constrained Environments
+# TinyPKI: Lightweight & Resilient PKI for Constrained Environments
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Language](https://img.shields.io/badge/Language-C11-orange.svg)]()
@@ -7,33 +7,33 @@
 
 [**English Summary**](#english-summary) | [**快速开始**](#-快速开始-getting-started) | [**演示与测试**](#-场景演示-demos) | [**项目文档**](#-文档与接口-documentation--api)
 
-TinyPKI 是一个专为Iot资源受限场景打造的高性能、轻量级公开密钥基础设施 C11 核心库。
+TinyPKI 是一个面向 IoT 资源受限、弱网与边缘节点场景的轻量 PKI C11 核心库，覆盖证书签发、吊销证明、认证与会话保护等主链路能力。
 
-本项目基于 OpenSSL EVP 架构与国密算法族（SM2/SM3/SM4）深度定制，跳出了传统大体量 X.509 体系的包袱，原生提供 ECQV 隐式证书、CA 签名的 Merkle 撤销根、携带式非吊销证明以及同步能力。
+本项目基于 OpenSSL EVP 架构与国密算法族（SM2/SM3/SM4）实现，围绕 ECQV 隐式证书构建，并原生提供 CA 签名的 Merkle 撤销根、携带式非吊销证明、撤销状态同步以及面向 service/client 的高层 PKI API。
 
-无论是微控制器、智能网关还是需要极高并发吞吐的服务端集群，TinyPKI 都能提供开箱即用、安全且极简的集成体验。
+无论是微控制器、智能网关，还是需要本地化吊销校验与安全会话建立的边缘服务组件，TinyPKI 都能提供较低集成成本且接口清晰的实现基础。
 
 ---
 
 ## ✨ 核心特性 (Key Features)
 
-本项目具备以下四大核心应用价值：
+本项目具备以下几类核心能力：
 
 * 🪶 **“轻量级”证书，专为弱网与物联网设计**
   
-  传统数字证书动辄上千字节，在 NB-IoT、LoRa 等窄带网络中传输极其耗时。本项目采用基于国密算法的隐式证书（ECQV）技术，将证书体积极限压缩至传统证书的 **30% 以下（仅几十字节）**。极大降低了网络唤醒时间和传输功耗。
+  传统数字证书动辄上千字节，在 NB-IoT、LoRa 等窄带网络中传输成本很高。本项目采用基于国密算法的隐式证书（ECQV）技术，提供请求生成、CA 签发、终端侧公私钥重构与证书一致性验证的完整链路，显著降低证书载荷与设备侧处理负担。
 * 🌳 **极速且保护隐私的证书吊销校验**
   
-  传统的 OCSP 或 CRL 往往存在查询慢、暴露用户隐私行为的缺陷。本项目采用“CA 签名根 + 哈希树 absence proof”机制，由证书持有方在握手时直接携带精确的非吊销证明，对端仅需结合本地缓存的根记录即可**瞬间完成校验**。整个认证过程无需再向第三方在线查询，从而同时降低网络开销并隐藏具体查询目标。
-* 🛡️ **抗断网、抗恶意攻击的高可用集群**
+  传统的 OCSP 或 CRL 往往带来额外在线查询和隐私暴露。本项目采用“CA 签名根记录 + Merkle member/absence proof”机制，由证书持有方在认证时直接携带精确的非吊销证明，对端结合本地缓存根记录即可完成离线校验，并支持根记录刷新与携带式证据导出。
+* 🛡️ **面向断网与多节点同步的撤销状态维护**
   
-  在真实的边缘计算场景下，网络离线或部分站点被黑客劫持是常态。本项目内置了分布式容错同步（Anti-Entropy）机制。只要设备能连上少数几个健康的节点，就能自动剔除恶意数据、修复状态，在**极端恶劣和不稳定的网络下依然能可靠提供身份认证服务**。
+  在边缘与弱连接场景中，撤销状态往往需要跨节点同步而不是依赖单点在线查询。本项目提供 delta/heartbeat、重定向候选、quorum/BFT 检查以及 epoch/cached proof 相关能力，用于在断网、时钟漂移和部分节点异常时维持撤销状态的一致性与可用性。
 * ⚡ **开箱即用的“认证即加密”全链路保护**
   
-  不再需要复杂的二次开发，提供一站式接入。设备之间可以在双向身份核验的同时，自动协商出一次性“会话密钥”，立刻启动基于国密 SM4 的金融级加密会话机制，杜绝窃听与报文伪造。
-* 🏗️ **极致的安全守护与防滥用设计**
+  项目同时提供静态与临时密钥握手路径。设备可以在双向身份核验、吊销证据校验和用途检查通过后，基于 canonical handshake binding 协商会话密钥，并直接接入 SM4-GCM/CCM 的 AEAD 会话保护。
+* 🏗️ **默认安全策略与防误用设计**
   
-  代码库严格限制内存占用上限，自带抗网络泛洪攻击保护。不仅运行飞快，而且对错误调用有强防范力，可以直接用于对抗性高、安全性要求严苛的生产环境。
+  公开 API 采用 opaque handle 封装，并在高层流程中默认要求可信 CA、非吊销证据、密钥用途与握手绑定等安全前提；同时提供统一错误映射、显式边界检查以及更易于审计的状态生命周期管理。
 
 ---
 
@@ -57,7 +57,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j 4
 ```
 
-构建完成后，主库静态目标 `tinypki` 即已就绪。您可在自己的 `CMakeLists.txt` 中通过 `target_link_libraries(your_app PRIVATE tinypki)` 直接引用。
+构建完成后，主库静态目标 `tinypki`、场景 demo 与各测试目标即已就绪。您可在自己的 `CMakeLists.txt` 中通过 `target_link_libraries(your_app PRIVATE tinypki)` 直接引用。
 
 ---
 
@@ -65,23 +65,22 @@ cmake --build build -j 4
 
 项目中内置了贴近真实业务场景的演练程序，助您快速理解核心 PKI 交互流。编译完毕后可直接执行：
 
-**1. 证书生命周期主链路 (签发/认证/双向加密/撤销拦截)**
+**1. 证书生命周期主链路（签发 / 携带式非吊销证明导出 / 认证 / 撤销拦截）**
 ```bash
 cmake --build build --target sm2_test_cert_flow -j 4
 ./build/sm2_test_cert_flow.exe
 ```
 
-**2. Merkle 撤销证明与批量压缩性能模拟**
+**2. Merkle Root Hash、member/absence proof 与 multiproof 压缩演示**
 ```bash
 cmake --build build --target sm2_test_merkle_flow -j 4
 ./build/sm2_test_merkle_flow.exe
 ```
-
 ---
 
 ## 🧪 测试验证 (Testing)
 
-TinyPKI 实施 100% 测试覆盖策略（含网络欺骗、负面边界截断、BFT故障转移等 130+ 实战用例）。
+当前仓库测试主链路由 `ctest` 与 `test_all` 两个入口组成。按当前基线，`ctest` 拆分为 6 个 suite，`test_all` 聚合执行 82 个用例。
 
 **运行全量自动化集成测试：**
 ```bash
@@ -92,32 +91,43 @@ ctest --test-dir build --output-on-failure
 ```bash
 ./build/test_all.exe
 ```
-> 为方便审计与排查，完整的测试已按领域拆分。您可单独执行 `suite_ecqv` (证书构造)、`suite_revoke` (BFT集群防伪同步)、`suite_auth` (会话建立)、`suite_merkle` (哈希树证明与压缩) 等套件模块。
+> 为方便审计与排查，完整测试已按领域拆分。当前可单独执行：
+> `suite_ecqv`（隐式证书构造与验证）、
+> `suite_revoke`（撤销同步与 BFT 路径）、
+> `suite_auth`（认证与会话保护）、
+> `suite_pki`（服务端 / 客户端主流程与安全策略）、
+> `suite_pki_internal`（PKI 内部一致性与回滚路径）、
+> `suite_merkle`（哈希树证明与压缩）。
+>
+> 例如只运行 PKI 相关测试：
+> ```bash
+> ctest --test-dir build -R suite_pki --output-on-failure
+> ```
 
 ---
 
 ## 📖 文档与接口 (Documentation & API)
 
-公开安全接口采用单一、清晰明了的命名空间设定。接入时，只需包含需要引用业务能力的对应头文件即可：
+公开安全接口采用清晰一致的命名空间。接入时，可按能力维度包含对应头文件：
 
-* `include/sm2_implicit_cert.h`: 证书物理结构与编解码规则定义
-* `include/sm2_revocation.h` / `sm2_revocation_sync.h`: 撤销池生命周期维度与分布式 BFT 状态维护
-* `include/sm2_auth.h`: 身份鉴权验证与会话加密密钥托管
-* `include/sm2_crypto.h`: 底层通用密码学安全门限封装
-* `include/sm2_pki_service.h` / `sm2_pki_client.h`: 面向 CA 服务端 / IoT 设备的全局流程 API (全 Opaque Handle 隔离)
+* `include/sm2_implicit_cert.h`: ECQV 请求生成、CA 签发、证书验证与终端侧密钥重构
+* `include/sm2_revocation.h`: Merkle 根记录、member/absence proof、multiproof、epoch 缓存与撤销同步/BFT 辅助能力
+* `include/sm2_auth.h`: 认证请求校验、revocation policy、握手绑定、双向握手与 AEAD 会话保护
+* `include/sm2_crypto.h`: 底层签名、验签、随机数、哈希、AEAD 以及统一 PKI 错误映射
+* `include/sm2_pki_service.h` / `sm2_pki_client.h`: 面向内存态 CA/RA 服务端与设备侧客户端的高层流程 API（Opaque Handle 隔离）
 
 
 ---
 
 ## 🌍 English Summary
 
-**TinyPKI** is a high-performance, C11-based PKI core framework specifically engineered for resource-constrained environments (such as IoT and edge computing nodes). Built on top of the OpenSSL EVP architecture and integrating the Chinese Commercial Cryptographic algorithms (SM2/SM3/SM4), it delivers:
+**TinyPKI** is a lightweight C11 PKI core for constrained IoT, weakly connected, and edge deployment scenarios. Built on top of OpenSSL EVP with SM2/SM3/SM4, it provides end-to-end flows for ECQV implicit certificates, CA-signed Merkle revocation roots, proof-carrying non-revocation evidence, and high-level PKI/auth/session APIs.
 
-- **ECQV Implicit Certificates** designed for drastically reduced network transmission payloads compared to conventional X.509.
-- **CA-Signed Merkle Roots plus Proof-Carrying Non-Revocation Evidence** enabling exact offline revocation checks with low bandwidth and no third-party query exposure during authentication.
-- **BFT State Synchronization (Anti-Entropy)** mechanism ensuring robust consistency across decentralized edge nodes facing hostile environments, routing overrides, and temporal disconnectivity.
-- **Mutual Authentication & AEAD** session protection seamlessly bundled into one resilient pipeline utilizing SM4-GCM/CCM encryption.
-- **Misuse-Resistant Architecture** leveraging rigorous memory upper-boundaries and purely opaque contexts. Over 130+ rigorous unit & Byzantine integration edge-case tests (`test_all`) ensure flawless deployment in production from day one.
+- **ECQV Implicit Certificate Flows** covering request generation, CA issuance, endpoint key reconstruction, and certificate verification with substantially smaller payloads than conventional X.509.
+- **CA-Signed Merkle Revocation Roots and Carried Proofs** supporting exact offline non-revocation checks via member/absence proofs and cached root records.
+- **Revocation State Sync Tooling** including delta/heartbeat refresh, redirect hints, quorum/BFT helpers, multiproof compression, and epoch/cached proof support.
+- **Mutual Authentication and Secure Sessions** spanning static or ephemeral key agreement, canonical handshake binding, key-usage enforcement, and SM4-GCM/CCM AEAD protection.
+- **Misuse-Resistant High-Level APIs** built around opaque handles, secure defaults, unified error mapping, and a current automated test baseline of 82 cases across `ctest` and `test_all`.
 
 ## 📄 开源许可证 (License)
 
