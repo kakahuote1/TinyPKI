@@ -46,9 +46,8 @@ void sm2_pki_rev_snapshot_restore(sm2_rev_ctx_t *dst, sm2_rev_ctx_t **snapshot)
 
 sm2_ic_error_t sm2_pki_rev_prepare_root_publication(const sm2_rev_ctx_t *ctx,
     uint64_t now_ts, sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
-    const uint8_t *authority_id, size_t authority_id_len,
-    sm2_rev_tree_t **tree, sm2_rev_root_record_t *root_record,
-    uint64_t *root_valid_until)
+    const uint8_t *authority_id, size_t authority_id_len, sm2_rev_tree_t **tree,
+    sm2_rev_root_record_t *root_record, uint64_t *root_valid_until)
 {
     return sm2_rev_internal_prepare_root_publication(ctx, now_ts, sign_fn,
         sign_user_ctx, authority_id, authority_id_len, tree, root_record,

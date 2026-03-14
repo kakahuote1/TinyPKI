@@ -519,8 +519,8 @@ sm2_ic_error_t sm2_rev_root_encode(const sm2_rev_root_record_t *root_record,
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    ret = cbor_put_bytes(root_record->authority_id, root_record->authority_id_len,
-        output, *output_len, &off);
+    ret = cbor_put_bytes(root_record->authority_id,
+        root_record->authority_id_len, output, *output_len, &off);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 

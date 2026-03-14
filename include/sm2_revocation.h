@@ -525,11 +525,10 @@ extern "C"
     sm2_ic_error_t sm2_rev_absence_proof_decode(
         sm2_rev_absence_proof_t *proof, const uint8_t *input, size_t input_len);
 
-    sm2_ic_error_t sm2_rev_root_sign_with_authority(
-        const sm2_rev_tree_t *tree, const uint8_t *authority_id,
-        size_t authority_id_len, uint64_t valid_from, uint64_t valid_until,
-        sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
-        sm2_rev_root_record_t *root_record);
+    sm2_ic_error_t sm2_rev_root_sign_with_authority(const sm2_rev_tree_t *tree,
+        const uint8_t *authority_id, size_t authority_id_len,
+        uint64_t valid_from, uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn,
+        void *sign_user_ctx, sm2_rev_root_record_t *root_record);
     sm2_ic_error_t sm2_rev_root_sign(const sm2_rev_tree_t *tree,
         uint64_t valid_from, uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn,
         void *sign_user_ctx, sm2_rev_root_record_t *root_record);

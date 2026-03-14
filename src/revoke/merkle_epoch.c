@@ -271,10 +271,9 @@ sm2_ic_error_t merkle_epoch_directory_clone(
 }
 
 sm2_ic_error_t sm2_rev_epoch_dir_build_with_authority(
-    const sm2_rev_tree_t *tree, uint64_t epoch_id,
-    const uint8_t *authority_id, size_t authority_id_len,
-    size_t cache_top_levels, uint64_t valid_from, uint64_t valid_until,
-    sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
+    const sm2_rev_tree_t *tree, uint64_t epoch_id, const uint8_t *authority_id,
+    size_t authority_id_len, size_t cache_top_levels, uint64_t valid_from,
+    uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
     sm2_rev_epoch_dir_t **directory)
 {
     if (!tree || !directory || !sign_fn)
@@ -303,9 +302,8 @@ sm2_ic_error_t sm2_rev_epoch_dir_build_with_authority(
     state->epoch_id = epoch_id;
     state->tree_level_count = tree->level_count;
 
-    ret = sm2_rev_root_sign_with_authority(tree, authority_id,
-        authority_id_len, valid_from, valid_until, sign_fn, sign_user_ctx,
-        &state->root_record);
+    ret = sm2_rev_root_sign_with_authority(tree, authority_id, authority_id_len,
+        valid_from, valid_until, sign_fn, sign_user_ctx, &state->root_record);
     if (ret != SM2_IC_SUCCESS)
     {
         epoch_dir_reset(state);

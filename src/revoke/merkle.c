@@ -481,7 +481,8 @@ sm2_ic_error_t merkle_serialize_root_for_auth(
 
     merkle_u64_to_be((uint64_t)root_record->authority_id_len, output + off);
     off += 8U;
-    memcpy(output + off, root_record->authority_id, root_record->authority_id_len);
+    memcpy(
+        output + off, root_record->authority_id, root_record->authority_id_len);
     off += root_record->authority_id_len;
 
     merkle_u64_to_be(root_record->root_version, output + off);
