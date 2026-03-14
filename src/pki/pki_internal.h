@@ -24,16 +24,15 @@ void sm2_pki_rev_set_root_valid_until(
 sm2_pki_error_t sm2_pki_service_acquire_revocation_binding(
     sm2_pki_service_ctx_t *ctx, sm2_pki_service_state_t **bound_state);
 void sm2_pki_service_release_revocation_binding(sm2_pki_service_state_t *state);
-sm2_ic_error_t sm2_pki_service_query_revocation_binding(
-    sm2_pki_service_state_t *state, uint64_t serial_number, uint64_t now_ts,
-    sm2_rev_status_t *status, sm2_rev_source_t *source);
 
 typedef struct
 {
     bool used;
     bool has_root_record;
+    bool has_pinned_ca_index;
     uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
     size_t authority_id_len;
+    size_t pinned_ca_index;
     sm2_rev_root_record_t root_record;
     uint64_t highest_seen_root_version;
 } sm2_pki_root_cache_entry_t;
@@ -80,8 +79,6 @@ struct sm2_pki_client_ctx_st
 
     sm2_auth_trust_store_t trust_store;
     sm2_pki_service_state_t *revocation_service;
-    sm2_auth_revocation_query_fn revocation_query_fn;
-    void *revocation_query_user_ctx;
     sm2_pki_root_cache_entry_t root_cache[SM2_AUTH_MAX_CA_STORE];
     size_t last_root_cache_index;
     bool has_last_root_cache_index;

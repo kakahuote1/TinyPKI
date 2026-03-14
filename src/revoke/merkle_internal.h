@@ -4,8 +4,8 @@
  * @file merkle_internal.h
  * @brief Internal shared declarations for Merkle accumulator sub-modules.
  *
- * This header is included by merkle.c, merkle_cbor.c, merkle_epoch.c
- * and merkle_k_anon.c.  It is NOT part of the public API.
+ * This header is included by merkle.c, merkle_cbor.c and merkle_epoch.c.
+ * It is NOT part of the public API.
  */
 
 #ifndef SM2_MERKLE_INTERNAL_H
@@ -156,10 +156,6 @@ extern "C"
         sm2_rev_epoch_dir_t *dst, const sm2_rev_epoch_dir_t *src);
 
     size_t merkle_expected_sibling_count(size_t leaf_count);
-
-    /* ---- SM3-based PRNG for k-anonymity ---- */
-    sm2_ic_error_t merkle_prng_next(
-        uint64_t seed, uint64_t *counter, uint64_t *out_value);
 
 #ifdef __cplusplus
 }

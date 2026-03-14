@@ -26,11 +26,18 @@ extern "C"
     typedef struct sm2_pki_client_ctx_st sm2_pki_client_ctx_t;
     typedef struct
     {
+        sm2_rev_root_record_t root_record;
+        sm2_rev_absence_proof_t absence_proof;
+    } sm2_pki_revocation_evidence_t;
+
+    typedef struct
+    {
         const sm2_implicit_cert_t *cert;
         const sm2_ec_point_t *public_key;
         const uint8_t *message;
         size_t message_len;
         const sm2_auth_signature_t *signature;
+        const sm2_pki_revocation_evidence_t *revocation_evidence;
     } sm2_pki_verify_request_t;
 
     /*
@@ -55,27 +62,21 @@ extern "C"
     bool sm2_pki_client_is_sign_pool_enabled(const sm2_pki_client_ctx_t *ctx);
 
     /*
-     * Bind the client to a service-managed revocation backend without
-     * exposing internal revocation state objects.
+     * Bind the client to a service-managed revocation backend for exporting
+     * local non-revocation evidence without exposing internal state objects.
      */
     sm2_pki_error_t sm2_pki_client_bind_revocation(
         sm2_pki_client_ctx_t *ctx, sm2_pki_service_ctx_t *service);
-
-    /*
-     * Install a caller-managed revocation query backend.
-     * This replaces any backend previously provided by
-     * sm2_pki_client_bind_revocation().
-     */
-    sm2_pki_error_t sm2_pki_client_set_revocation_query(
-        sm2_pki_client_ctx_t *ctx, sm2_auth_revocation_query_fn query_fn,
-        void *user_ctx);
 
     /*
      * Imports a CA-signed revocation root record into the client-side cache.
      * The record must verify under one of the configured trusted CA keys and
      * must not roll back the highest version previously accepted by this
      * client. Same-version refresh is allowed only when the root hash is
-     * unchanged.
+     * unchanged. When multiple trusted CAs are configured, first import for an
+     * authority requires an authority-specific CA binding established either by
+     * a local identity certificate, a bound service, or a successful carried-
+     * evidence verification for that authority.
      */
     sm2_pki_error_t sm2_pki_client_import_root_record(
         sm2_pki_client_ctx_t *ctx, const sm2_rev_root_record_t *root_record,
@@ -103,6 +104,15 @@ extern "C"
         size_t authority_id_len, sm2_rev_root_record_t *root_record);
 
     /*
+     * Exports the local client's exact non-revocation evidence bundle for the
+     * currently imported identity certificate. This requires a live service
+     * binding created via sm2_pki_client_bind_revocation().
+     */
+    sm2_pki_error_t sm2_pki_client_export_revocation_evidence(
+        sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
+        sm2_pki_revocation_evidence_t *evidence);
+
+    /*
      * Reconstructs local identity keys and verifies that the certificate is
      * consistent with the supplied issuer public key before importing it.
      */
@@ -122,9 +132,8 @@ extern "C"
         sm2_auth_signature_t *signature);
 
     /*
-     * High-level PKI verification always uses the client's configured
-     * revocation backend. Callers must leave request-level revocation fields
-     * at their default values and configure revocation via the client APIs.
+     * High-level PKI verification requires the peer to carry an exact
+     * non-revocation evidence bundle signed under the issuing CA root.
      */
     sm2_pki_error_t sm2_pki_verify(sm2_pki_client_ctx_t *ctx,
         const sm2_pki_verify_request_t *request, uint64_t now_ts,

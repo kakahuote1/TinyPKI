@@ -63,7 +63,6 @@ extern "C"
 #define SM2_REV_MERKLE_MAX_DEPTH 64
 #define SM2_REV_MERKLE_MULTI_MAX_QUERIES 64
 #define SM2_REV_MERKLE_EPOCH_MAX_CACHE_LEVELS 16
-#define SM2_REV_MERKLE_K_ANON_MAX 32
 #define SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN 64
 #define SM2_REV_REDIRECT_MAX_CANDIDATES 64
 #define SM2_REV_QUORUM_MAX_VOTES 256
@@ -286,25 +285,6 @@ extern "C"
     } sm2_rev_cached_member_proof_t;
 
     typedef struct sm2_rev_epoch_dir_st sm2_rev_epoch_dir_t;
-
-    typedef struct
-    {
-        uint64_t serials[SM2_REV_MERKLE_K_ANON_MAX];
-        size_t serial_count;
-        size_t real_index;
-        uint8_t risk_weight_k;
-        uint8_t risk_weight_span;
-        uint8_t risk_weight_nearest;
-    } sm2_rev_kanon_query_t;
-
-    typedef struct
-    {
-        uint8_t cluster_level; /* 0=random, 100=nearest clustering */
-        uint8_t risk_weight_k; /* 0 -> default 40 */
-        uint8_t risk_weight_span; /* 0 -> default 45 */
-        uint8_t risk_weight_nearest; /* 0 -> default 15 */
-        uint16_t candidate_scan_limit; /* 0 -> default 16*k */
-    } sm2_rev_kanon_policy_t;
 
     typedef struct
     {
@@ -625,20 +605,6 @@ extern "C"
     sm2_ic_error_t sm2_rev_epoch_switch(sm2_rev_epoch_dir_t **local_directory,
         const sm2_rev_epoch_dir_t *incoming_directory, uint64_t now_ts,
         sm2_rev_sync_verify_fn verify_fn, void *verify_user_ctx);
-
-    sm2_ic_error_t sm2_rev_kanon_build_query(uint64_t real_serial,
-        const uint64_t *decoy_serials, size_t decoy_count, size_t k,
-        uint64_t shuffle_seed, sm2_rev_kanon_query_t *query);
-    sm2_ic_error_t sm2_rev_kanon_build_query_with_policy(uint64_t real_serial,
-        const uint64_t *decoy_serials, size_t decoy_count, size_t k,
-        uint64_t shuffle_seed, const sm2_rev_kanon_policy_t *policy,
-        sm2_rev_kanon_query_t *query);
-    sm2_ic_error_t sm2_rev_kanon_export_serials(
-        const sm2_rev_kanon_query_t *query, uint64_t *serials,
-        size_t *serial_count);
-    sm2_ic_error_t sm2_rev_kanon_estimate_risk(
-        const sm2_rev_kanon_query_t *query, uint64_t real_serial,
-        double *risk_score, uint64_t *span);
 
     sm2_ic_error_t sm2_rev_epoch_lookup_cb(const sm2_implicit_cert_t *cert,
         uint64_t now_ts, void *user_ctx, sm2_rev_status_t *status);
