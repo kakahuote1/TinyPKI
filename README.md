@@ -1,4 +1,4 @@
-# TinyPKI: Lightweight & Resilient PKI for Constrained Environments
+﻿# TinyPKI: Lightweight & Resilient PKI for Constrained Environments
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Language](https://img.shields.io/badge/Language-C11-orange.svg)]()
@@ -21,7 +21,7 @@ TinyPKI 是一个面向 IoT 资源受限、弱网与边缘节点场景的轻量 
 
 * 🪶 **“轻量级”证书，专为弱网与物联网设计**
   
-  传统数字证书动辄上千字节，在 NB-IoT、LoRa 等窄带网络中传输成本很高。本项目采用基于国密算法的隐式证书（ECQV）技术，提供请求生成、CA 签发、终端侧公私钥重构与证书一致性验证的完整链路，显著降低证书载荷与设备侧处理负担。
+  传统数字证书动辄上千字节，在 NB-IoT、LoRa 等窄带网络中传输成本很高。本项目采用基于国密算法的隐式证书（ECQV）技术，提供请求生成、CA 签发、终端侧公私钥重构与证书一致性验证的完整链路，显著降低证书载荷与设备侧处理负担。当前仓库内 benchmark 快照下，ECQV 隐式证书编码为 `79 bytes`，对照本机生成的 X.509 DER 基线 `691 bytes`，约为其 `11.43%`。
 * 🌳 **极速且保护隐私的证书吊销校验**
   
   传统的 OCSP 或 CRL 往往带来额外在线查询和隐私暴露。本项目采用“CA 签名根记录 + Merkle member/absence proof”机制，由证书持有方在认证时直接携带精确的非吊销证明，对端结合本地缓存根记录即可完成离线校验，并支持根记录刷新与携带式证据导出。
@@ -57,7 +57,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j 4
 ```
 
-构建完成后，主库静态目标 `tinypki`、场景 demo 与各测试目标即已就绪。您可在自己的 `CMakeLists.txt` 中通过 `target_link_libraries(your_app PRIVATE tinypki)` 直接引用。
+构建完成后，主库静态目标 `tinypki`、场景 demo、benchmark 与各测试目标即已就绪。您可在自己的 `CMakeLists.txt` 中通过 `target_link_libraries(your_app PRIVATE tinypki)` 直接引用。
 
 ---
 
@@ -91,6 +91,18 @@ ctest --test-dir build --output-on-failure
 ```bash
 ./build/test_all.exe
 ```
+
+**运行载荷 / 时延 benchmark：**
+```bash
+cmake --build build --target sm2_bench_network_overhead -j 4
+./build/sm2_bench_network_overhead.exe
+```
+
+**输出结构化 benchmark 结果：**
+```bash
+./build/sm2_bench_network_overhead.exe ./tmp/bench_network_overhead.json
+```
+
 > 为方便审计与排查，完整测试已按领域拆分。当前可单独执行：
 > `suite_ecqv`（隐式证书构造与验证）、
 > `suite_revoke`（撤销同步与 BFT 路径）、
@@ -124,6 +136,7 @@ ctest --test-dir build --output-on-failure
 **TinyPKI** is a lightweight C11 PKI core for constrained IoT, weakly connected, and edge deployment scenarios. Built on top of OpenSSL EVP with SM2/SM3/SM4, it provides end-to-end flows for ECQV implicit certificates, CA-signed Merkle revocation roots, proof-carrying non-revocation evidence, and high-level PKI/auth/session APIs.
 
 - **ECQV Implicit Certificate Flows** covering request generation, CA issuance, endpoint key reconstruction, and certificate verification with substantially smaller payloads than conventional X.509.
+- **Measured Footprint Snapshot**: the current in-repo benchmark reports a `79-byte` ECQV implicit certificate versus a `691-byte` X.509 DER baseline, with a `143-byte` carried non-revocation evidence bundle and a `292-byte` authentication bundle.
 - **CA-Signed Merkle Revocation Roots and Carried Proofs** supporting exact offline non-revocation checks via member/absence proofs and cached root records.
 - **Revocation State Sync Tooling** including delta/heartbeat refresh, redirect hints, quorum/BFT helpers, multiproof compression, and epoch/cached proof support.
 - **Mutual Authentication and Secure Sessions** spanning static or ephemeral key agreement, canonical handshake binding, key-usage enforcement, and SM4-GCM/CCM AEAD protection.
