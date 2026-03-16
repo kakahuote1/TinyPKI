@@ -26,3 +26,5 @@ build_*check/
 build_demo_check/
 build_log.txt
 test_log.txt
+
+technical_note/
