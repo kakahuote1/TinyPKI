@@ -1025,6 +1025,142 @@ static void test_phase138_service_binding_tracks_newer_root_versions()
     TEST_PASS();
 }
 
+static void test_phase140_compact_evidence_requires_matching_cached_root()
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P140_ROOT_CA";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 32, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+
+    const uint8_t signer_id[] = "P140_SIGNER";
+    const uint8_t aux_id[] = "P140_AUX";
+    TEST_ASSERT(sm2_pki_identity_register(service, signer_id,
+                    sizeof(signer_id) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Signer Register");
+    TEST_ASSERT(sm2_pki_identity_register(service, aux_id, sizeof(aux_id) - 1,
+                    SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Aux Register");
+
+    sm2_ic_cert_request_t req_signer;
+    sm2_private_key_t temp_signer;
+    sm2_private_key_t temp_aux;
+    sm2_ic_cert_result_t cert_signer;
+    sm2_ic_cert_result_t cert_aux;
+    memset(&req_signer, 0, sizeof(req_signer));
+    memset(&cert_signer, 0, sizeof(cert_signer));
+    memset(&cert_aux, 0, sizeof(cert_aux));
+
+    TEST_ASSERT(pki_create_and_authorize_request(service, signer_id,
+                    sizeof(signer_id) - 1, SM2_KU_DIGITAL_SIGNATURE,
+                    &req_signer, &temp_signer),
+        "Signer Request");
+    TEST_ASSERT(test_pki_issue_cert(service, &req_signer, &cert_signer)
+            == SM2_PKI_SUCCESS,
+        "Signer Issue");
+    TEST_ASSERT(pki_issue_identity_cert(service, aux_id, sizeof(aux_id) - 1,
+                    SM2_KU_DIGITAL_SIGNATURE, &cert_aux, &temp_aux),
+        "Aux Issue");
+
+    sm2_ec_point_t ca_pub;
+    TEST_ASSERT(
+        sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
+        "Get CA Pub");
+
+    sm2_pki_client_ctx_t *signer = NULL;
+    sm2_pki_client_ctx_t *verifier_warm = NULL;
+    sm2_pki_client_ctx_t *verifier_cold = NULL;
+    TEST_ASSERT(
+        sm2_pki_client_create(&signer, &ca_pub, service) == SM2_PKI_SUCCESS,
+        "Signer Init");
+    TEST_ASSERT(
+        sm2_pki_client_create(&verifier_warm, &ca_pub, NULL) == SM2_PKI_SUCCESS,
+        "Warm Verifier Init");
+    TEST_ASSERT(
+        sm2_pki_client_create(&verifier_cold, &ca_pub, NULL) == SM2_PKI_SUCCESS,
+        "Cold Verifier Init");
+    TEST_ASSERT(
+        sm2_pki_client_import_cert(signer, &cert_signer, &temp_signer, &ca_pub)
+            == SM2_PKI_SUCCESS,
+        "Signer Import");
+
+    const uint8_t msg[] = "P140_COMPACT";
+    uint64_t auth_now = test_cert_now(&cert_signer.cert);
+    sm2_auth_signature_t sig_full;
+    sm2_auth_signature_t sig_compact;
+    sm2_pki_revocation_evidence_t evidence_full;
+    sm2_pki_revocation_evidence_t evidence_compact;
+    sm2_pki_verify_request_t request_full;
+    sm2_pki_verify_request_t request_compact;
+    size_t matched = 0;
+    memset(&sig_full, 0, sizeof(sig_full));
+    memset(&sig_compact, 0, sizeof(sig_compact));
+    memset(&evidence_full, 0, sizeof(evidence_full));
+    memset(&evidence_compact, 0, sizeof(evidence_compact));
+    memset(&request_full, 0, sizeof(request_full));
+    memset(&request_compact, 0, sizeof(request_compact));
+
+    TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
+                    auth_now, &sig_full, &evidence_full, &request_full),
+        "Build Full Evidence");
+    TEST_ASSERT(evidence_full.mode == SM2_PKI_REV_EVIDENCE_FULL_ROOT,
+        "Full Evidence Mode");
+    TEST_ASSERT(sm2_pki_verify(verifier_warm, &request_full, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Full Verify Warms Root Cache");
+
+    TEST_ASSERT(
+        pki_build_signed_verify_request_compact(signer, msg, sizeof(msg) - 1,
+            auth_now, &sig_compact, &evidence_compact, &request_compact),
+        "Build Compact Evidence");
+    TEST_ASSERT(evidence_compact.mode == SM2_PKI_REV_EVIDENCE_CACHED_ROOT,
+        "Compact Evidence Mode");
+    TEST_ASSERT(evidence_compact.root_record.signature_len == 0,
+        "Compact Evidence Omits Root Record");
+    TEST_ASSERT(
+        sm2_pki_verify(verifier_warm, &request_compact, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Warm Verifier Accepts Compact Evidence");
+    TEST_ASSERT(
+        sm2_pki_verify(verifier_cold, &request_compact, auth_now, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Cold Verifier Rejects Compact Evidence");
+
+    TEST_ASSERT(sm2_pki_service_revoke(
+                    service, cert_aux.cert.serial_number, auth_now + 10)
+            == SM2_PKI_SUCCESS,
+        "Advance Root Version");
+    TEST_ASSERT(
+        pki_build_signed_verify_request_compact(signer, msg, sizeof(msg) - 1,
+            auth_now + 20, &sig_compact, &evidence_compact, &request_compact),
+        "Build Compact Evidence After Root Advance");
+    TEST_ASSERT(
+        sm2_pki_verify(verifier_warm, &request_compact, auth_now + 20, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Stale Warm Cache Rejects Advanced Compact Evidence");
+    TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
+                    auth_now + 20, &sig_full, &evidence_full, &request_full),
+        "Build Full Evidence After Root Advance");
+    TEST_ASSERT(
+        sm2_pki_verify(verifier_warm, &request_full, auth_now + 20, &matched)
+            == SM2_PKI_SUCCESS,
+        "Full Evidence Refreshes Cache");
+    TEST_ASSERT(
+        sm2_pki_verify(verifier_warm, &request_compact, auth_now + 20, &matched)
+            == SM2_PKI_SUCCESS,
+        "Refreshed Cache Accepts Compact Evidence");
+
+    sm2_pki_client_destroy(&verifier_cold);
+    sm2_pki_client_destroy(&verifier_warm);
+    sm2_pki_client_destroy(&signer);
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
 static void test_phase139_root_versions_are_scoped_per_authority()
 {
     sm2_pki_service_ctx_t *service_a = NULL;

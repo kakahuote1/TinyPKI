@@ -17,6 +17,10 @@ sm2_ic_error_t sm2_pki_rev_prepare_root_publication(const sm2_rev_ctx_t *ctx,
     uint64_t now_ts, sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
     const uint8_t *authority_id, size_t authority_id_len, sm2_rev_tree_t **tree,
     sm2_rev_root_record_t *root_record, uint64_t *root_valid_until);
+sm2_ic_error_t sm2_pki_rev_sign_existing_root(const sm2_rev_ctx_t *ctx,
+    const sm2_rev_tree_t *tree, uint64_t now_ts, sm2_rev_sync_sign_fn sign_fn,
+    void *sign_user_ctx, const uint8_t *authority_id, size_t authority_id_len,
+    sm2_rev_root_record_t *root_record, uint64_t *root_valid_until);
 void sm2_pki_rev_set_root_valid_until(
     sm2_rev_ctx_t *ctx, uint64_t root_valid_until);
 

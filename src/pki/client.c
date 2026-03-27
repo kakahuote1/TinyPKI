@@ -179,6 +179,51 @@ static sm2_pki_error_t pki_client_expected_authority_from_cert(
     return SM2_PKI_SUCCESS;
 }
 
+static void pki_client_fill_root_hint(
+    sm2_pki_cached_root_hint_t *hint, const sm2_rev_root_record_t *root_record)
+{
+    if (!hint)
+        return;
+
+    memset(hint, 0, sizeof(*hint));
+    if (!root_record)
+        return;
+
+    if (root_record->authority_id_len > 0)
+    {
+        memcpy(hint->authority_id, root_record->authority_id,
+            root_record->authority_id_len);
+    }
+    hint->authority_id_len = root_record->authority_id_len;
+    hint->root_version = root_record->root_version;
+    memcpy(hint->root_hash, root_record->root_hash, sizeof(hint->root_hash));
+}
+
+static bool pki_client_root_hint_matches_record(
+    const sm2_pki_cached_root_hint_t *hint,
+    const sm2_rev_root_record_t *root_record)
+{
+    if (!hint || !root_record)
+        return false;
+    if (!pki_client_authority_id_valid(
+            hint->authority_id, hint->authority_id_len))
+    {
+        return false;
+    }
+    if (hint->authority_id_len != root_record->authority_id_len
+        || memcmp(hint->authority_id, root_record->authority_id,
+               hint->authority_id_len)
+            != 0)
+    {
+        return false;
+    }
+    if (hint->root_version != root_record->root_version)
+        return false;
+    return memcmp(
+               hint->root_hash, root_record->root_hash, sizeof(hint->root_hash))
+        == 0;
+}
+
 static bool pki_client_local_authority_ca_index(
     const sm2_pki_client_state_t *state, const uint8_t *authority_id,
     size_t authority_id_len, size_t *matched_ca_index)
@@ -403,7 +448,7 @@ static sm2_pki_error_t pki_client_verify_without_revocation(
 
 static sm2_pki_error_t pki_client_export_bound_evidence(
     sm2_pki_client_state_t *state, uint64_t now_ts,
-    sm2_pki_revocation_evidence_t *evidence)
+    sm2_pki_revocation_evidence_t *evidence, bool compact_root_hint)
 {
     if (!state || !evidence || !state->has_identity_keys)
         return SM2_PKI_ERR_PARAM;
@@ -439,7 +484,11 @@ static sm2_pki_error_t pki_client_export_bound_evidence(
         return SM2_PKI_ERR_VERIFY;
 
     memset(evidence, 0, sizeof(*evidence));
-    evidence->root_record = entry->root_record;
+    evidence->mode = compact_root_hint ? SM2_PKI_REV_EVIDENCE_CACHED_ROOT
+                                       : SM2_PKI_REV_EVIDENCE_FULL_ROOT;
+    pki_client_fill_root_hint(&evidence->cached_root_hint, &entry->root_record);
+    if (!compact_root_hint)
+        evidence->root_record = entry->root_record;
 
     ret = sm2_pki_service_export_absence_proof(
         (sm2_pki_service_ctx_t *)state->revocation_service,
@@ -450,8 +499,8 @@ static sm2_pki_error_t pki_client_export_bound_evidence(
     if (evidence->absence_proof.target_serial != state->cert.serial_number)
         return SM2_PKI_ERR_VERIFY;
 
-    ic_ret = sm2_rev_absence_proof_verify_with_root(&evidence->root_record,
-        now_ts, &evidence->absence_proof, pki_client_root_record_verify_cb,
+    ic_ret = sm2_rev_absence_proof_verify_with_root(&entry->root_record, now_ts,
+        &evidence->absence_proof, pki_client_root_record_verify_cb,
         &verify_ctx);
     return sm2_pki_error_from_ic(ic_ret);
 }
@@ -461,6 +510,7 @@ static sm2_pki_error_t pki_client_verify_carried_evidence(
     const sm2_pki_revocation_evidence_t *evidence, uint64_t now_ts,
     size_t matched_ca_index)
 {
+    const sm2_pki_root_cache_entry_t *entry = NULL;
     if (!state || !cert || !evidence)
         return SM2_PKI_ERR_PARAM;
 
@@ -471,29 +521,51 @@ static sm2_pki_error_t pki_client_verify_carried_evidence(
     if (ret != SM2_PKI_SUCCESS)
         return ret;
 
-    if (evidence->root_record.authority_id_len != authority_id_len
-        || memcmp(evidence->root_record.authority_id, authority_id,
-               authority_id_len)
-            != 0)
-    {
-        return SM2_PKI_ERR_VERIFY;
-    }
     if (evidence->absence_proof.target_serial != cert->serial_number)
         return SM2_PKI_ERR_VERIFY;
 
     pki_client_root_verify_ctx_t verify_ctx = { .store = &state->trust_store,
         .require_specific_index = true,
         .required_index = matched_ca_index };
-    ret = pki_client_accept_root_record(
-        state, &evidence->root_record, now_ts, &verify_ctx);
-    if (ret != SM2_PKI_SUCCESS)
-        return ret;
-
-    const sm2_pki_root_cache_entry_t *entry
-        = pki_client_find_root_cache_entry_const(
-            state, authority_id, authority_id_len);
-    if (!entry)
-        return SM2_PKI_ERR_VERIFY;
+    switch (evidence->mode)
+    {
+        case SM2_PKI_REV_EVIDENCE_FULL_ROOT:
+            if (evidence->root_record.authority_id_len != authority_id_len
+                || memcmp(evidence->root_record.authority_id, authority_id,
+                       authority_id_len)
+                    != 0)
+            {
+                return SM2_PKI_ERR_VERIFY;
+            }
+            ret = pki_client_accept_root_record(
+                state, &evidence->root_record, now_ts, &verify_ctx);
+            if (ret != SM2_PKI_SUCCESS)
+                return ret;
+            entry = pki_client_find_root_cache_entry_const(
+                state, authority_id, authority_id_len);
+            if (!entry)
+                return SM2_PKI_ERR_VERIFY;
+            break;
+        case SM2_PKI_REV_EVIDENCE_CACHED_ROOT:
+            if (evidence->cached_root_hint.authority_id_len != authority_id_len
+                || memcmp(evidence->cached_root_hint.authority_id, authority_id,
+                       authority_id_len)
+                    != 0)
+            {
+                return SM2_PKI_ERR_VERIFY;
+            }
+            entry = pki_client_find_root_cache_entry_const(
+                state, authority_id, authority_id_len);
+            if (!entry || !entry->has_root_record
+                || !pki_client_root_hint_matches_record(
+                    &evidence->cached_root_hint, &entry->root_record))
+            {
+                return SM2_PKI_ERR_VERIFY;
+            }
+            break;
+        default:
+            return SM2_PKI_ERR_VERIFY;
+    }
 
     sm2_ic_error_t ic_ret = sm2_rev_absence_proof_verify_with_root(
         &entry->root_record, now_ts, &evidence->absence_proof,
@@ -793,7 +865,17 @@ sm2_pki_error_t sm2_pki_client_export_revocation_evidence(
     sm2_pki_client_state_t *state = pki_client_state(ctx);
     if (!ctx || !ctx->initialized || !state || !evidence)
         return SM2_PKI_ERR_PARAM;
-    return pki_client_export_bound_evidence(state, now_ts, evidence);
+    return pki_client_export_bound_evidence(state, now_ts, evidence, false);
+}
+
+sm2_pki_error_t sm2_pki_client_export_compact_revocation_evidence(
+    sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
+    sm2_pki_revocation_evidence_t *evidence)
+{
+    sm2_pki_client_state_t *state = pki_client_state(ctx);
+    if (!ctx || !ctx->initialized || !state || !evidence)
+        return SM2_PKI_ERR_PARAM;
+    return pki_client_export_bound_evidence(state, now_ts, evidence, true);
 }
 
 sm2_pki_error_t sm2_pki_client_import_cert(sm2_pki_client_ctx_t *ctx,

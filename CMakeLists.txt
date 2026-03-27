@@ -46,6 +46,12 @@ target_link_libraries(sm2_test_merkle_flow PRIVATE tinypki)
 add_executable(sm2_bench_network_overhead src/app/bench_network_overhead.c)
 target_link_libraries(sm2_bench_network_overhead PRIVATE tinypki)
 
+add_executable(sm2_bench_capability_suite src/app/bench_capability_suite.c)
+target_link_libraries(sm2_bench_capability_suite PRIVATE tinypki)
+if (NOT MSVC)
+    target_link_libraries(sm2_bench_capability_suite PRIVATE m)
+endif ()
+
 set(TINYPKI_TEST_COMMON_SRCS
     tests/test_common.c
 )

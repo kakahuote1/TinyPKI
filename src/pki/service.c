@@ -298,26 +298,38 @@ static sm2_ic_error_t service_merkle_verify_cb(void *user_ctx,
 }
 
 static sm2_ic_error_t service_publish_revocation_root(
-    sm2_pki_service_ctx_t *ctx, uint64_t now_ts)
+    sm2_pki_service_ctx_t *ctx, uint64_t now_ts, bool rebuild_tree)
 {
     sm2_pki_service_state_t *state = service_state(ctx);
     if (!ctx || !state)
         return SM2_IC_ERR_PARAM;
 
-    sm2_rev_tree_t *new_tree = NULL;
     sm2_rev_root_record_t new_root_record;
     uint64_t new_root_valid_until = 0;
     memset(&new_root_record, 0, sizeof(new_root_record));
 
-    sm2_ic_error_t ret
-        = sm2_pki_rev_prepare_root_publication(state->rev_ctx, now_ts,
+    sm2_ic_error_t ret = SM2_IC_SUCCESS;
+    if (rebuild_tree)
+    {
+        sm2_rev_tree_t *new_tree = NULL;
+        ret = sm2_pki_rev_prepare_root_publication(state->rev_ctx, now_ts,
             service_merkle_sign_cb, ctx, state->issuer_id, state->issuer_id_len,
             &new_tree, &new_root_record, &new_root_valid_until);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
 
-    sm2_rev_tree_cleanup(&state->rev_tree);
-    state->rev_tree = new_tree;
+        sm2_rev_tree_cleanup(&state->rev_tree);
+        state->rev_tree = new_tree;
+    }
+    else
+    {
+        ret = sm2_pki_rev_sign_existing_root(state->rev_ctx, state->rev_tree,
+            now_ts, service_merkle_sign_cb, ctx, state->issuer_id,
+            state->issuer_id_len, &new_root_record, &new_root_valid_until);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
+    }
+
     state->rev_root_record = new_root_record;
     sm2_pki_rev_set_root_valid_until(state->rev_ctx, new_root_valid_until);
     state->revocation_state_ready = true;
@@ -494,7 +506,7 @@ sm2_pki_error_t sm2_pki_service_create(sm2_pki_service_ctx_t **ctx,
     memcpy(state->issuer_id, issuer_id, issuer_id_len);
     state->issuer_id_len = issuer_id_len;
 
-    ic_ret = service_publish_revocation_root(state, now_ts);
+    ic_ret = service_publish_revocation_root(state, now_ts, true);
     if (ic_ret != SM2_IC_SUCCESS)
     {
         sm2_pki_service_destroy(&state);
@@ -611,7 +623,8 @@ sm2_pki_error_t sm2_pki_service_refresh_root(
 {
     if (!ctx || !ctx->initialized || !service_state(ctx))
         return SM2_PKI_ERR_PARAM;
-    return sm2_pki_error_from_ic(service_publish_revocation_root(ctx, now_ts));
+    return sm2_pki_error_from_ic(
+        service_publish_revocation_root(ctx, now_ts, false));
 }
 
 sm2_pki_error_t sm2_pki_identity_register(sm2_pki_service_ctx_t *ctx,
@@ -735,7 +748,7 @@ sm2_pki_error_t sm2_pki_service_revoke(
         return sm2_pki_error_from_ic(ret);
     }
 
-    ret = service_publish_revocation_root(ctx, now_ts);
+    ret = service_publish_revocation_root(ctx, now_ts, true);
     if (ret != SM2_IC_SUCCESS)
     {
         sm2_pki_rev_snapshot_restore(state->rev_ctx, &rollback);

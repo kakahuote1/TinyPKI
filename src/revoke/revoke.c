@@ -221,6 +221,25 @@ static sm2_ic_error_t rev_ctx_refresh_root_hash(sm2_rev_ctx_t *ctx)
     return ret;
 }
 
+static void rev_ctx_compute_publication_window(const sm2_rev_ctx_t *ctx,
+    uint64_t now_ts, uint64_t *valid_from, uint64_t *valid_until)
+{
+    uint64_t ttl = 300;
+
+    if (ctx && ctx->root_valid_ttl_sec != 0)
+        ttl = ctx->root_valid_ttl_sec;
+
+    if (valid_from)
+        *valid_from = now_ts > ttl ? now_ts - ttl : 0;
+    if (valid_until)
+    {
+        if (ttl <= UINT64_MAX - now_ts)
+            *valid_until = now_ts + ttl;
+        else
+            *valid_until = UINT64_MAX;
+    }
+}
+
 static void rev_state_reset(sm2_rev_ctx_t *ctx)
 {
     if (!ctx)
@@ -283,16 +302,9 @@ sm2_ic_error_t sm2_rev_internal_prepare_root_publication(
     *root_valid_until = 0;
     memset(root_record, 0, sizeof(*root_record));
 
-    uint64_t ttl = ctx->root_valid_ttl_sec;
-    if (ttl == 0)
-        ttl = 300;
-
-    uint64_t valid_from = now_ts > ttl ? now_ts - ttl : 0;
-    uint64_t valid_until = now_ts;
-    if (ttl <= UINT64_MAX - valid_until)
-        valid_until += ttl;
-    else
-        valid_until = UINT64_MAX;
+    uint64_t valid_from = 0;
+    uint64_t valid_until = 0;
+    rev_ctx_compute_publication_window(ctx, now_ts, &valid_from, &valid_until);
 
     sm2_ic_error_t ret = sm2_rev_tree_build(
         tree, ctx->revoked_serials, ctx->revoked_count, ctx->crl_version);
@@ -307,6 +319,44 @@ sm2_ic_error_t sm2_rev_internal_prepare_root_publication(
         sm2_rev_tree_cleanup(tree);
         return ret;
     }
+
+    *root_valid_until = root_record->valid_until;
+    return SM2_IC_SUCCESS;
+}
+
+sm2_ic_error_t sm2_pki_rev_sign_existing_root(const sm2_rev_ctx_t *ctx,
+    const sm2_rev_tree_t *tree, uint64_t now_ts, sm2_rev_sync_sign_fn sign_fn,
+    void *sign_user_ctx, const uint8_t *authority_id, size_t authority_id_len,
+    sm2_rev_root_record_t *root_record, uint64_t *root_valid_until)
+{
+    uint64_t valid_from = 0;
+    uint64_t valid_until = 0;
+    uint8_t tree_root_hash[SM2_REV_SYNC_DIGEST_LEN];
+
+    if (!ctx || !tree || !sign_fn || !root_record || !root_valid_until)
+        return SM2_IC_ERR_PARAM;
+    if ((!authority_id && authority_id_len > 0)
+        || authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
+    {
+        return SM2_IC_ERR_PARAM;
+    }
+
+    if (sm2_rev_tree_root_version(tree) != ctx->crl_version)
+        return SM2_IC_ERR_VERIFY;
+    if (sm2_rev_tree_get_root_hash(tree, tree_root_hash) != SM2_IC_SUCCESS)
+        return SM2_IC_ERR_VERIFY;
+    if (memcmp(tree_root_hash, ctx->root_hash, sizeof(tree_root_hash)) != 0)
+        return SM2_IC_ERR_VERIFY;
+
+    memset(root_record, 0, sizeof(*root_record));
+    *root_valid_until = 0;
+    rev_ctx_compute_publication_window(ctx, now_ts, &valid_from, &valid_until);
+
+    sm2_ic_error_t ret
+        = sm2_rev_root_sign_with_authority(tree, authority_id, authority_id_len,
+            valid_from, valid_until, sign_fn, sign_user_ctx, root_record);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
 
     *root_valid_until = root_record->valid_until;
     return SM2_IC_SUCCESS;

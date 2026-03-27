@@ -24,8 +24,25 @@ extern "C"
 
     typedef struct sm2_pki_service_ctx_st sm2_pki_service_ctx_t;
     typedef struct sm2_pki_client_ctx_st sm2_pki_client_ctx_t;
+
+    typedef enum
+    {
+        SM2_PKI_REV_EVIDENCE_FULL_ROOT = 0,
+        SM2_PKI_REV_EVIDENCE_CACHED_ROOT = 1
+    } sm2_pki_revocation_evidence_mode_t;
+
     typedef struct
     {
+        uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
+        size_t authority_id_len;
+        uint64_t root_version;
+        uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN];
+    } sm2_pki_cached_root_hint_t;
+
+    typedef struct
+    {
+        sm2_pki_revocation_evidence_mode_t mode;
+        sm2_pki_cached_root_hint_t cached_root_hint;
         sm2_rev_root_record_t root_record;
         sm2_rev_absence_proof_t absence_proof;
     } sm2_pki_revocation_evidence_t;
@@ -103,11 +120,33 @@ extern "C"
         size_t authority_id_len, sm2_rev_root_record_t *root_record);
 
     /*
-     * Exports the local client's exact non-revocation evidence bundle for the
-     * currently imported identity certificate. This requires a live service
+     * Exports the local client's exact non-revocation evidence bundle
+     * for the
+     * currently imported identity certificate. This requires a
+     * live service
      * binding created via sm2_pki_client_bind_revocation().
+     * The returned
+     * evidence carries the full CA-signed root record and
+     * works for cold-start
+     * verifiers that do not yet cache the issuer's
+     * root state.
      */
     sm2_pki_error_t sm2_pki_client_export_revocation_evidence(
+        sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
+        sm2_pki_revocation_evidence_t *evidence);
+
+    /*
+     * Exports a compact non-revocation evidence bundle for hot-path
+     * peers that
+     * already cache the same authority/root version locally.
+     * The proof carries
+     * only a root hint (authority + version + root
+     * hash) instead of the full
+     * signed root record and will be rejected
+     * by verifiers without a matching
+     * cached root.
+     */
+    sm2_pki_error_t sm2_pki_client_export_compact_revocation_evidence(
         sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
         sm2_pki_revocation_evidence_t *evidence);
 

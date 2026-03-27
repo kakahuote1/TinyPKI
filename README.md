@@ -103,6 +103,17 @@ cmake --build build --target sm2_bench_network_overhead -j 4
 ./build/sm2_bench_network_overhead.exe ./tmp/bench_network_overhead.json
 ```
 
+**运行能力实验集（revocation scaling / epoch cache / multiproof / delta / Zipf workload）：**
+```bash
+cmake --build build --target sm2_bench_capability_suite -j 4
+./build/sm2_bench_capability_suite.exe
+```
+
+**输出结构化能力实验结果（含 revoke publish / client refresh 中位时延摘要）：**
+```bash
+./build/sm2_bench_capability_suite.exe ./tmp/bench_capability_suite.json
+```
+
 > 为方便审计与排查，完整测试已按领域拆分。当前可单独执行：
 > `suite_ecqv`（隐式证书构造与验证）、
 > `suite_revoke`（撤销同步与 BFT 路径）、
