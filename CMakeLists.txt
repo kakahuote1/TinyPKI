@@ -51,6 +51,9 @@ target_link_libraries(sm2_bench_capability_suite PRIVATE tinypki)
 if (NOT MSVC)
     target_link_libraries(sm2_bench_capability_suite PRIVATE m)
 endif ()
+if (WIN32)
+    target_link_libraries(sm2_bench_capability_suite PRIVATE ws2_32)
+endif ()
 
 set(TINYPKI_TEST_COMMON_SRCS
     tests/test_common.c

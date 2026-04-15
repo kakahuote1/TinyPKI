@@ -114,6 +114,10 @@ cmake --build build --target sm2_bench_capability_suite -j 4
 ./build/sm2_bench_capability_suite.exe ./tmp/bench_capability_suite.json
 ```
 
+> `bench_capability_suite` 目前同时输出三类结果：
+> TinyPKI 主链路实测、基于 OpenSSL 本地生成并校验的真实 `CRL/OCSP` 基线、以及参考 CRLite 论文参数的 workload/CRLite 建模对比。
+> 当指定 JSON 输出路径时，还会自动生成同名 `.md` 表格报告，便于直接查看和写材料。
+
 > 为方便审计与排查，完整测试已按领域拆分。当前可单独执行：
 > `suite_ecqv`（隐式证书构造与验证）、
 > `suite_revoke`（撤销同步与 BFT 路径）、
