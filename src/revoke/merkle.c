@@ -41,8 +41,7 @@ sm2_ic_error_t merkle_hash_leaf(uint64_t serial_number, bool has_prev,
     uint8_t buf[26];
     buf[0] = 0x00;
     merkle_u64_to_be(serial_number, buf + 1);
-    buf[9] = (uint8_t)((has_prev ? 0x01U : 0x00U)
-        | (has_next ? 0x02U : 0x00U));
+    buf[9] = (uint8_t)((has_prev ? 0x01U : 0x00U) | (has_next ? 0x02U : 0x00U));
     merkle_u64_to_be(has_prev ? prev_serial : 0, buf + 10);
     merkle_u64_to_be(has_next ? next_serial : 0, buf + 18);
     return sm2_ic_sm3_hash(buf, sizeof(buf), out_hash);
@@ -285,8 +284,8 @@ bool merkle_find_serial(
     return left < tree->leaf_count && tree->serials[left] == serial;
 }
 
-static void merkle_fill_member_neighbors(const sm2_rev_tree_t *tree,
-    size_t index, sm2_rev_member_proof_t *proof)
+static void merkle_fill_member_neighbors(
+    const sm2_rev_tree_t *tree, size_t index, sm2_rev_member_proof_t *proof)
 {
     proof->has_prev = index > 0;
     proof->prev_serial = proof->has_prev ? tree->serials[index - 1] : 0;
@@ -302,8 +301,8 @@ static sm2_ic_error_t merkle_validate_member_shape(
     {
         return SM2_IC_ERR_VERIFY;
     }
-    if (proof->sibling_count != merkle_expected_sibling_count(
-            proof->leaf_count))
+    if (proof->sibling_count
+        != merkle_expected_sibling_count(proof->leaf_count))
     {
         return SM2_IC_ERR_VERIFY;
     }
@@ -398,8 +397,8 @@ sm2_ic_error_t sm2_rev_tree_verify_member(
     size_t level_count = proof->leaf_count;
     for (size_t i = 0; i < proof->sibling_count; i++)
     {
-        size_t sibling = (path_index % 2 == 0) ? (path_index + 1)
-                                               : (path_index - 1);
+        size_t sibling
+            = (path_index % 2 == 0) ? (path_index + 1) : (path_index - 1);
         if (sibling >= level_count)
             sibling = path_index;
         uint8_t expected_on_left = sibling < path_index ? 1U : 0U;
@@ -441,7 +440,8 @@ sm2_ic_error_t sm2_rev_tree_prove_absence(const sm2_rev_tree_t *tree,
         return SM2_IC_ERR_VERIFY;
 
     proof->has_anchor = true;
-    uint64_t anchor_serial = pos > 0 ? tree->serials[pos - 1] : tree->serials[0];
+    uint64_t anchor_serial
+        = pos > 0 ? tree->serials[pos - 1] : tree->serials[0];
     return sm2_rev_tree_prove_member(tree, anchor_serial, &proof->anchor_proof);
 }
 
@@ -484,8 +484,7 @@ sm2_ic_error_t sm2_rev_tree_verify_absence(
 
     if (proof->target_serial > anchor->serial_number)
     {
-        if (anchor->has_next
-            && proof->target_serial >= anchor->next_serial)
+        if (anchor->has_next && proof->target_serial >= anchor->next_serial)
         {
             return SM2_IC_ERR_VERIFY;
         }
@@ -494,8 +493,7 @@ sm2_ic_error_t sm2_rev_tree_verify_absence(
     }
     else
     {
-        if (anchor->has_prev
-            && proof->target_serial <= anchor->prev_serial)
+        if (anchor->has_prev && proof->target_serial <= anchor->prev_serial)
         {
             return SM2_IC_ERR_VERIFY;
         }

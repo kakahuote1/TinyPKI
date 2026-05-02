@@ -103,8 +103,8 @@ static void test_merkle_member_leaf_index_path_bound(void)
     uint64_t revoked[] = { 10, 20, 30, 40, 50, 60, 70, 80 };
     sm2_rev_tree_t *tree = NULL;
     uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN];
-    TEST_ASSERT(sm2_rev_tree_build(&tree, revoked,
-                    sizeof(revoked) / sizeof(revoked[0]), 1)
+    TEST_ASSERT(sm2_rev_tree_build(
+                    &tree, revoked, sizeof(revoked) / sizeof(revoked[0]), 1)
             == SM2_IC_SUCCESS,
         "Build tree");
     merkle_read_root_hash_or_fail(tree, root_hash);
@@ -116,8 +116,8 @@ static void test_merkle_member_leaf_index_path_bound(void)
 
     sm2_rev_member_proof_t tampered = proof;
     tampered.leaf_index = 4;
-    TEST_ASSERT(sm2_rev_tree_verify_member(root_hash, &tampered)
-            == SM2_IC_ERR_VERIFY,
+    TEST_ASSERT(
+        sm2_rev_tree_verify_member(root_hash, &tampered) == SM2_IC_ERR_VERIFY,
         "Tampered leaf index must be path-bound");
 
     sm2_rev_tree_cleanup(&tree);
@@ -129,8 +129,8 @@ static void test_merkle_absence_anchor_neighbor_commitment(void)
     uint64_t revoked[] = { 2, 5, 9 };
     sm2_rev_tree_t *tree = NULL;
     uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN];
-    TEST_ASSERT(sm2_rev_tree_build(&tree, revoked,
-                    sizeof(revoked) / sizeof(revoked[0]), 1)
+    TEST_ASSERT(sm2_rev_tree_build(
+                    &tree, revoked, sizeof(revoked) / sizeof(revoked[0]), 1)
             == SM2_IC_SUCCESS,
         "Build tree");
     merkle_read_root_hash_or_fail(tree, root_hash);
@@ -140,17 +140,17 @@ static void test_merkle_absence_anchor_neighbor_commitment(void)
         "Build absence proof");
     TEST_ASSERT(proof.has_anchor, "Absence proof has anchor");
     TEST_ASSERT(proof.anchor_proof.serial_number == 2, "Anchor is left item");
-    TEST_ASSERT(proof.anchor_proof.has_next
-            && proof.anchor_proof.next_serial == 5,
+    TEST_ASSERT(
+        proof.anchor_proof.has_next && proof.anchor_proof.next_serial == 5,
         "Anchor commits right neighbor");
-    TEST_ASSERT(sm2_rev_tree_verify_absence(root_hash, &proof)
-            == SM2_IC_SUCCESS,
+    TEST_ASSERT(
+        sm2_rev_tree_verify_absence(root_hash, &proof) == SM2_IC_SUCCESS,
         "Verify absence proof");
 
     sm2_rev_absence_proof_t tampered = proof;
     tampered.anchor_proof.next_serial = 9;
-    TEST_ASSERT(sm2_rev_tree_verify_absence(root_hash, &tampered)
-            == SM2_IC_ERR_VERIFY,
+    TEST_ASSERT(
+        sm2_rev_tree_verify_absence(root_hash, &tampered) == SM2_IC_ERR_VERIFY,
         "Tampered neighbor commitment must fail");
 
     sm2_rev_tree_cleanup(&tree);

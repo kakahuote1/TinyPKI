@@ -220,8 +220,8 @@ sm2_ic_error_t cbor_get_null(const uint8_t *in, size_t in_len, size_t *offset)
     return SM2_IC_SUCCESS;
 }
 
-static sm2_ic_error_t cbor_put_optional_u64(bool present, uint64_t value,
-    uint8_t *out, size_t out_cap, size_t *offset)
+static sm2_ic_error_t cbor_put_optional_u64(
+    bool present, uint64_t value, uint8_t *out, size_t out_cap, size_t *offset)
 {
     if (present)
         return cbor_put_type_value(0, value, out, out_cap, offset);
@@ -240,8 +240,7 @@ static sm2_ic_error_t cbor_get_optional_u64(const uint8_t *in, size_t in_len,
     }
 
     uint8_t major = 0;
-    sm2_ic_error_t ret
-        = cbor_get_type_value(in, in_len, offset, &major, value);
+    sm2_ic_error_t ret = cbor_get_type_value(in, in_len, offset, &major, value);
     if (ret != SM2_IC_SUCCESS || major != 0)
         return SM2_IC_ERR_CBOR;
     return SM2_IC_SUCCESS;
