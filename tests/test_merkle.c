@@ -79,5 +79,7 @@ void run_test_merkle_suite(void)
     RUN_TEST(test_merkle_expired_root_record_rejected);
     RUN_TEST(test_merkle_hot_patch_stale_version_rejected);
     RUN_TEST(test_merkle_multiproof_over_limit_rejected);
+    RUN_TEST(test_merkle_member_leaf_index_path_bound);
+    RUN_TEST(test_merkle_absence_anchor_neighbor_commitment);
     RUN_TEST(test_merkle_quorum_dedup_node_id);
 }

@@ -220,6 +220,33 @@ sm2_ic_error_t cbor_get_null(const uint8_t *in, size_t in_len, size_t *offset)
     return SM2_IC_SUCCESS;
 }
 
+static sm2_ic_error_t cbor_put_optional_u64(bool present, uint64_t value,
+    uint8_t *out, size_t out_cap, size_t *offset)
+{
+    if (present)
+        return cbor_put_type_value(0, value, out, out_cap, offset);
+    return cbor_put_null(out, out_cap, offset);
+}
+
+static sm2_ic_error_t cbor_get_optional_u64(const uint8_t *in, size_t in_len,
+    size_t *offset, bool present, uint64_t *value)
+{
+    if (!value)
+        return SM2_IC_ERR_PARAM;
+    if (!present)
+    {
+        *value = 0;
+        return cbor_get_null(in, in_len, offset);
+    }
+
+    uint8_t major = 0;
+    sm2_ic_error_t ret
+        = cbor_get_type_value(in, in_len, offset, &major, value);
+    if (ret != SM2_IC_SUCCESS || major != 0)
+        return SM2_IC_ERR_CBOR;
+    return SM2_IC_SUCCESS;
+}
+
 sm2_ic_error_t cbor_encode_member_proof_inner(
     const sm2_rev_member_proof_t *proof, uint8_t *output, size_t output_cap,
     size_t *offset)
@@ -229,7 +256,7 @@ sm2_ic_error_t cbor_encode_member_proof_inner(
     if (proof->sibling_count > SM2_REV_MERKLE_MAX_DEPTH)
         return SM2_IC_ERR_PARAM;
 
-    sm2_ic_error_t ret = cbor_put_type_value(4, 6, output, output_cap, offset);
+    sm2_ic_error_t ret = cbor_put_type_value(4, 10, output, output_cap, offset);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -245,6 +272,24 @@ sm2_ic_error_t cbor_encode_member_proof_inner(
 
     ret = cbor_put_type_value(
         0, (uint64_t)proof->leaf_count, output, output_cap, offset);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    ret = cbor_put_bool(proof->has_prev, output, output_cap, offset);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    ret = cbor_put_optional_u64(
+        proof->has_prev, proof->prev_serial, output, output_cap, offset);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    ret = cbor_put_bool(proof->has_next, output, output_cap, offset);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    ret = cbor_put_optional_u64(
+        proof->has_next, proof->next_serial, output, output_cap, offset);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -286,7 +331,7 @@ sm2_ic_error_t cbor_decode_member_proof_inner(sm2_rev_member_proof_t *proof,
         = cbor_get_type_value(input, input_len, offset, &major, &arr_len);
     if (ret != SM2_IC_SUCCESS)
         return ret;
-    if (major != 4 || arr_len != 6)
+    if (major != 4 || arr_len != 10)
         return SM2_IC_ERR_CBOR;
 
     uint64_t serial = 0;
@@ -303,6 +348,30 @@ sm2_ic_error_t cbor_decode_member_proof_inner(sm2_rev_member_proof_t *proof,
     ret = cbor_get_type_value(input, input_len, offset, &major, &leaf_count);
     if (ret != SM2_IC_SUCCESS || major != 0)
         return SM2_IC_ERR_CBOR;
+    if (leaf_idx > SIZE_MAX || leaf_count > SIZE_MAX)
+        return SM2_IC_ERR_CBOR;
+
+    bool has_prev = false;
+    ret = cbor_get_bool(input, input_len, offset, &has_prev);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    uint64_t prev_serial = 0;
+    ret = cbor_get_optional_u64(
+        input, input_len, offset, has_prev, &prev_serial);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    bool has_next = false;
+    ret = cbor_get_bool(input, input_len, offset, &has_next);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    uint64_t next_serial = 0;
+    ret = cbor_get_optional_u64(
+        input, input_len, offset, has_next, &next_serial);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
 
     uint64_t sibling_count = 0;
     ret = cbor_get_type_value(input, input_len, offset, &major, &sibling_count);
@@ -320,6 +389,10 @@ sm2_ic_error_t cbor_decode_member_proof_inner(sm2_rev_member_proof_t *proof,
     proof->serial_number = serial;
     proof->leaf_index = (size_t)leaf_idx;
     proof->leaf_count = (size_t)leaf_count;
+    proof->has_prev = has_prev;
+    proof->prev_serial = prev_serial;
+    proof->has_next = has_next;
+    proof->next_serial = next_serial;
     proof->sibling_count = (size_t)sibling_count;
 
     for (size_t i = 0; i < proof->sibling_count; i++)
@@ -379,7 +452,7 @@ sm2_ic_error_t sm2_rev_absence_proof_encode(
         return SM2_IC_ERR_PARAM;
 
     size_t off = 0;
-    sm2_ic_error_t ret = cbor_put_type_value(4, 6, output, *output_len, &off);
+    sm2_ic_error_t ret = cbor_put_type_value(4, 4, output, *output_len, &off);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -392,32 +465,14 @@ sm2_ic_error_t sm2_rev_absence_proof_encode(
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    ret = cbor_put_bool(proof->has_left_neighbor, output, *output_len, &off);
+    ret = cbor_put_bool(proof->has_anchor, output, *output_len, &off);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    if (proof->has_left_neighbor)
+    if (proof->has_anchor)
     {
         ret = cbor_encode_member_proof_inner(
-            &proof->left_proof, output, *output_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-    }
-    else
-    {
-        ret = cbor_put_null(output, *output_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-    }
-
-    ret = cbor_put_bool(proof->has_right_neighbor, output, *output_len, &off);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    if (proof->has_right_neighbor)
-    {
-        ret = cbor_encode_member_proof_inner(
-            &proof->right_proof, output, *output_len, &off);
+            &proof->anchor_proof, output, *output_len, &off);
         if (ret != SM2_IC_SUCCESS)
             return ret;
     }
@@ -445,7 +500,7 @@ sm2_ic_error_t sm2_rev_absence_proof_decode(
     uint64_t arr_len = 0;
     sm2_ic_error_t ret
         = cbor_get_type_value(input, input_len, &off, &major, &arr_len);
-    if (ret != SM2_IC_SUCCESS || major != 4 || arr_len != 6)
+    if (ret != SM2_IC_SUCCESS || major != 4 || arr_len != 4)
         return SM2_IC_ERR_CBOR;
 
     uint64_t target = 0;
@@ -460,32 +515,14 @@ sm2_ic_error_t sm2_rev_absence_proof_decode(
         return SM2_IC_ERR_CBOR;
     proof->leaf_count = (size_t)leaf_count;
 
-    ret = cbor_get_bool(input, input_len, &off, &proof->has_left_neighbor);
+    ret = cbor_get_bool(input, input_len, &off, &proof->has_anchor);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    if (proof->has_left_neighbor)
+    if (proof->has_anchor)
     {
         ret = cbor_decode_member_proof_inner(
-            &proof->left_proof, input, input_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-    }
-    else
-    {
-        ret = cbor_get_null(input, input_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-    }
-
-    ret = cbor_get_bool(input, input_len, &off, &proof->has_right_neighbor);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    if (proof->has_right_neighbor)
-    {
-        ret = cbor_decode_member_proof_inner(
-            &proof->right_proof, input, input_len, &off);
+            &proof->anchor_proof, input, input_len, &off);
         if (ret != SM2_IC_SUCCESS)
             return ret;
     }
@@ -774,6 +811,10 @@ sm2_ic_error_t multiproof_expand_member(const sm2_rev_multi_proof_t *proof,
     member->serial_number = item->serial_number;
     member->leaf_index = item->leaf_index;
     member->leaf_count = item->leaf_count;
+    member->has_prev = item->has_prev;
+    member->prev_serial = item->prev_serial;
+    member->has_next = item->has_next;
+    member->next_serial = item->next_serial;
     member->sibling_count = item->sibling_count;
 
     for (size_t i = 0; i < item->sibling_count; i++)
@@ -859,6 +900,10 @@ sm2_ic_error_t sm2_rev_multi_proof_build(const sm2_rev_tree_t *tree,
         item->serial_number = member.serial_number;
         item->leaf_index = member.leaf_index;
         item->leaf_count = member.leaf_count;
+        item->has_prev = member.has_prev;
+        item->prev_serial = member.prev_serial;
+        item->has_next = member.has_next;
+        item->next_serial = member.next_serial;
         item->sibling_count = member.sibling_count;
 
         for (size_t j = 0; j < member.sibling_count; j++)
@@ -960,7 +1005,7 @@ sm2_ic_error_t sm2_rev_multi_proof_encode(
         if (item->sibling_count > SM2_REV_MERKLE_MAX_DEPTH)
             return SM2_IC_ERR_PARAM;
 
-        ret = cbor_put_type_value(4, 6, output, *output_len, &off);
+        ret = cbor_put_type_value(4, 10, output, *output_len, &off);
         if (ret != SM2_IC_SUCCESS)
             return ret;
 
@@ -976,6 +1021,24 @@ sm2_ic_error_t sm2_rev_multi_proof_encode(
 
         ret = cbor_put_type_value(
             0, (uint64_t)item->leaf_count, output, *output_len, &off);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
+
+        ret = cbor_put_bool(item->has_prev, output, *output_len, &off);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
+
+        ret = cbor_put_optional_u64(
+            item->has_prev, item->prev_serial, output, *output_len, &off);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
+
+        ret = cbor_put_bool(item->has_next, output, *output_len, &off);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
+
+        ret = cbor_put_optional_u64(
+            item->has_next, item->next_serial, output, *output_len, &off);
         if (ret != SM2_IC_SUCCESS)
             return ret;
 
@@ -1091,7 +1154,7 @@ sm2_ic_error_t sm2_rev_multi_proof_decode(
         uint64_t item_arr_len = 0;
         ret = cbor_get_type_value(
             input, input_len, &off, &major, &item_arr_len);
-        if (ret != SM2_IC_SUCCESS || major != 4 || item_arr_len != 6)
+        if (ret != SM2_IC_SUCCESS || major != 4 || item_arr_len != 10)
         {
             multiproof_reset(state);
             return SM2_IC_ERR_CBOR;
@@ -1120,6 +1183,45 @@ sm2_ic_error_t sm2_rev_multi_proof_decode(
             multiproof_reset(state);
             return SM2_IC_ERR_CBOR;
         }
+        if (leaf_idx > SIZE_MAX || leaf_count > SIZE_MAX)
+        {
+            multiproof_reset(state);
+            return SM2_IC_ERR_CBOR;
+        }
+
+        bool has_prev = false;
+        ret = cbor_get_bool(input, input_len, &off, &has_prev);
+        if (ret != SM2_IC_SUCCESS)
+        {
+            multiproof_reset(state);
+            return ret;
+        }
+
+        uint64_t prev_serial = 0;
+        ret = cbor_get_optional_u64(
+            input, input_len, &off, has_prev, &prev_serial);
+        if (ret != SM2_IC_SUCCESS)
+        {
+            multiproof_reset(state);
+            return ret;
+        }
+
+        bool has_next = false;
+        ret = cbor_get_bool(input, input_len, &off, &has_next);
+        if (ret != SM2_IC_SUCCESS)
+        {
+            multiproof_reset(state);
+            return ret;
+        }
+
+        uint64_t next_serial = 0;
+        ret = cbor_get_optional_u64(
+            input, input_len, &off, has_next, &next_serial);
+        if (ret != SM2_IC_SUCCESS)
+        {
+            multiproof_reset(state);
+            return ret;
+        }
 
         uint64_t sibling_count = 0;
         ret = cbor_get_type_value(
@@ -1143,6 +1245,10 @@ sm2_ic_error_t sm2_rev_multi_proof_decode(
         item->serial_number = serial;
         item->leaf_index = (size_t)leaf_idx;
         item->leaf_count = (size_t)leaf_count;
+        item->has_prev = has_prev;
+        item->prev_serial = prev_serial;
+        item->has_next = has_next;
+        item->next_serial = next_serial;
         item->sibling_count = (size_t)sibling_count;
 
         for (size_t j = 0; j < item->sibling_count; j++)

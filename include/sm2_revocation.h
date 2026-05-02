@@ -238,6 +238,10 @@ extern "C"
         uint64_t serial_number;
         size_t leaf_index;
         size_t leaf_count;
+        bool has_prev;
+        uint64_t prev_serial;
+        bool has_next;
+        uint64_t next_serial;
         size_t sibling_count;
         uint8_t sibling_hashes[SM2_REV_MERKLE_MAX_DEPTH]
                               [SM2_REV_MERKLE_HASH_LEN];
@@ -248,10 +252,8 @@ extern "C"
     {
         uint64_t target_serial;
         size_t leaf_count;
-        bool has_left_neighbor;
-        bool has_right_neighbor;
-        sm2_rev_member_proof_t left_proof;
-        sm2_rev_member_proof_t right_proof;
+        bool has_anchor;
+        sm2_rev_member_proof_t anchor_proof;
     } sm2_rev_absence_proof_t;
 
     typedef struct
@@ -271,6 +273,10 @@ extern "C"
         uint64_t serial_number;
         size_t leaf_index;
         size_t leaf_count;
+        bool has_prev;
+        uint64_t prev_serial;
+        bool has_next;
+        uint64_t next_serial;
         size_t sibling_count;
         uint16_t sibling_ref[SM2_REV_MERKLE_MAX_DEPTH];
         uint8_t sibling_on_left[SM2_REV_MERKLE_MAX_DEPTH];

@@ -63,8 +63,9 @@ extern "C"
     /* ---- hash primitives (domain-separated SM3) ---- */
     void merkle_u64_to_be(uint64_t v, uint8_t out[8]);
 
-    sm2_ic_error_t merkle_hash_leaf(
-        uint64_t serial_number, uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN]);
+    sm2_ic_error_t merkle_hash_leaf(uint64_t serial_number, bool has_prev,
+        uint64_t prev_serial, bool has_next, uint64_t next_serial,
+        uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN]);
 
     sm2_ic_error_t merkle_hash_parent(
         const uint8_t left[SM2_REV_MERKLE_HASH_LEN],
