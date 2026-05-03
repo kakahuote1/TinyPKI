@@ -186,6 +186,25 @@ extern "C"
         size_t witness_id_len, const sm2_private_key_t *witness_private_key,
         sm2_pki_transparency_witness_signature_t *signature);
 
+    void sm2_pki_issuance_witness_state_init(
+        sm2_pki_issuance_witness_state_t *state);
+
+    void sm2_pki_issuance_witness_state_cleanup(
+        sm2_pki_issuance_witness_state_t *state);
+
+    sm2_pki_error_t sm2_pki_issuance_witness_sign_append_only(
+        sm2_pki_issuance_witness_state_t *state,
+        const sm2_rev_root_record_t *root_record,
+        const sm2_ec_point_t *ca_public_key, uint64_t now_ts,
+        const sm2_pki_issuance_commitment_t *new_commitments,
+        size_t new_commitment_count, const uint8_t *witness_id,
+        size_t witness_id_len, const sm2_private_key_t *witness_private_key,
+        sm2_pki_transparency_witness_signature_t *signature);
+
+    sm2_pki_error_t sm2_pki_issuance_quorum_check(
+        const sm2_pki_issuance_root_vote_t *votes, size_t vote_count,
+        size_t threshold, sm2_pki_issuance_quorum_result_t *result);
+
     /*
      * Reconstructs local identity keys and verifies that the certificate
      * is

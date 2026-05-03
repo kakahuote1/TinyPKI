@@ -81,6 +81,14 @@ extern "C"
         const sm2_pki_service_ctx_t *ctx, const sm2_implicit_cert_t *cert,
         sm2_pki_issuance_member_proof_t *proof);
 
+    sm2_pki_error_t sm2_pki_service_get_issuance_commitment_count(
+        const sm2_pki_service_ctx_t *ctx, size_t *commitment_count);
+
+    sm2_pki_error_t sm2_pki_service_export_issuance_commitments(
+        const sm2_pki_service_ctx_t *ctx, size_t start_index,
+        sm2_pki_issuance_commitment_t *commitments, size_t commitment_capacity,
+        size_t *commitment_count);
+
     /*
      * Explicitly publishes a fresh CA-signed revocation root/heartbeat object.
      * Query handling must not mint new signed facts implicitly.

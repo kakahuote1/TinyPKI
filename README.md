@@ -83,7 +83,7 @@ cmake --build build --target sm2_test_merkle_flow -j 4
 
 ## 🧪 测试验证 (Testing)
 
-当前仓库测试主链路由 `ctest` 与 `test_all` 两个入口组成。按当前基线，`ctest` 拆分为 6 个 suite，`test_all` 聚合执行 86 个用例。
+当前仓库测试主链路由 `ctest` 与 `test_all` 两个入口组成。按当前基线，`ctest` 拆分为 6 个 suite，`test_all` 聚合执行 87 个用例。
 
 **运行与 CI 相同的格式检查（固定 clang-format 18）：**
 ```bash
@@ -178,7 +178,7 @@ cmake --build build --target sm2_bench_capability_suite -j 4
 - **Mandatory Issuance Transparency** using 32-byte certificate commitments, CA-signed issuance roots, and client-level `t-of-n` edge witness policies.
 - **Revocation State Sync Tooling** including delta/heartbeat refresh, redirect hints, quorum/BFT helpers, multiproof compression, and epoch/cached proof support.
 - **Mutual Authentication and Secure Sessions** spanning static or ephemeral key agreement, canonical handshake binding, key-usage enforcement, and SM4-GCM/CCM AEAD protection.
-- **Misuse-Resistant High-Level APIs** built around opaque handles, secure defaults, unified error mapping, and a current automated test baseline of 86 cases across `ctest` and `test_all`.
+- **Misuse-Resistant High-Level APIs** built around opaque handles, secure defaults, unified error mapping, and a current automated test baseline of 87 cases across `ctest` and `test_all`.
 
 ## 📄 开源许可证 (License)
 

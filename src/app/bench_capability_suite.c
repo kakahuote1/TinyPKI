@@ -1528,6 +1528,61 @@ static int client_get_identity_material(sm2_pki_client_ctx_t *client,
     return 1;
 }
 
+static sm2_private_key_t g_bench_witness_priv;
+static sm2_ec_point_t g_bench_witness_pub;
+static sm2_pki_transparency_witness_t g_bench_witness;
+static sm2_pki_transparency_policy_t g_bench_transparency_policy;
+static int g_bench_witness_ready = 0;
+
+static int bench_transparency_policy_init(void)
+{
+    static const uint8_t witness_id[] = "bench-witness-0";
+    if (g_bench_witness_ready)
+        return 1;
+    if (sm2_auth_generate_ephemeral_keypair(
+            &g_bench_witness_priv, &g_bench_witness_pub)
+        != SM2_IC_SUCCESS)
+    {
+        return 0;
+    }
+
+    memset(&g_bench_witness, 0, sizeof(g_bench_witness));
+    memcpy(g_bench_witness.witness_id, witness_id, sizeof(witness_id) - 1U);
+    g_bench_witness.witness_id_len = sizeof(witness_id) - 1U;
+    g_bench_witness.public_key = g_bench_witness_pub;
+    g_bench_transparency_policy.witnesses = &g_bench_witness;
+    g_bench_transparency_policy.witness_count = 1U;
+    g_bench_transparency_policy.threshold = 1U;
+    g_bench_witness_ready = 1;
+    return 1;
+}
+
+static int bench_configure_transparency_verifier(sm2_pki_client_ctx_t *client)
+{
+    return client && bench_transparency_policy_init()
+        && sm2_pki_client_set_transparency_policy(
+               client, &g_bench_transparency_policy)
+        == SM2_PKI_SUCCESS;
+}
+
+static int bench_attach_issuance_witness(
+    sm2_pki_issuance_evidence_t *issuance_evidence,
+    sm2_pki_verify_request_t *request)
+{
+    if (!issuance_evidence || !request || !bench_transparency_policy_init())
+        return 0;
+    if (sm2_pki_issuance_witness_sign(&issuance_evidence->root_record,
+            g_bench_witness.witness_id, g_bench_witness.witness_id_len,
+            &g_bench_witness_priv, &issuance_evidence->witness_signatures[0])
+        != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
+    issuance_evidence->witness_signature_count = 1U;
+    request->transparency_policy = &g_bench_transparency_policy;
+    return 1;
+}
+
 static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     const uint8_t *message, size_t message_len, uint64_t now_ts,
     sm2_auth_signature_t *signature, sm2_pki_revocation_evidence_t *evidence,
@@ -1570,6 +1625,8 @@ static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     request->signature = signature;
     request->revocation_evidence = evidence;
     request->issuance_evidence = issuance_evidence;
+    if (!bench_attach_issuance_witness(issuance_evidence, request))
+        return 0;
     return 1;
 }
 
@@ -1616,6 +1673,8 @@ static int build_signed_verify_request_compact(sm2_pki_client_ctx_t *signer,
     request->signature = signature;
     request->revocation_evidence = evidence;
     request->issuance_evidence = issuance_evidence;
+    if (!bench_attach_issuance_witness(issuance_evidence, request))
+        return 0;
     return 1;
 }
 
@@ -1926,6 +1985,8 @@ static int build_flow_context(bench_flow_ctx_t *ctx)
     {
         return 0;
     }
+    if (!bench_configure_transparency_verifier(ctx->verifier))
+        return 0;
     if (sm2_pki_client_import_cert(ctx->client, &ctx->cert_result,
             &ctx->temp_private_key, &ctx->ca_pub)
         != SM2_PKI_SUCCESS)
@@ -1983,6 +2044,7 @@ static int build_tinypki_network_artifacts(
         || sm2_pki_client_create(
                &artifacts->compact_verifier, &artifacts->flow.ca_pub, NULL)
             != SM2_PKI_SUCCESS
+        || !bench_configure_transparency_verifier(artifacts->compact_verifier)
         || sm2_pki_client_import_root_record(artifacts->compact_verifier,
                &artifacts->flow.evidence.root_record, artifacts->flow.auth_now)
             != SM2_PKI_SUCCESS)
@@ -2578,6 +2640,11 @@ static int measure_http_tinypki_full_exchange_median(const uint8_t *request,
         {
             return 0;
         }
+        if (!bench_configure_transparency_verifier(verifier))
+        {
+            sm2_pki_client_destroy(&verifier);
+            return 0;
+        }
         memset(&server_ctx, 0, sizeof(server_ctx));
         if (!bench_http_listen_loopback(&listen_sock, &port))
         {
@@ -2680,6 +2747,11 @@ static int build_session_context(bench_session_ctx_t *ctx)
             != SM2_PKI_SUCCESS
         || sm2_pki_client_create(&ctx->client_b, &ca_pub, ctx->service)
             != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
+    if (!bench_configure_transparency_verifier(ctx->client_a)
+        || !bench_configure_transparency_verifier(ctx->client_b))
     {
         return 0;
     }
@@ -2897,6 +2969,11 @@ static int measure_secure_session_stats_internal(
         req_a_to_b.signature = &sig_a;
         req_a_to_b.revocation_evidence = &evidence_a;
         req_a_to_b.issuance_evidence = &issuance_a;
+        if (!bench_attach_issuance_witness(&issuance_a, &req_a_to_b))
+        {
+            cleanup_session_context(&ctx);
+            return 0;
+        }
 
         req_b_to_a.cert = cert_b;
         req_b_to_a.public_key = pub_b;
@@ -2905,6 +2982,11 @@ static int measure_secure_session_stats_internal(
         req_b_to_a.signature = &sig_b;
         req_b_to_a.revocation_evidence = &evidence_b;
         req_b_to_a.issuance_evidence = &issuance_b;
+        if (!bench_attach_issuance_witness(&issuance_b, &req_b_to_a))
+        {
+            cleanup_session_context(&ctx);
+            return 0;
+        }
 
         if (sm2_pki_secure_session_establish(ctx.client_a, &eph_priv_a,
                 &eph_pub_a, &req_b_to_a, &eph_pub_b, transcript,

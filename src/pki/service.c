@@ -762,6 +762,44 @@ sm2_pki_error_t sm2_pki_service_export_issuance_proof(
         state->issuance_tree, commitment, proof));
 }
 
+sm2_pki_error_t sm2_pki_service_get_issuance_commitment_count(
+    const sm2_pki_service_ctx_t *ctx, size_t *commitment_count)
+{
+    const sm2_pki_service_state_t *state = service_state_const(ctx);
+    if (!ctx || !ctx->initialized || !state || !commitment_count
+        || !state->issuance_state_ready)
+    {
+        return SM2_PKI_ERR_PARAM;
+    }
+
+    *commitment_count = state->issued_count;
+    return SM2_PKI_SUCCESS;
+}
+
+sm2_pki_error_t sm2_pki_service_export_issuance_commitments(
+    const sm2_pki_service_ctx_t *ctx, size_t start_index,
+    sm2_pki_issuance_commitment_t *commitments, size_t commitment_capacity,
+    size_t *commitment_count)
+{
+    const sm2_pki_service_state_t *state = service_state_const(ctx);
+    if (!ctx || !ctx->initialized || !state || !commitment_count
+        || !state->issuance_state_ready || start_index > state->issued_count)
+    {
+        return SM2_PKI_ERR_PARAM;
+    }
+
+    size_t available = state->issued_count - start_index;
+    *commitment_count = available;
+    if (available == 0)
+        return SM2_PKI_SUCCESS;
+    if (!commitments || commitment_capacity < available)
+        return SM2_PKI_ERR_MEMORY;
+
+    memcpy(commitments, state->issuance_commitments + start_index,
+        available * sizeof(*commitments));
+    return SM2_PKI_SUCCESS;
+}
+
 sm2_pki_error_t sm2_pki_service_refresh_root(
     sm2_pki_service_ctx_t *ctx, uint64_t now_ts)
 {

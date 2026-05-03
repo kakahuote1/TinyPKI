@@ -594,6 +594,8 @@ static void test_phase13_secure_pki_session_default_api()
     req_a_to_b.signature = &sig_a;
     req_a_to_b.revocation_evidence = &evidence_a;
     req_a_to_b.issuance_evidence = &issuance_a;
+    TEST_ASSERT(pki_attach_default_issuance_witness(&issuance_a, &req_a_to_b),
+        "Attach Witness A");
 
     req_b_to_a.cert = client_b_cert;
     req_b_to_a.public_key = client_b_pub;
@@ -602,6 +604,8 @@ static void test_phase13_secure_pki_session_default_api()
     req_b_to_a.signature = &sig_b;
     req_b_to_a.revocation_evidence = &evidence_b;
     req_b_to_a.issuance_evidence = &issuance_b;
+    TEST_ASSERT(pki_attach_default_issuance_witness(&issuance_b, &req_b_to_a),
+        "Attach Witness B");
 
     uint8_t sk_a[16];
     uint8_t sk_b[16];
@@ -1257,6 +1261,22 @@ static void test_phase141_issuance_transparency_required_and_threshold()
         "Missing Mandatory Issuance Evidence Reject");
 
     request.issuance_evidence = &issuance_evidence;
+    const sm2_pki_transparency_policy_t *default_policy
+        = request.transparency_policy;
+    request.transparency_policy = NULL;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Missing Mandatory Witness Policy Reject");
+    request.transparency_policy = default_policy;
+
+    sm2_pki_issuance_evidence_t no_witness = issuance_evidence;
+    no_witness.witness_signature_count = 0;
+    request.issuance_evidence = &no_witness;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Missing Mandatory Witness Signature Reject");
+
+    request.issuance_evidence = &issuance_evidence;
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_SUCCESS,
         "Issuance Evidence Verify");
@@ -1321,6 +1341,163 @@ static void test_phase141_issuance_transparency_required_and_threshold()
 
     sm2_pki_client_destroy(&verifier);
     sm2_pki_client_destroy(&signer);
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
+static void test_phase142_issuance_witness_append_only_and_quorum()
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P142_CT_CA";
+    const uint8_t id_a[] = "P142_A";
+    const uint8_t id_b[] = "P142_B";
+    const uint8_t id_c[] = "P142_C";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 32, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+    TEST_ASSERT(sm2_pki_identity_register(service, id_a, sizeof(id_a) - 1,
+                    SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Register A");
+    TEST_ASSERT(sm2_pki_identity_register(service, id_b, sizeof(id_b) - 1,
+                    SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Register B");
+    TEST_ASSERT(sm2_pki_identity_register(service, id_c, sizeof(id_c) - 1,
+                    SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Register C");
+
+    sm2_ic_cert_result_t cert_a;
+    sm2_ic_cert_result_t cert_b;
+    sm2_ic_cert_result_t cert_c;
+    sm2_private_key_t temp_a;
+    sm2_private_key_t temp_b;
+    sm2_private_key_t temp_c;
+    memset(&cert_a, 0, sizeof(cert_a));
+    memset(&cert_b, 0, sizeof(cert_b));
+    memset(&cert_c, 0, sizeof(cert_c));
+    memset(&temp_a, 0, sizeof(temp_a));
+    memset(&temp_b, 0, sizeof(temp_b));
+    memset(&temp_c, 0, sizeof(temp_c));
+    TEST_ASSERT(pki_issue_identity_cert(service, id_a, sizeof(id_a) - 1,
+                    SM2_KU_DIGITAL_SIGNATURE, &cert_a, &temp_a),
+        "Issue A");
+    TEST_ASSERT(pki_issue_identity_cert(service, id_b, sizeof(id_b) - 1,
+                    SM2_KU_DIGITAL_SIGNATURE, &cert_b, &temp_b),
+        "Issue B");
+
+    sm2_ec_point_t ca_pub;
+    memset(&ca_pub, 0, sizeof(ca_pub));
+    TEST_ASSERT(
+        sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
+        "Get CA Pub");
+
+    sm2_rev_root_record_t root_ab;
+    memset(&root_ab, 0, sizeof(root_ab));
+    TEST_ASSERT(sm2_pki_service_get_issuance_root_record(service, &root_ab)
+            == SM2_PKI_SUCCESS,
+        "Get AB Root");
+    sm2_pki_issuance_commitment_t commitments[4];
+    size_t commitment_count = 0;
+    TEST_ASSERT(sm2_pki_service_export_issuance_commitments(service, 0,
+                    commitments, 4, &commitment_count)
+            == SM2_PKI_SUCCESS,
+        "Export Initial Commitments");
+    TEST_ASSERT(commitment_count == 2, "Initial Commitment Count");
+
+    sm2_private_key_t witness_priv;
+    sm2_ec_point_t witness_pub;
+    (void)witness_pub;
+    TEST_ASSERT(
+        test_generate_sm2_keypair(&witness_priv, &witness_pub),
+        "Generate Witness Key");
+    const uint8_t witness_id[] = "append-witness";
+    sm2_pki_issuance_witness_state_t witness_state;
+    sm2_pki_transparency_witness_signature_t witness_sig;
+    memset(&witness_sig, 0, sizeof(witness_sig));
+    sm2_pki_issuance_witness_state_init(&witness_state);
+    TEST_ASSERT(sm2_pki_issuance_witness_sign_append_only(&witness_state,
+                    &root_ab, &ca_pub, base_now, commitments, commitment_count,
+                    witness_id, sizeof(witness_id) - 1, &witness_priv,
+                    &witness_sig)
+            == SM2_PKI_SUCCESS,
+        "Initial Append-Only Witness Sign");
+
+    sm2_rev_root_record_t rollback_root = root_ab;
+    rollback_root.root_version--;
+    TEST_ASSERT(sm2_pki_issuance_witness_sign_append_only(&witness_state,
+                    &rollback_root, &ca_pub, base_now, NULL, 0, witness_id,
+                    sizeof(witness_id) - 1, &witness_priv, &witness_sig)
+            == SM2_PKI_ERR_VERIFY,
+        "Reject Rollback Root");
+
+    TEST_ASSERT(pki_issue_identity_cert(service, id_c, sizeof(id_c) - 1,
+                    SM2_KU_DIGITAL_SIGNATURE, &cert_c, &temp_c),
+        "Issue C");
+    sm2_rev_root_record_t root_abc;
+    memset(&root_abc, 0, sizeof(root_abc));
+    TEST_ASSERT(sm2_pki_service_get_issuance_root_record(service, &root_abc)
+            == SM2_PKI_SUCCESS,
+        "Get ABC Root");
+    size_t append_count = 0;
+    TEST_ASSERT(sm2_pki_service_export_issuance_commitments(service,
+                    commitment_count, commitments, 4, &append_count)
+            == SM2_PKI_SUCCESS,
+        "Export Append Commitments");
+    TEST_ASSERT(append_count == 1, "Append Commitment Count");
+
+    commitments[0][0] ^= 0x01U;
+    TEST_ASSERT(sm2_pki_issuance_witness_sign_append_only(&witness_state,
+                    &root_abc, &ca_pub, base_now, commitments, append_count,
+                    witness_id, sizeof(witness_id) - 1, &witness_priv,
+                    &witness_sig)
+            == SM2_PKI_ERR_VERIFY,
+        "Reject Tampered Append Batch");
+    commitments[0][0] ^= 0x01U;
+    TEST_ASSERT(sm2_pki_issuance_witness_sign_append_only(&witness_state,
+                    &root_abc, &ca_pub, base_now, commitments, append_count,
+                    witness_id, sizeof(witness_id) - 1, &witness_priv,
+                    &witness_sig)
+            == SM2_PKI_SUCCESS,
+        "Accept Append Batch");
+
+    sm2_pki_issuance_root_vote_t votes[3];
+    memset(votes, 0, sizeof(votes));
+    memcpy(votes[0].node_id, "ea", 2);
+    votes[0].node_id_len = 2;
+    votes[0].root_version = root_abc.root_version;
+    memcpy(votes[0].root_hash, root_abc.root_hash, sizeof(votes[0].root_hash));
+    votes[0].proof_valid = true;
+    memcpy(votes[1].node_id, "eb", 2);
+    votes[1].node_id_len = 2;
+    votes[1].root_version = root_abc.root_version;
+    memcpy(votes[1].root_hash, root_abc.root_hash, sizeof(votes[1].root_hash));
+    votes[1].proof_valid = true;
+    memcpy(votes[2].node_id, "ec", 2);
+    votes[2].node_id_len = 2;
+    votes[2].root_version = root_abc.root_version;
+    memcpy(votes[2].root_hash, root_abc.root_hash, sizeof(votes[2].root_hash));
+    votes[2].root_hash[0] ^= 0x80U;
+    votes[2].proof_valid = true;
+
+    sm2_pki_issuance_quorum_result_t quorum;
+    TEST_ASSERT(sm2_pki_issuance_quorum_check(votes, 3, 2, &quorum)
+            == SM2_PKI_ERR_VERIFY,
+        "Quorum Detects Fork");
+    TEST_ASSERT(quorum.fork_detected, "Fork Flag Set");
+
+    votes[2].root_version = root_ab.root_version;
+    memcpy(votes[2].root_hash, root_ab.root_hash, sizeof(votes[2].root_hash));
+    TEST_ASSERT(sm2_pki_issuance_quorum_check(votes, 3, 2, &quorum)
+            == SM2_PKI_SUCCESS,
+        "Quorum Accepts Matching Latest Root");
+    TEST_ASSERT(quorum.quorum_met, "Issuance Quorum Met");
+    TEST_ASSERT(quorum.stale_vote_count == 1, "Stale Vote Count");
+
+    sm2_pki_issuance_witness_state_cleanup(&witness_state);
     sm2_pki_service_destroy(&service);
     TEST_PASS();
 }

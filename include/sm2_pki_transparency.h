@@ -8,6 +8,7 @@
 #ifndef SM2_PKI_TRANSPARENCY_H
 #define SM2_PKI_TRANSPARENCY_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include "sm2_crypto.h"
@@ -22,6 +23,9 @@ extern "C"
 #define SM2_PKI_TRANSPARENCY_WITNESS_ID_MAX_LEN 32
 #define SM2_PKI_ISSUANCE_COMMITMENT_LEN SM2_REV_MERKLE_HASH_LEN
 #define SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH SM2_REV_MERKLE_MAX_DEPTH
+
+    typedef uint8_t
+        sm2_pki_issuance_commitment_t[SM2_PKI_ISSUANCE_COMMITMENT_LEN];
 
     typedef struct
     {
@@ -64,6 +68,41 @@ extern "C"
             witness_signatures[SM2_PKI_TRANSPARENCY_MAX_WITNESSES];
         size_t witness_signature_count;
     } sm2_pki_issuance_evidence_t;
+
+    typedef struct
+    {
+        bool initialized;
+        bool has_authority;
+        uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
+        size_t authority_id_len;
+        uint64_t latest_root_version;
+        uint8_t latest_root_hash[SM2_REV_MERKLE_HASH_LEN];
+        sm2_pki_issuance_commitment_t *commitments;
+        size_t commitment_count;
+        size_t commitment_capacity;
+    } sm2_pki_issuance_witness_state_t;
+
+    typedef struct
+    {
+        uint8_t node_id[SM2_REV_SYNC_NODE_ID_MAX_LEN];
+        size_t node_id_len;
+        uint64_t root_version;
+        uint8_t root_hash[SM2_REV_SYNC_DIGEST_LEN];
+        bool proof_valid;
+    } sm2_pki_issuance_root_vote_t;
+
+    typedef struct
+    {
+        uint64_t selected_root_version;
+        uint8_t selected_root_hash[SM2_REV_SYNC_DIGEST_LEN];
+        size_t unique_node_count;
+        size_t valid_vote_count;
+        size_t stale_vote_count;
+        size_t conflict_vote_count;
+        size_t threshold;
+        bool quorum_met;
+        bool fork_detected;
+    } sm2_pki_issuance_quorum_result_t;
 
 #ifdef __cplusplus
 }

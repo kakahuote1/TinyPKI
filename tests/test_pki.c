@@ -178,6 +178,55 @@ static int pki_client_get_identity_material(sm2_pki_client_ctx_t *client,
     return 1;
 }
 
+static sm2_private_key_t g_pki_default_witness_priv;
+static sm2_ec_point_t g_pki_default_witness_pub;
+static sm2_pki_transparency_witness_t g_pki_default_witness;
+static sm2_pki_transparency_policy_t g_pki_default_transparency_policy;
+static int g_pki_default_witness_ready = 0;
+
+static int pki_default_transparency_policy_init(void)
+{
+    static const uint8_t witness_id[] = "test-witness-0";
+    if (g_pki_default_witness_ready)
+        return 1;
+    if (!test_generate_sm2_keypair(
+            &g_pki_default_witness_priv, &g_pki_default_witness_pub))
+    {
+        return 0;
+    }
+
+    memset(&g_pki_default_witness, 0, sizeof(g_pki_default_witness));
+    memcpy(
+        g_pki_default_witness.witness_id, witness_id, sizeof(witness_id) - 1);
+    g_pki_default_witness.witness_id_len = sizeof(witness_id) - 1;
+    g_pki_default_witness.public_key = g_pki_default_witness_pub;
+    g_pki_default_transparency_policy.witnesses = &g_pki_default_witness;
+    g_pki_default_transparency_policy.witness_count = 1;
+    g_pki_default_transparency_policy.threshold = 1;
+    g_pki_default_witness_ready = 1;
+    return 1;
+}
+
+static int pki_attach_default_issuance_witness(
+    sm2_pki_issuance_evidence_t *issuance_evidence,
+    sm2_pki_verify_request_t *request)
+{
+    if (!issuance_evidence || !request
+        || !pki_default_transparency_policy_init())
+        return 0;
+    if (sm2_pki_issuance_witness_sign(&issuance_evidence->root_record,
+            g_pki_default_witness.witness_id,
+            g_pki_default_witness.witness_id_len, &g_pki_default_witness_priv,
+            &issuance_evidence->witness_signatures[0])
+        != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
+    issuance_evidence->witness_signature_count = 1;
+    request->transparency_policy = &g_pki_default_transparency_policy;
+    return 1;
+}
+
 static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     const uint8_t *message, size_t message_len, uint64_t now_ts,
     sm2_auth_signature_t *signature, sm2_pki_revocation_evidence_t *evidence,
@@ -218,6 +267,8 @@ static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     request->signature = signature;
     request->revocation_evidence = evidence;
     request->issuance_evidence = issuance_evidence;
+    if (!pki_attach_default_issuance_witness(issuance_evidence, request))
+        return 0;
     return 1;
 }
 
@@ -262,6 +313,8 @@ static int pki_build_signed_verify_request_compact(sm2_pki_client_ctx_t *signer,
     request->signature = signature;
     request->revocation_evidence = evidence;
     request->issuance_evidence = issuance_evidence;
+    if (!pki_attach_default_issuance_witness(issuance_evidence, request))
+        return 0;
     return 1;
 }
 
@@ -293,6 +346,7 @@ void run_test_pki_suite(void)
     RUN_TEST(test_phase138_service_binding_tracks_newer_root_versions);
     RUN_TEST(test_phase140_compact_evidence_requires_matching_cached_root);
     RUN_TEST(test_phase141_issuance_transparency_required_and_threshold);
+    RUN_TEST(test_phase142_issuance_witness_append_only_and_quorum);
     RUN_TEST(test_phase139_root_versions_are_scoped_per_authority);
     RUN_TEST(
         test_phase139_unpinned_multi_ca_root_import_rejects_spoofed_authority);

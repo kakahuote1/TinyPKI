@@ -37,6 +37,10 @@ int main(void)
     sm2_private_key_t temp_priv;
     sm2_ic_cert_result_t cert_res;
     sm2_ec_point_t ca_pub;
+    sm2_private_key_t witness_priv;
+    sm2_ec_point_t witness_pub;
+    sm2_pki_transparency_witness_t witness;
+    sm2_pki_transparency_policy_t transparency_policy;
     sm2_auth_signature_t sig;
     sm2_pki_revocation_evidence_t evidence;
     sm2_pki_issuance_evidence_t issuance_evidence;
@@ -54,6 +58,10 @@ int main(void)
     memset(&temp_priv, 0, sizeof(temp_priv));
     memset(&cert_res, 0, sizeof(cert_res));
     memset(&ca_pub, 0, sizeof(ca_pub));
+    memset(&witness_priv, 0, sizeof(witness_priv));
+    memset(&witness_pub, 0, sizeof(witness_pub));
+    memset(&witness, 0, sizeof(witness));
+    memset(&transparency_policy, 0, sizeof(transparency_policy));
     memset(&sig, 0, sizeof(sig));
     memset(&evidence, 0, sizeof(evidence));
     memset(&issuance_evidence, 0, sizeof(issuance_evidence));
@@ -92,6 +100,19 @@ int main(void)
     err = sm2_pki_client_create(&cli, &ca_pub, svc);
     if (!check_pki(err, "Client Init"))
         goto cleanup;
+    err = sm2_pki_generate_ephemeral_keypair(&witness_priv, &witness_pub);
+    if (!check_pki(err, "Generate Witness Key"))
+        goto cleanup;
+    const uint8_t witness_id[] = "demo-witness-0";
+    memcpy(witness.witness_id, witness_id, sizeof(witness_id) - 1);
+    witness.witness_id_len = sizeof(witness_id) - 1;
+    witness.public_key = witness_pub;
+    transparency_policy.witnesses = &witness;
+    transparency_policy.witness_count = 1;
+    transparency_policy.threshold = 1;
+    err = sm2_pki_client_set_transparency_policy(cli, &transparency_policy);
+    if (!check_pki(err, "Configure Witness Policy"))
+        goto cleanup;
 
     err = sm2_pki_client_import_cert(cli, &cert_res, &temp_priv, &ca_pub);
     if (!check_pki(err, "Import Cert"))
@@ -122,6 +143,12 @@ int main(void)
         cli, auth_now, &issuance_evidence);
     if (!check_pki(err, "Export Issuance Transparency Evidence"))
         goto cleanup;
+    err = sm2_pki_issuance_witness_sign(&issuance_evidence.root_record,
+        witness.witness_id, witness.witness_id_len, &witness_priv,
+        &issuance_evidence.witness_signatures[0]);
+    if (!check_pki(err, "Witness Sign Issuance Root"))
+        goto cleanup;
+    issuance_evidence.witness_signature_count = 1;
     auth_req.revocation_evidence = &evidence;
     auth_req.issuance_evidence = &issuance_evidence;
 
