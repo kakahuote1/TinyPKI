@@ -77,13 +77,15 @@ extern "C"
         sm2_pki_client_ctx_t *ctx, const sm2_ec_point_t *ca_public_key);
 
     /*
-     * Configures the verifier-side system policy for edge/witness signatures
-     * over issuance transparency roots. Passing NULL or a zero threshold clears
-     * the witness threshold while keeping mandatory issuance-log membership.
+     * Configures the verifier-side system policy for edge/witness
+     * signatures
+     * over issuance transparency roots. Passing NULL or a
+     * zero threshold clears
+     * the witness threshold while keeping
+     * mandatory issuance-log membership.
      */
     sm2_pki_error_t sm2_pki_client_set_transparency_policy(
-        sm2_pki_client_ctx_t *ctx,
-        const sm2_pki_transparency_policy_t *policy);
+        sm2_pki_client_ctx_t *ctx, const sm2_pki_transparency_policy_t *policy);
 
     sm2_pki_error_t sm2_pki_client_get_cert(
         const sm2_pki_client_ctx_t *ctx, const sm2_implicit_cert_t **cert);
@@ -167,19 +169,22 @@ extern "C"
 
     /*
      * Exports proof that the local identity certificate appears in the
-     * issuer's append-only issuance log. This is the lightweight
-     * certificate-transparency path used to detect certificates that were
-     * signed but never logged.
+     * issuer's
+     * append-only issuance log. This detects certificates that
+     * were signed but
+     * never logged.
      */
     sm2_pki_error_t sm2_pki_client_export_issuance_evidence(
         sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
         sm2_pki_issuance_evidence_t *evidence);
 
     /*
-     * Signs a CA-signed issuance root record as an external transparency
-     * witness. Verifiers should enforce t-of-n witness signatures through
+     * Signs a CA-signed issuance root record as an external
+     * transparency
+     * witness. Verifiers should enforce t-of-n witness
+     * signatures through
      * sm2_pki_client_set_transparency_policy().
-     */
+ */
     sm2_pki_error_t sm2_pki_issuance_witness_sign(
         const sm2_rev_root_record_t *root_record, const uint8_t *witness_id,
         size_t witness_id_len, const sm2_private_key_t *witness_private_key,
@@ -211,8 +216,10 @@ extern "C"
         sm2_auth_signature_t *signature);
 
     /*
-     * High-level PKI verification requires the peer to carry both an exact
-     * non-revocation evidence bundle and issuance transparency evidence signed
+     * High-level PKI verification requires the peer to carry both an
+     * exact
+     * non-revocation evidence bundle and issuance transparency
+     * evidence signed
      * under the issuing CA root.
      */
     sm2_pki_error_t sm2_pki_verify(sm2_pki_client_ctx_t *ctx,
@@ -227,11 +234,12 @@ extern "C"
         sm2_ec_point_t *ephemeral_public_key);
 
     /*
-     * Low-level key agreement primitive.
-     * Callers must ensure the
-     * peer identity, revocation evidence and key usage
-     * have already been
-     * verified through a higher-level flow before using it.
+     * Low-level key agreement primitive. Callers must ensure the peer
+     * identity,
+     * revocation evidence, issuance transparency evidence and
+     * key usage have
+     * already been verified through a higher-level flow
+     * before using it.
      */
     sm2_pki_error_t sm2_pki_key_agreement(sm2_pki_client_ctx_t *ctx,
         const sm2_private_key_t *local_ephemeral_private_key,
@@ -241,13 +249,13 @@ extern "C"
         size_t session_key_len);
 
     /*
-     * High-level secure session establishment entry point.
-     * The
-     * peer request must already carry a signature over the canonical
-     *
-     * handshake binding produced by sm2_auth_build_handshake_binding() and a
-
-     * non-revocation and issuance transparency evidence accepted by
+     * High-level secure session establishment entry point. The peer
+     * request must
+     * already carry a signature over the canonical
+     * handshake binding produced by
+     * sm2_auth_build_handshake_binding(),
+     * plus non-revocation and issuance
+     * transparency evidence accepted by
      * sm2_pki_verify().
      */
     sm2_pki_error_t sm2_pki_secure_session_establish(sm2_pki_client_ctx_t *ctx,

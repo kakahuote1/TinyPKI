@@ -371,9 +371,9 @@ static sm2_ic_error_t service_publish_issuance_root(
 
     if (rebuild_tree || !tree_to_sign)
     {
-        sm2_ic_error_t ret
-            = sm2_pki_issuance_tree_build(&new_tree, state->issuance_commitments,
-                state->issued_count, (uint64_t)state->issued_count);
+        sm2_ic_error_t ret = sm2_pki_issuance_tree_build(&new_tree,
+            state->issuance_commitments, state->issued_count,
+            (uint64_t)state->issued_count);
         if (ret != SM2_IC_SUCCESS)
             return ret;
         tree_to_sign = new_tree;
@@ -855,8 +855,7 @@ sm2_pki_error_t sm2_pki_cert_issue(sm2_pki_service_ctx_t *ctx,
         return sm2_pki_error_from_ic(ret);
 
     uint8_t issuance_commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN];
-    ret = sm2_pki_issuance_cert_commitment(
-        &result->cert, issuance_commitment);
+    ret = sm2_pki_issuance_cert_commitment(&result->cert, issuance_commitment);
     if (ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ret);
 

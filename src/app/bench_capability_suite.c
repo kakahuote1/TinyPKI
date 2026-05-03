@@ -3101,7 +3101,8 @@ static int collect_base_metrics(base_metric_t *metrics)
         memset(&evidence, 0, sizeof(evidence));
         memset(&compact_evidence, 0, sizeof(compact_evidence));
         memset(&issuance_evidence, 0, sizeof(issuance_evidence));
-        memset(&compact_issuance_evidence, 0, sizeof(compact_issuance_evidence));
+        memset(
+            &compact_issuance_evidence, 0, sizeof(compact_issuance_evidence));
         memset(&request, 0, sizeof(request));
         memset(&compact_request, 0, sizeof(compact_request));
         if (!build_signed_verify_request(flow.client, flow.message,
@@ -3109,8 +3110,7 @@ static int collect_base_metrics(base_metric_t *metrics)
                 &issuance_evidence, &request)
             || !build_signed_verify_request_compact(flow.client, flow.message,
                 flow.message_len, flow.auth_now, &compact_signature,
-                &compact_evidence, &compact_issuance_evidence,
-                &compact_request)
+                &compact_evidence, &compact_issuance_evidence, &compact_request)
             || !encode_root_len(&evidence.root_record, root_buf,
                 sizeof(root_buf), &root_round_len)
             || !encode_absence_len(&evidence.absence_proof, absence_buf,

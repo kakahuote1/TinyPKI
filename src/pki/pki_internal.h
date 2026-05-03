@@ -33,8 +33,7 @@ void sm2_pki_rev_set_root_valid_until(
     sm2_rev_ctx_t *ctx, uint64_t root_valid_until);
 sm2_ic_error_t sm2_pki_issuance_leaf_key(
     const sm2_implicit_cert_t *cert, uint64_t *leaf_key);
-sm2_ic_error_t sm2_pki_issuance_cert_commitment(
-    const sm2_implicit_cert_t *cert,
+sm2_ic_error_t sm2_pki_issuance_cert_commitment(const sm2_implicit_cert_t *cert,
     uint8_t commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN]);
 
 typedef struct sm2_pki_issuance_tree_st sm2_pki_issuance_tree_t;

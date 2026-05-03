@@ -184,8 +184,7 @@ sm2_ic_error_t sm2_pki_issuance_root_verify(
     return ret == SM2_IC_SUCCESS ? SM2_IC_SUCCESS : SM2_IC_ERR_VERIFY;
 }
 
-sm2_ic_error_t sm2_pki_issuance_cert_commitment(
-    const sm2_implicit_cert_t *cert,
+sm2_ic_error_t sm2_pki_issuance_cert_commitment(const sm2_implicit_cert_t *cert,
     uint8_t commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN])
 {
     uint8_t cert_buf[SM2_PKI_ISSUANCE_CERT_ENCODE_MAX];
@@ -289,8 +288,7 @@ static sm2_ic_error_t pki_issuance_hash_parent(
         return SM2_IC_ERR_PARAM;
     buf[0] = 0x41U;
     memcpy(buf + 1, left, SM2_REV_MERKLE_HASH_LEN);
-    memcpy(buf + 1 + SM2_REV_MERKLE_HASH_LEN, right,
-        SM2_REV_MERKLE_HASH_LEN);
+    memcpy(buf + 1 + SM2_REV_MERKLE_HASH_LEN, right, SM2_REV_MERKLE_HASH_LEN);
     return sm2_ic_sm3_hash(buf, sizeof(buf), out_hash);
 }
 
@@ -367,9 +365,8 @@ sm2_ic_error_t sm2_pki_issuance_tree_build(sm2_pki_issuance_tree_t **tree,
 
     if (commitment_count > SIZE_MAX / sizeof(*state->commitments))
         return SM2_IC_ERR_MEMORY;
-    state->commitments
-        = (uint8_t (*)[SM2_PKI_ISSUANCE_COMMITMENT_LEN])malloc(
-            commitment_count * sizeof(*state->commitments));
+    state->commitments = (uint8_t (*)[SM2_PKI_ISSUANCE_COMMITMENT_LEN])malloc(
+        commitment_count * sizeof(*state->commitments));
     if (!state->commitments)
         return SM2_IC_ERR_MEMORY;
     memcpy(state->commitments, commitments,
@@ -486,8 +483,7 @@ sm2_ic_error_t sm2_pki_issuance_tree_prove_member(
         return SM2_IC_ERR_VERIFY;
 
     memset(proof, 0, sizeof(*proof));
-    memcpy(proof->cert_commitment, commitment,
-        SM2_PKI_ISSUANCE_COMMITMENT_LEN);
+    memcpy(proof->cert_commitment, commitment, SM2_PKI_ISSUANCE_COMMITMENT_LEN);
     proof->leaf_index = index;
     proof->leaf_count = tree->leaf_count;
     proof->sibling_count = tree->level_count - 1;
@@ -564,11 +560,9 @@ sm2_ic_error_t sm2_pki_issuance_tree_verify_member(
             return SM2_IC_ERR_VERIFY;
 
         if (proof->sibling_on_left[i])
-            ret = pki_issuance_hash_parent(
-                proof->sibling_hashes[i], cur, next);
+            ret = pki_issuance_hash_parent(proof->sibling_hashes[i], cur, next);
         else
-            ret = pki_issuance_hash_parent(
-                cur, proof->sibling_hashes[i], next);
+            ret = pki_issuance_hash_parent(cur, proof->sibling_hashes[i], next);
         if (ret != SM2_IC_SUCCESS)
             return ret;
         memcpy(cur, next, SM2_REV_MERKLE_HASH_LEN);

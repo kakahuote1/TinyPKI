@@ -459,8 +459,8 @@ static sm2_pki_error_t pki_client_accept_issuance_root_record(
     pki_client_root_verify_ctx_t verify_ctx = { .store = &state->trust_store,
         .require_specific_index = true,
         .required_index = matched_ca_index };
-    sm2_ic_error_t ic_ret = sm2_pki_issuance_root_verify(root_record, now_ts,
-        pki_client_root_record_verify_cb, &verify_ctx);
+    sm2_ic_error_t ic_ret = sm2_pki_issuance_root_verify(
+        root_record, now_ts, pki_client_root_record_verify_cb, &verify_ctx);
     if (ic_ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ic_ret);
 
@@ -641,8 +641,7 @@ static sm2_pki_error_t pki_client_validate_transparency_policy(
     }
     for (size_t i = 0; i < policy->witness_count; i++)
     {
-        const sm2_pki_transparency_witness_t *witness
-            = &policy->witnesses[i];
+        const sm2_pki_transparency_witness_t *witness = &policy->witnesses[i];
         if (!pki_client_witness_id_valid(
                 witness->witness_id, witness->witness_id_len))
         {
@@ -767,9 +766,8 @@ static sm2_pki_error_t pki_client_verify_issuance_evidence(
     pki_client_root_verify_ctx_t verify_ctx = { .store = &state->trust_store,
         .require_specific_index = true,
         .required_index = matched_ca_index };
-    sm2_ic_error_t ic_ret = sm2_pki_issuance_root_verify(
-        &evidence->root_record, now_ts, pki_client_root_record_verify_cb,
-        &verify_ctx);
+    sm2_ic_error_t ic_ret = sm2_pki_issuance_root_verify(&evidence->root_record,
+        now_ts, pki_client_root_record_verify_cb, &verify_ctx);
     if (ic_ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ic_ret);
     ic_ret = sm2_pki_issuance_tree_verify_member(
@@ -1029,7 +1027,8 @@ sm2_pki_error_t sm2_pki_client_set_transparency_policy(
     {
         memset(state->transparency_witnesses, 0,
             sizeof(state->transparency_witnesses));
-        memset(&state->transparency_policy, 0, sizeof(state->transparency_policy));
+        memset(
+            &state->transparency_policy, 0, sizeof(state->transparency_policy));
         state->has_transparency_policy = false;
         return SM2_PKI_SUCCESS;
     }
@@ -1391,9 +1390,9 @@ sm2_pki_error_t sm2_pki_verify(sm2_pki_client_ctx_t *ctx,
 
     if (!request->issuance_evidence)
         return SM2_PKI_ERR_VERIFY;
-    const sm2_pki_transparency_policy_t *policy
-        = state->has_transparency_policy ? &state->transparency_policy
-                                         : request->transparency_policy;
+    const sm2_pki_transparency_policy_t *policy = state->has_transparency_policy
+        ? &state->transparency_policy
+        : request->transparency_policy;
     ret = pki_client_verify_issuance_evidence(state, request->cert,
         request->issuance_evidence, now_ts, local_matched_index, policy);
     if (ret != SM2_PKI_SUCCESS)
