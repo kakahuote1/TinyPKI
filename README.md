@@ -9,7 +9,7 @@
 
 TinyPKI 是一个面向 IoT 资源受限、弱网与边缘节点场景的轻量 PKI C11 核心库，覆盖证书签发、吊销证明、认证与会话保护等主链路能力。
 
-本项目基于 OpenSSL EVP 架构与国密算法族（SM2/SM3/SM4）实现，围绕 ECQV 隐式证书构建，并原生提供 CA 签名的 Merkle 撤销根、携带式非吊销证明、撤销状态同步以及面向 service/client 的高层 PKI API。
+本项目基于 OpenSSL EVP 架构与国密算法族（SM2/SM3/SM4）实现，围绕 ECQV 隐式证书构建，并原生提供 CA 签名的 Merkle 撤销根、携带式非吊销证明、强制发证透明证明、撤销状态同步以及面向 service/client 的高层 PKI API。
 
 无论是微控制器、智能网关，还是需要本地化吊销校验与安全会话建立的边缘服务组件，TinyPKI 都能提供较低集成成本且接口清晰的实现基础。
 
@@ -23,10 +23,13 @@ TinyPKI 是一个面向 IoT 资源受限、弱网与边缘节点场景的轻量 
   
   传统数字证书动辄上千字节，在 NB-IoT、LoRa 等窄带网络中传输成本很高。本项目采用基于国密算法的隐式证书（ECQV）技术，提供请求生成、CA 签发、终端侧公私钥重构与证书一致性验证的完整链路，显著降低证书载荷与设备侧处理负担。当前仓库内 benchmark 快照下，ECQV 隐式证书编码为 `79 bytes`，对照本机生成的 X.509 DER 基线 `691 bytes`，约为其 `11.43%`。
 * 🌳 **极速且保护隐私的证书吊销校验**
-  
+
   传统的 OCSP 或 CRL 往往带来额外在线查询和隐私暴露。本项目采用“CA 签名根记录 + Merkle member/absence proof”机制，由证书持有方在认证时直接携带精确的非吊销证明，对端结合本地缓存根记录即可完成离线校验，并支持根记录刷新与携带式证据导出。
+* 🔎 **强制发证透明与边缘见证门限**
+
+  高层 `sm2_pki_verify()` 默认要求每个对端同时携带 issuance transparency evidence。CA 侧维护按签发顺序追加的 32-byte 证书承诺 Merkle log，验证端检查成员证明、CA 签名 issuance root，并可通过客户端级 `t-of-n` witness policy 要求多个边缘节点对 root 见证签名。
 * 🛡️ **面向断网与多节点同步的撤销状态维护**
-  
+
   在边缘与弱连接场景中，撤销状态往往需要跨节点同步而不是依赖单点在线查询。本项目提供 delta/heartbeat、重定向候选、quorum/BFT 检查以及 epoch/cached proof 相关能力，用于在断网、时钟漂移和部分节点异常时维持撤销状态的一致性与可用性。
 * ⚡ **开箱即用的“认证即加密”全链路保护**
   
@@ -80,7 +83,7 @@ cmake --build build --target sm2_test_merkle_flow -j 4
 
 ## 🧪 测试验证 (Testing)
 
-当前仓库测试主链路由 `ctest` 与 `test_all` 两个入口组成。按当前基线，`ctest` 拆分为 6 个 suite，`test_all` 聚合执行 85 个用例。
+当前仓库测试主链路由 `ctest` 与 `test_all` 两个入口组成。按当前基线，`ctest` 拆分为 6 个 suite，`test_all` 聚合执行 86 个用例。
 
 **运行全量自动化集成测试：**
 ```bash
@@ -139,6 +142,7 @@ cmake --build build --target sm2_bench_capability_suite -j 4
 
 * `include/sm2_implicit_cert.h`: ECQV 请求生成、CA 签发、证书验证与终端侧密钥重构
 * `include/sm2_revocation.h`: Merkle 根记录、member/absence proof、multiproof、epoch 缓存与撤销同步/BFT 辅助能力
+* `include/sm2_pki_transparency.h`: 发证透明 proof、witness 签名与 `t-of-n` 见证策略类型
 * `include/sm2_auth.h`: 认证请求校验、revocation policy、握手绑定、双向握手与 AEAD 会话保护
 * `include/sm2_crypto.h`: 底层签名、验签、随机数、哈希、AEAD 以及统一 PKI 错误映射
 * `include/sm2_pki_service.h` / `sm2_pki_client.h`: 面向内存态 CA/RA 服务端与设备侧客户端的高层流程 API（Opaque Handle 隔离）
@@ -148,14 +152,15 @@ cmake --build build --target sm2_bench_capability_suite -j 4
 
 ## 🌍 English Summary
 
-**TinyPKI** is a lightweight C11 PKI core for constrained IoT, weakly connected, and edge deployment scenarios. Built on top of OpenSSL EVP with SM2/SM3/SM4, it provides end-to-end flows for ECQV implicit certificates, CA-signed Merkle revocation roots, proof-carrying non-revocation evidence, and high-level PKI/auth/session APIs.
+**TinyPKI** is a lightweight C11 PKI core for constrained IoT, weakly connected, and edge deployment scenarios. Built on top of OpenSSL EVP with SM2/SM3/SM4, it provides end-to-end flows for ECQV implicit certificates, CA-signed Merkle revocation roots, mandatory issuance transparency evidence, proof-carrying non-revocation evidence, and high-level PKI/auth/session APIs.
 
 - **ECQV Implicit Certificate Flows** covering request generation, CA issuance, endpoint key reconstruction, and certificate verification with substantially smaller payloads than conventional X.509.
-- **Measured Footprint Snapshot**: the current in-repo benchmark reports a `79-byte` ECQV implicit certificate versus a `691-byte` X.509 DER baseline, with a `143-byte` carried non-revocation evidence bundle and a `292-byte` authentication bundle.
+- **Measured Footprint Snapshot**: the current in-repo benchmark reports a `79-byte` ECQV implicit certificate versus a `691-byte` X.509 DER baseline. With mandatory issuance transparency evidence included, the full authentication bundle is `4140 bytes` and the compact-root bundle is `4060 bytes`.
 - **CA-Signed Merkle Revocation Roots and Carried Proofs** supporting exact offline non-revocation checks via member/absence proofs and cached root records.
+- **Mandatory Issuance Transparency** using 32-byte certificate commitments, CA-signed issuance roots, and client-level `t-of-n` edge witness policies.
 - **Revocation State Sync Tooling** including delta/heartbeat refresh, redirect hints, quorum/BFT helpers, multiproof compression, and epoch/cached proof support.
 - **Mutual Authentication and Secure Sessions** spanning static or ephemeral key agreement, canonical handshake binding, key-usage enforcement, and SM4-GCM/CCM AEAD protection.
-- **Misuse-Resistant High-Level APIs** built around opaque handles, secure defaults, unified error mapping, and a current automated test baseline of 85 cases across `ctest` and `test_all`.
+- **Misuse-Resistant High-Level APIs** built around opaque handles, secure defaults, unified error mapping, and a current automated test baseline of 86 cases across `ctest` and `test_all`.
 
 ## 📄 开源许可证 (License)
 

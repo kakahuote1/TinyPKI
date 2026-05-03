@@ -181,13 +181,14 @@ static int pki_client_get_identity_material(sm2_pki_client_ctx_t *client,
 static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     const uint8_t *message, size_t message_len, uint64_t now_ts,
     sm2_auth_signature_t *signature, sm2_pki_revocation_evidence_t *evidence,
+    sm2_pki_issuance_evidence_t *issuance_evidence,
     sm2_pki_verify_request_t *request)
 {
     const sm2_implicit_cert_t *cert = NULL;
     const sm2_ec_point_t *public_key = NULL;
 
     if (!signer || !message || message_len == 0 || !signature || !evidence
-        || !request)
+        || !issuance_evidence || !request)
     {
         return 0;
     }
@@ -202,6 +203,12 @@ static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     {
         return 0;
     }
+    if (sm2_pki_client_export_issuance_evidence(
+            signer, now_ts, issuance_evidence)
+        != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
 
     memset(request, 0, sizeof(*request));
     request->cert = cert;
@@ -210,19 +217,21 @@ static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     request->message_len = message_len;
     request->signature = signature;
     request->revocation_evidence = evidence;
+    request->issuance_evidence = issuance_evidence;
     return 1;
 }
 
 static int pki_build_signed_verify_request_compact(sm2_pki_client_ctx_t *signer,
     const uint8_t *message, size_t message_len, uint64_t now_ts,
     sm2_auth_signature_t *signature, sm2_pki_revocation_evidence_t *evidence,
+    sm2_pki_issuance_evidence_t *issuance_evidence,
     sm2_pki_verify_request_t *request)
 {
     const sm2_implicit_cert_t *cert = NULL;
     const sm2_ec_point_t *public_key = NULL;
 
     if (!signer || !message || message_len == 0 || !signature || !evidence
-        || !request)
+        || !issuance_evidence || !request)
     {
         return 0;
     }
@@ -238,6 +247,12 @@ static int pki_build_signed_verify_request_compact(sm2_pki_client_ctx_t *signer,
     {
         return 0;
     }
+    if (sm2_pki_client_export_issuance_evidence(
+            signer, now_ts, issuance_evidence)
+        != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
 
     memset(request, 0, sizeof(*request));
     request->cert = cert;
@@ -246,6 +261,7 @@ static int pki_build_signed_verify_request_compact(sm2_pki_client_ctx_t *signer,
     request->message_len = message_len;
     request->signature = signature;
     request->revocation_evidence = evidence;
+    request->issuance_evidence = issuance_evidence;
     return 1;
 }
 
@@ -276,6 +292,7 @@ void run_test_pki_suite(void)
     RUN_TEST(test_phase137_client_root_cache_import_refresh_and_rollback);
     RUN_TEST(test_phase138_service_binding_tracks_newer_root_versions);
     RUN_TEST(test_phase140_compact_evidence_requires_matching_cached_root);
+    RUN_TEST(test_phase141_issuance_transparency_required_and_threshold);
     RUN_TEST(test_phase139_root_versions_are_scoped_per_authority);
     RUN_TEST(
         test_phase139_unpinned_multi_ca_root_import_rejects_spoofed_authority);

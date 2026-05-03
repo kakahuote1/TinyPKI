@@ -16,6 +16,7 @@
 #include "sm2_crypto.h"
 #include "sm2_revocation.h"
 #include "sm2_implicit_cert.h"
+#include "sm2_pki_transparency.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -53,6 +54,14 @@ extern "C"
         const sm2_pki_service_ctx_t *ctx, sm2_rev_root_record_t *root_record);
 
     /*
+     * Returns the CA-signed issuance transparency root. Its Merkle leaves are
+     * stable certificate commitments derived from the issued ECQV certificate
+     * encoding.
+     */
+    sm2_pki_error_t sm2_pki_service_get_issuance_root_record(
+        const sm2_pki_service_ctx_t *ctx, sm2_rev_root_record_t *root_record);
+
+    /*
      * Preferred publication/export APIs for revocation artifacts. These keep
      * the service-side Merkle tree internal while exposing signed outputs.
      */
@@ -67,6 +76,10 @@ extern "C"
     sm2_pki_error_t sm2_pki_service_export_absence_proof(
         const sm2_pki_service_ctx_t *ctx, uint64_t serial_number,
         sm2_rev_absence_proof_t *proof);
+
+    sm2_pki_error_t sm2_pki_service_export_issuance_proof(
+        const sm2_pki_service_ctx_t *ctx, const sm2_implicit_cert_t *cert,
+        sm2_pki_issuance_member_proof_t *proof);
 
     /*
      * Explicitly publishes a fresh CA-signed revocation root/heartbeat object.

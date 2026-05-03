@@ -83,6 +83,7 @@ typedef struct
     size_t root_record_bytes;
     size_t compact_root_hint_bytes;
     size_t absence_proof_bytes;
+    size_t issuance_evidence_bytes;
     size_t auth_bundle_bytes;
     size_t auth_bundle_compact_bytes;
     timing_stat_t verify_bundle_timing;
@@ -235,6 +236,7 @@ typedef struct
     sm2_private_key_t temp_private_key;
     sm2_auth_signature_t signature;
     sm2_pki_revocation_evidence_t evidence;
+    sm2_pki_issuance_evidence_t issuance_evidence;
     sm2_pki_verify_request_t verify_request;
     uint8_t message[64];
     size_t message_len;
@@ -1529,13 +1531,14 @@ static int client_get_identity_material(sm2_pki_client_ctx_t *client,
 static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     const uint8_t *message, size_t message_len, uint64_t now_ts,
     sm2_auth_signature_t *signature, sm2_pki_revocation_evidence_t *evidence,
+    sm2_pki_issuance_evidence_t *issuance_evidence,
     sm2_pki_verify_request_t *request)
 {
     const sm2_implicit_cert_t *cert = NULL;
     const sm2_ec_point_t *public_key = NULL;
 
     if (!signer || !message || message_len == 0 || !signature || !evidence
-        || !request)
+        || !issuance_evidence || !request)
     {
         return 0;
     }
@@ -1552,6 +1555,12 @@ static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     {
         return 0;
     }
+    if (sm2_pki_client_export_issuance_evidence(
+            signer, now_ts, issuance_evidence)
+        != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
 
     memset(request, 0, sizeof(*request));
     request->cert = cert;
@@ -1560,19 +1569,21 @@ static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     request->message_len = message_len;
     request->signature = signature;
     request->revocation_evidence = evidence;
+    request->issuance_evidence = issuance_evidence;
     return 1;
 }
 
 static int build_signed_verify_request_compact(sm2_pki_client_ctx_t *signer,
     const uint8_t *message, size_t message_len, uint64_t now_ts,
     sm2_auth_signature_t *signature, sm2_pki_revocation_evidence_t *evidence,
+    sm2_pki_issuance_evidence_t *issuance_evidence,
     sm2_pki_verify_request_t *request)
 {
     const sm2_implicit_cert_t *cert = NULL;
     const sm2_ec_point_t *public_key = NULL;
 
     if (!signer || !message || message_len == 0 || !signature || !evidence
-        || !request)
+        || !issuance_evidence || !request)
     {
         return 0;
     }
@@ -1590,6 +1601,12 @@ static int build_signed_verify_request_compact(sm2_pki_client_ctx_t *signer,
     {
         return 0;
     }
+    if (sm2_pki_client_export_issuance_evidence(
+            signer, now_ts, issuance_evidence)
+        != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
 
     memset(request, 0, sizeof(*request));
     request->cert = cert;
@@ -1598,6 +1615,7 @@ static int build_signed_verify_request_compact(sm2_pki_client_ctx_t *signer,
     request->message_len = message_len;
     request->signature = signature;
     request->revocation_evidence = evidence;
+    request->issuance_evidence = issuance_evidence;
     return 1;
 }
 
@@ -1681,15 +1699,18 @@ static uint8_t *serialize_tinypki_verify_wire(
     uint8_t cert_buf[1024];
     uint8_t aux_buf[1024];
     uint8_t absence_buf[8192];
+    uint8_t issuance_buf[sizeof(sm2_pki_issuance_evidence_t)];
     size_t cert_len = sizeof(cert_buf);
     size_t aux_len = 0U;
     size_t absence_len = sizeof(absence_buf);
+    size_t issuance_len = sizeof(issuance_buf);
     size_t total_len = 0U;
     uint8_t *buf = NULL;
     size_t off = 0U;
 
     if (!request || !request->cert || !request->public_key || !request->message
-        || !request->signature || !request->revocation_evidence || !out_len)
+        || !request->signature || !request->revocation_evidence
+        || !request->issuance_evidence || !out_len)
     {
         return NULL;
     }
@@ -1730,9 +1751,11 @@ static uint8_t *serialize_tinypki_verify_wire(
         return NULL;
     }
 
-    total_len = 4U + 1U + 3U + 4U * 5U + sizeof(sm2_ec_point_t) + cert_len
+    memcpy(issuance_buf, request->issuance_evidence, issuance_len);
+
+    total_len = 4U + 1U + 3U + 4U * 6U + sizeof(sm2_ec_point_t) + cert_len
         + request->message_len + request->signature->der_len + aux_len
-        + absence_len;
+        + absence_len + issuance_len;
     buf = (uint8_t *)malloc(total_len);
     if (!buf)
         return NULL;
@@ -1752,6 +1775,8 @@ static uint8_t *serialize_tinypki_verify_wire(
     off += 4U;
     put_be32(buf + off, (uint32_t)absence_len);
     off += 4U;
+    put_be32(buf + off, (uint32_t)issuance_len);
+    off += 4U;
     memcpy(buf + off, request->public_key, sizeof(sm2_ec_point_t));
     off += sizeof(sm2_ec_point_t);
     memcpy(buf + off, cert_buf, cert_len);
@@ -1764,6 +1789,8 @@ static uint8_t *serialize_tinypki_verify_wire(
     off += aux_len;
     memcpy(buf + off, absence_buf, absence_len);
     off += absence_len;
+    memcpy(buf + off, issuance_buf, issuance_len);
+    off += issuance_len;
 
     *out_len = off;
     return buf;
@@ -1772,20 +1799,22 @@ static uint8_t *serialize_tinypki_verify_wire(
 static int decode_tinypki_verify_wire(const uint8_t *buf, size_t len,
     sm2_implicit_cert_t *cert, sm2_ec_point_t *public_key,
     sm2_auth_signature_t *signature, sm2_pki_revocation_evidence_t *evidence,
-    const uint8_t **message, size_t *message_len)
+    sm2_pki_issuance_evidence_t *issuance_evidence, const uint8_t **message,
+    size_t *message_len)
 {
     uint32_t cert_len = 0U;
     uint32_t msg_len = 0U;
     uint32_t sig_len = 0U;
     uint32_t aux_len = 0U;
     uint32_t absence_len = 0U;
+    uint32_t issuance_len = 0U;
     const uint8_t *cursor = NULL;
     size_t remaining = 0U;
     uint8_t mode = 0U;
 
-    if (!buf || !cert || !public_key || !signature || !evidence || !message
-        || !message_len
-        || len < 4U + 1U + 3U + 4U * 5U + sizeof(sm2_ec_point_t))
+    if (!buf || !cert || !public_key || !signature || !evidence
+        || !issuance_evidence || !message || !message_len
+        || len < 4U + 1U + 3U + 4U * 6U + sizeof(sm2_ec_point_t))
     {
         return 0;
     }
@@ -1798,13 +1827,16 @@ static int decode_tinypki_verify_wire(const uint8_t *buf, size_t len,
     sig_len = get_be32(buf + 16U);
     aux_len = get_be32(buf + 20U);
     absence_len = get_be32(buf + 24U);
+    issuance_len = get_be32(buf + 28U);
     if (sig_len > SM2_AUTH_MAX_SIG_DER_LEN)
         return 0;
+    if (issuance_len != sizeof(*issuance_evidence))
+        return 0;
 
-    cursor = buf + 28U;
-    remaining = len - 28U;
+    cursor = buf + 32U;
+    remaining = len - 32U;
     if (remaining < sizeof(sm2_ec_point_t) + cert_len + msg_len + sig_len
-            + aux_len + absence_len)
+            + aux_len + absence_len + issuance_len)
     {
         return 0;
     }
@@ -1847,7 +1879,9 @@ static int decode_tinypki_verify_wire(const uint8_t *buf, size_t len,
 
     return sm2_rev_absence_proof_decode(
                &evidence->absence_proof, cursor, absence_len)
-        == SM2_IC_SUCCESS;
+        == SM2_IC_SUCCESS
+        && (cursor += absence_len,
+            memcpy(issuance_evidence, cursor, sizeof(*issuance_evidence)), 1);
 }
 
 static int build_flow_context(bench_flow_ctx_t *ctx)
@@ -1904,7 +1938,7 @@ static int build_flow_context(bench_flow_ctx_t *ctx)
         : current_unix_ts();
     return build_signed_verify_request(ctx->client, ctx->message,
         ctx->message_len, ctx->auth_now, &ctx->signature, &ctx->evidence,
-        &ctx->verify_request);
+        &ctx->issuance_evidence, &ctx->verify_request);
 }
 
 static void cleanup_flow_context(bench_flow_ctx_t *ctx)
@@ -1934,6 +1968,7 @@ static int build_tinypki_network_artifacts(
 {
     sm2_auth_signature_t compact_signature;
     sm2_pki_revocation_evidence_t compact_evidence;
+    sm2_pki_issuance_evidence_t compact_issuance;
     sm2_pki_verify_request_t compact_request;
 
     if (!artifacts)
@@ -1941,6 +1976,7 @@ static int build_tinypki_network_artifacts(
     memset(artifacts, 0, sizeof(*artifacts));
     memset(&compact_signature, 0, sizeof(compact_signature));
     memset(&compact_evidence, 0, sizeof(compact_evidence));
+    memset(&compact_issuance, 0, sizeof(compact_issuance));
     memset(&compact_request, 0, sizeof(compact_request));
 
     if (!build_flow_context(&artifacts->flow)
@@ -1961,7 +1997,7 @@ static int build_tinypki_network_artifacts(
         || !build_signed_verify_request_compact(artifacts->flow.client,
             artifacts->flow.message, artifacts->flow.message_len,
             artifacts->flow.auth_now, &compact_signature, &compact_evidence,
-            &compact_request))
+            &compact_issuance, &compact_request))
     {
         cleanup_tinypki_network_artifacts(artifacts);
         return 0;
@@ -2238,6 +2274,7 @@ static void *bench_http_server_thread_proc(void *param)
                 sm2_ec_point_t public_key;
                 sm2_auth_signature_t signature;
                 sm2_pki_revocation_evidence_t evidence;
+                sm2_pki_issuance_evidence_t issuance_evidence;
                 sm2_pki_verify_request_t verify_request;
                 const uint8_t *message = NULL;
                 size_t message_len = 0U;
@@ -2247,11 +2284,12 @@ static void *bench_http_server_thread_proc(void *param)
                 memset(&public_key, 0, sizeof(public_key));
                 memset(&signature, 0, sizeof(signature));
                 memset(&evidence, 0, sizeof(evidence));
+                memset(&issuance_evidence, 0, sizeof(issuance_evidence));
                 memset(&verify_request, 0, sizeof(verify_request));
 
                 if (!decode_tinypki_verify_wire(body, body_len, &cert,
-                        &public_key, &signature, &evidence, &message,
-                        &message_len))
+                        &public_key, &signature, &evidence, &issuance_evidence,
+                        &message, &message_len))
                 {
                     break;
                 }
@@ -2261,6 +2299,7 @@ static void *bench_http_server_thread_proc(void *param)
                 verify_request.message_len = message_len;
                 verify_request.signature = &signature;
                 verify_request.revocation_evidence = &evidence;
+                verify_request.issuance_evidence = &issuance_evidence;
                 if (sm2_pki_verify(ctx->tinypki_verifier, &verify_request,
                         ctx->tinypki_now_ts, &matched)
                     != SM2_PKI_SUCCESS)
@@ -2705,6 +2744,7 @@ static int measure_verify_bundle_compact_stats(timing_stat_t *stats)
     double samples[BENCH_VERIFY_ROUNDS];
     sm2_auth_signature_t signature;
     sm2_pki_revocation_evidence_t evidence;
+    sm2_pki_issuance_evidence_t issuance_evidence;
     sm2_pki_verify_request_t request;
     size_t matched = 0;
 
@@ -2713,6 +2753,7 @@ static int measure_verify_bundle_compact_stats(timing_stat_t *stats)
     memset(&flow, 0, sizeof(flow));
     memset(&signature, 0, sizeof(signature));
     memset(&evidence, 0, sizeof(evidence));
+    memset(&issuance_evidence, 0, sizeof(issuance_evidence));
     memset(&request, 0, sizeof(request));
     if (!build_flow_context(&flow))
         return 0;
@@ -2724,7 +2765,8 @@ static int measure_verify_bundle_compact_stats(timing_stat_t *stats)
         return 0;
     }
     if (!build_signed_verify_request_compact(flow.client, flow.message,
-            flow.message_len, flow.auth_now, &signature, &evidence, &request))
+            flow.message_len, flow.auth_now, &signature, &evidence,
+            &issuance_evidence, &request))
     {
         cleanup_flow_context(&flow);
         return 0;
@@ -2786,6 +2828,8 @@ static int measure_secure_session_stats_internal(
         sm2_auth_signature_t sig_b;
         sm2_pki_revocation_evidence_t evidence_a;
         sm2_pki_revocation_evidence_t evidence_b;
+        sm2_pki_issuance_evidence_t issuance_a;
+        sm2_pki_issuance_evidence_t issuance_b;
         sm2_pki_verify_request_t req_a_to_b;
         sm2_pki_verify_request_t req_b_to_a;
         uint8_t sk_a[16];
@@ -2801,6 +2845,8 @@ static int measure_secure_session_stats_internal(
         memset(&sig_b, 0, sizeof(sig_b));
         memset(&evidence_a, 0, sizeof(evidence_a));
         memset(&evidence_b, 0, sizeof(evidence_b));
+        memset(&issuance_a, 0, sizeof(issuance_a));
+        memset(&issuance_b, 0, sizeof(issuance_b));
         memset(&req_a_to_b, 0, sizeof(req_a_to_b));
         memset(&req_b_to_a, 0, sizeof(req_b_to_a));
 
@@ -2831,6 +2877,12 @@ static int measure_secure_session_stats_internal(
                        : sm2_pki_client_export_revocation_evidence(
                              ctx.client_b, ctx.auth_now, &evidence_b))
                 != SM2_PKI_SUCCESS
+            || sm2_pki_client_export_issuance_evidence(
+                   ctx.client_a, ctx.auth_now, &issuance_a)
+                != SM2_PKI_SUCCESS
+            || sm2_pki_client_export_issuance_evidence(
+                   ctx.client_b, ctx.auth_now, &issuance_b)
+                != SM2_PKI_SUCCESS
             || !client_get_identity_material(ctx.client_a, &cert_a, &pub_a)
             || !client_get_identity_material(ctx.client_b, &cert_b, &pub_b))
         {
@@ -2844,6 +2896,7 @@ static int measure_secure_session_stats_internal(
         req_a_to_b.message_len = bind_a_len;
         req_a_to_b.signature = &sig_a;
         req_a_to_b.revocation_evidence = &evidence_a;
+        req_a_to_b.issuance_evidence = &issuance_a;
 
         req_b_to_a.cert = cert_b;
         req_b_to_a.public_key = pub_b;
@@ -2851,6 +2904,7 @@ static int measure_secure_session_stats_internal(
         req_b_to_a.message_len = bind_b_len;
         req_b_to_a.signature = &sig_b;
         req_b_to_a.revocation_evidence = &evidence_b;
+        req_b_to_a.issuance_evidence = &issuance_b;
 
         if (sm2_pki_secure_session_establish(ctx.client_a, &eph_priv_a,
                 &eph_pub_a, &req_b_to_a, &eph_pub_b, transcript,
@@ -3026,12 +3080,15 @@ static int collect_base_metrics(base_metric_t *metrics)
     metrics->implicit_cert_bytes = cert_len;
     metrics->root_record_bytes = root_len;
     metrics->absence_proof_bytes = absence_len;
+    metrics->issuance_evidence_bytes = sizeof(sm2_pki_issuance_evidence_t);
     for (size_t i = 0; i < BENCH_SESSION_ROUNDS; i++)
     {
         sm2_auth_signature_t signature;
         sm2_auth_signature_t compact_signature;
         sm2_pki_revocation_evidence_t evidence;
         sm2_pki_revocation_evidence_t compact_evidence;
+        sm2_pki_issuance_evidence_t issuance_evidence;
+        sm2_pki_issuance_evidence_t compact_issuance_evidence;
         sm2_pki_verify_request_t request;
         sm2_pki_verify_request_t compact_request;
         size_t root_round_len = sizeof(root_buf);
@@ -3043,14 +3100,17 @@ static int collect_base_metrics(base_metric_t *metrics)
         memset(&compact_signature, 0, sizeof(compact_signature));
         memset(&evidence, 0, sizeof(evidence));
         memset(&compact_evidence, 0, sizeof(compact_evidence));
+        memset(&issuance_evidence, 0, sizeof(issuance_evidence));
+        memset(&compact_issuance_evidence, 0, sizeof(compact_issuance_evidence));
         memset(&request, 0, sizeof(request));
         memset(&compact_request, 0, sizeof(compact_request));
         if (!build_signed_verify_request(flow.client, flow.message,
                 flow.message_len, flow.auth_now, &signature, &evidence,
-                &request)
+                &issuance_evidence, &request)
             || !build_signed_verify_request_compact(flow.client, flow.message,
                 flow.message_len, flow.auth_now, &compact_signature,
-                &compact_evidence, &compact_request)
+                &compact_evidence, &compact_issuance_evidence,
+                &compact_request)
             || !encode_root_len(&evidence.root_record, root_buf,
                 sizeof(root_buf), &root_round_len)
             || !encode_absence_len(&evidence.absence_proof, absence_buf,
@@ -3066,10 +3126,12 @@ static int collect_base_metrics(base_metric_t *metrics)
         if (i == 0U)
             metrics->compact_root_hint_bytes = compact_root_hint_len;
         auth_bundle_samples[i] = (double)cert_len + (double)signature.der_len
-            + (double)root_round_len + (double)absence_round_len;
+            + (double)root_round_len + (double)absence_round_len
+            + (double)sizeof(issuance_evidence);
         auth_bundle_compact_samples[i] = (double)cert_len
             + (double)compact_signature.der_len + (double)compact_root_hint_len
-            + (double)compact_absence_len;
+            + (double)compact_absence_len
+            + (double)sizeof(compact_issuance_evidence);
     }
     metrics->auth_bundle_bytes
         = (size_t)(calc_median_value(auth_bundle_samples, BENCH_SESSION_ROUNDS)
@@ -4296,6 +4358,8 @@ static void emit_json(FILE *out, const base_metric_t *base_metrics,
         base_metrics->root_record_bytes);
     fprintf(out, "    \"absence_proof_bytes\": %zu,\n",
         base_metrics->absence_proof_bytes);
+    fprintf(out, "    \"issuance_evidence_bytes\": %zu,\n",
+        base_metrics->issuance_evidence_bytes);
     fprintf(out, "    \"compact_root_hint_bytes\": %zu,\n",
         base_metrics->compact_root_hint_bytes);
     fprintf(out, "    \"auth_bundle_bytes\": %zu,\n",
@@ -4585,6 +4649,8 @@ static void emit_markdown_report_legacy(FILE *out,
         base_metrics->compact_root_hint_bytes);
     fprintf(out, "| Absence Proof 大小 | %zu |\n",
         base_metrics->absence_proof_bytes);
+    fprintf(out, "| 发证透明 Evidence 大小 | %zu |\n",
+        base_metrics->issuance_evidence_bytes);
     fprintf(
         out, "| 完整认证消息大小 | %zu |\n", base_metrics->auth_bundle_bytes);
     fprintf(out, "| 紧凑认证消息大小 | %zu |\n",
@@ -4783,6 +4849,8 @@ static void emit_markdown_report_old(FILE *out,
     fprintf(out, "| 紧凑根提示大小 | %zu |\n",
         base_metrics->compact_root_hint_bytes);
     fprintf(out, "| 缺席证明大小 | %zu |\n", base_metrics->absence_proof_bytes);
+    fprintf(out, "| 发证透明 Evidence 大小 | %zu |\n",
+        base_metrics->issuance_evidence_bytes);
     fprintf(
         out, "| 完整认证消息大小 | %zu |\n", base_metrics->auth_bundle_bytes);
     fprintf(out, "| 紧凑认证消息大小 | %zu |\n",
@@ -5003,6 +5071,8 @@ static void emit_markdown_report(FILE *out, const base_metric_t *base_metrics,
     fprintf(out, "| 紧凑根提示大小 | %zu |\n",
         base_metrics->compact_root_hint_bytes);
     fprintf(out, "| 缺席证明大小 | %zu |\n", base_metrics->absence_proof_bytes);
+    fprintf(out, "| 发证透明 Evidence 大小 | %zu |\n",
+        base_metrics->issuance_evidence_bytes);
     fprintf(
         out, "| 完整认证消息大小 | %zu |\n", base_metrics->auth_bundle_bytes);
     fprintf(out, "| 紧凑认证消息大小 | %zu |\n",

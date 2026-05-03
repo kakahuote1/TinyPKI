@@ -43,9 +43,10 @@ static void test_phase8_merkle_hook_and_service_binding()
     const uint8_t msg[] = "P8_CARRIED_EVIDENCE";
     sm2_auth_signature_t sig;
     sm2_pki_revocation_evidence_t evidence;
+    sm2_pki_issuance_evidence_t issuance_evidence;
     sm2_pki_verify_request_t auth_req;
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now, &sig, &evidence, &auth_req),
+                    auth_now, &sig, &evidence, &issuance_evidence, &auth_req),
         "Build Carried Evidence Request");
 
     sm2_pki_client_ctx_t *verifier = NULL;
@@ -130,9 +131,10 @@ static void test_phase9_epoch_lookup_unknown_query_override_behavior()
     const uint8_t msg[] = "P9_CARRIED_EVIDENCE";
     sm2_auth_signature_t sig;
     sm2_pki_revocation_evidence_t evidence;
+    sm2_pki_issuance_evidence_t issuance_evidence;
     sm2_pki_verify_request_t auth_req;
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now, &sig, &evidence, &auth_req),
+                    auth_now, &sig, &evidence, &issuance_evidence, &auth_req),
         "Build Signed Request");
 
     sm2_pki_client_ctx_t *verifier = NULL;
@@ -351,9 +353,10 @@ static void test_phase11_merkle_freshness_e2e_gate()
     const uint8_t msg[] = "P11_MERKLE_FRESH";
     sm2_auth_signature_t sig;
     sm2_pki_revocation_evidence_t evidence;
+    sm2_pki_issuance_evidence_t issuance_evidence;
     sm2_pki_verify_request_t auth_req;
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now, &sig, &evidence, &auth_req),
+                    auth_now, &sig, &evidence, &issuance_evidence, &auth_req),
         "Build Fresh Evidence Request");
 
     sm2_pki_client_ctx_t *verifier = NULL;

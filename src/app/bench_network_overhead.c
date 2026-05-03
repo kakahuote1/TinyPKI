@@ -48,6 +48,7 @@ typedef struct
     sm2_private_key_t temp_private_key;
     sm2_auth_signature_t signature;
     sm2_pki_revocation_evidence_t evidence;
+    sm2_pki_issuance_evidence_t issuance_evidence;
     sm2_pki_verify_request_t verify_request;
     uint8_t message[64];
     size_t message_len;
@@ -207,13 +208,14 @@ static int client_get_identity_material(sm2_pki_client_ctx_t *client,
 static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     const uint8_t *message, size_t message_len, uint64_t now_ts,
     sm2_auth_signature_t *signature, sm2_pki_revocation_evidence_t *evidence,
+    sm2_pki_issuance_evidence_t *issuance_evidence,
     sm2_pki_verify_request_t *request)
 {
     const sm2_implicit_cert_t *cert = NULL;
     const sm2_ec_point_t *public_key = NULL;
 
     if (!signer || !message || message_len == 0 || !signature || !evidence
-        || !request)
+        || !issuance_evidence || !request)
     {
         return 0;
     }
@@ -230,6 +232,12 @@ static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     {
         return 0;
     }
+    if (sm2_pki_client_export_issuance_evidence(
+            signer, now_ts, issuance_evidence)
+        != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
 
     memset(request, 0, sizeof(*request));
     request->cert = cert;
@@ -238,6 +246,7 @@ static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     request->message_len = message_len;
     request->signature = signature;
     request->revocation_evidence = evidence;
+    request->issuance_evidence = issuance_evidence;
     return 1;
 }
 
@@ -316,7 +325,7 @@ static int build_flow_context(bench_flow_ctx_t *ctx)
         : current_unix_ts();
     return build_signed_verify_request(ctx->client, ctx->message,
         ctx->message_len, ctx->auth_now, &ctx->signature, &ctx->evidence,
-        &ctx->verify_request);
+        &ctx->issuance_evidence, &ctx->verify_request);
 }
 
 static void cleanup_flow_context(bench_flow_ctx_t *ctx)
@@ -710,6 +719,8 @@ static double measure_secure_session_median(void)
         sm2_auth_signature_t sig_b;
         sm2_pki_revocation_evidence_t evidence_a;
         sm2_pki_revocation_evidence_t evidence_b;
+        sm2_pki_issuance_evidence_t issuance_a;
+        sm2_pki_issuance_evidence_t issuance_b;
         sm2_pki_verify_request_t req_a_to_b;
         sm2_pki_verify_request_t req_b_to_a;
         uint8_t sk_a[16];
@@ -725,6 +736,8 @@ static double measure_secure_session_median(void)
         memset(&sig_b, 0, sizeof(sig_b));
         memset(&evidence_a, 0, sizeof(evidence_a));
         memset(&evidence_b, 0, sizeof(evidence_b));
+        memset(&issuance_a, 0, sizeof(issuance_a));
+        memset(&issuance_b, 0, sizeof(issuance_b));
         memset(&req_a_to_b, 0, sizeof(req_a_to_b));
         memset(&req_b_to_a, 0, sizeof(req_b_to_a));
 
@@ -749,6 +762,12 @@ static double measure_secure_session_median(void)
             || sm2_pki_client_export_revocation_evidence(
                    ctx.client_b, ctx.auth_now, &evidence_b)
                 != SM2_PKI_SUCCESS
+            || sm2_pki_client_export_issuance_evidence(
+                   ctx.client_a, ctx.auth_now, &issuance_a)
+                != SM2_PKI_SUCCESS
+            || sm2_pki_client_export_issuance_evidence(
+                   ctx.client_b, ctx.auth_now, &issuance_b)
+                != SM2_PKI_SUCCESS
             || !client_get_identity_material(ctx.client_a, &cert_a, &pub_a)
             || !client_get_identity_material(ctx.client_b, &cert_b, &pub_b))
         {
@@ -762,6 +781,7 @@ static double measure_secure_session_median(void)
         req_a_to_b.message_len = bind_a_len;
         req_a_to_b.signature = &sig_a;
         req_a_to_b.revocation_evidence = &evidence_a;
+        req_a_to_b.issuance_evidence = &issuance_a;
 
         req_b_to_a.cert = cert_b;
         req_b_to_a.public_key = pub_b;
@@ -769,6 +789,7 @@ static double measure_secure_session_median(void)
         req_b_to_a.message_len = bind_b_len;
         req_b_to_a.signature = &sig_b;
         req_b_to_a.revocation_evidence = &evidence_b;
+        req_b_to_a.issuance_evidence = &issuance_b;
 
         if (sm2_pki_secure_session_establish(ctx.client_a, &eph_priv_a,
                 &eph_pub_a, &req_b_to_a, &eph_pub_b, transcript,

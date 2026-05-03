@@ -30,6 +30,9 @@ static void service_finalize_state(sm2_pki_service_state_t *state)
     if (!state)
         return;
 
+    sm2_pki_issuance_tree_cleanup(&state->issuance_tree);
+    free(state->issuance_commitments);
+    state->issuance_commitments = NULL;
     free(state->certs);
     state->certs = NULL;
     sm2_secure_memzero(state, sizeof(*state));
@@ -42,8 +45,11 @@ static void service_retire_state(sm2_pki_service_state_t *state)
         return;
 
     size_t binding_refs = state->revocation_binding_refs;
+    sm2_pki_issuance_tree_cleanup(&state->issuance_tree);
     sm2_rev_tree_cleanup(&state->rev_tree);
     sm2_rev_cleanup(&state->rev_ctx);
+    free(state->issuance_commitments);
+    state->issuance_commitments = NULL;
     free(state->certs);
     state->certs = NULL;
     sm2_secure_memzero(state, sizeof(*state));
@@ -336,6 +342,105 @@ static sm2_ic_error_t service_publish_revocation_root(
     return SM2_IC_SUCCESS;
 }
 
+static uint64_t service_root_valid_until(
+    const sm2_pki_service_state_t *state, uint64_t now_ts)
+{
+    uint64_t ttl = 300;
+    if (state && state->rev_ctx)
+    {
+        uint64_t rev_until = sm2_rev_root_valid_until(state->rev_ctx);
+        if (rev_until > now_ts)
+            ttl = rev_until - now_ts;
+    }
+    if (ttl <= UINT64_MAX - now_ts)
+        return now_ts + ttl;
+    return UINT64_MAX;
+}
+
+static sm2_ic_error_t service_publish_issuance_root(
+    sm2_pki_service_ctx_t *ctx, uint64_t now_ts, bool rebuild_tree)
+{
+    sm2_pki_service_state_t *state = service_state(ctx);
+    if (!ctx || !state)
+        return SM2_IC_ERR_PARAM;
+
+    sm2_pki_issuance_tree_t *new_tree = NULL;
+    sm2_pki_issuance_tree_t *tree_to_sign = state->issuance_tree;
+    sm2_rev_root_record_t new_root_record;
+    memset(&new_root_record, 0, sizeof(new_root_record));
+
+    if (rebuild_tree || !tree_to_sign)
+    {
+        sm2_ic_error_t ret
+            = sm2_pki_issuance_tree_build(&new_tree, state->issuance_commitments,
+                state->issued_count, (uint64_t)state->issued_count);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
+        tree_to_sign = new_tree;
+    }
+
+    uint64_t valid_until = service_root_valid_until(state, now_ts);
+    uint64_t valid_from = now_ts > 300U ? now_ts - 300U : 0U;
+    uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN];
+    sm2_ic_error_t ret
+        = sm2_pki_issuance_tree_get_root_hash(tree_to_sign, root_hash);
+    if (ret == SM2_IC_SUCCESS)
+    {
+        ret = sm2_pki_root_record_sign_hash(state->issuer_id,
+            state->issuer_id_len, (uint64_t)state->issued_count, root_hash,
+            valid_from, valid_until, service_merkle_sign_cb, ctx,
+            &new_root_record);
+    }
+    if (ret != SM2_IC_SUCCESS)
+    {
+        sm2_pki_issuance_tree_cleanup(&new_tree);
+        return ret;
+    }
+
+    if (new_tree)
+    {
+        sm2_pki_issuance_tree_cleanup(&state->issuance_tree);
+        state->issuance_tree = new_tree;
+    }
+    state->issuance_root_record = new_root_record;
+    state->issuance_state_ready = true;
+    return SM2_IC_SUCCESS;
+}
+
+static sm2_pki_error_t service_ensure_issued_capacity(
+    sm2_pki_service_state_t *state)
+{
+    if (!state)
+        return SM2_PKI_ERR_PARAM;
+    if (state->issued_count < state->issued_capacity)
+        return SM2_PKI_SUCCESS;
+
+    size_t new_capacity = state->issued_capacity == 0
+        ? SM2_PKI_INITIAL_CERT_CAPACITY
+        : state->issued_capacity * 2U;
+    if (new_capacity < state->issued_capacity || new_capacity == 0
+        || new_capacity > SIZE_MAX / sizeof(*state->issuance_commitments))
+    {
+        return SM2_PKI_ERR_MEMORY;
+    }
+
+    uint8_t (*new_commitments)[SM2_PKI_ISSUANCE_COMMITMENT_LEN]
+        = (uint8_t (*)[SM2_PKI_ISSUANCE_COMMITMENT_LEN])calloc(
+            new_capacity, sizeof(*new_commitments));
+    if (!new_commitments)
+        return SM2_PKI_ERR_MEMORY;
+    if (state->issuance_commitments && state->issued_count > 0)
+    {
+        memcpy(new_commitments, state->issuance_commitments,
+            state->issued_count * sizeof(*new_commitments));
+    }
+
+    free(state->issuance_commitments);
+    state->issuance_commitments = new_commitments;
+    state->issued_capacity = new_capacity;
+    return SM2_PKI_SUCCESS;
+}
+
 static sm2_ic_error_t service_merkle_query(const sm2_implicit_cert_t *cert,
     uint64_t now_ts, void *user_ctx, sm2_rev_status_t *status)
 {
@@ -513,6 +618,13 @@ sm2_pki_error_t sm2_pki_service_create(sm2_pki_service_ctx_t **ctx,
         return sm2_pki_error_from_ic(ic_ret);
     }
 
+    ic_ret = service_publish_issuance_root(state, now_ts, true);
+    if (ic_ret != SM2_IC_SUCCESS)
+    {
+        sm2_pki_service_destroy(&state);
+        return sm2_pki_error_from_ic(ic_ret);
+    }
+
     ic_ret = sm2_rev_set_lookup(state->rev_ctx, service_merkle_query, state);
     if (ic_ret != SM2_IC_SUCCESS)
     {
@@ -571,6 +683,19 @@ sm2_pki_error_t sm2_pki_service_get_root_record(
     return SM2_PKI_SUCCESS;
 }
 
+sm2_pki_error_t sm2_pki_service_get_issuance_root_record(
+    const sm2_pki_service_ctx_t *ctx, sm2_rev_root_record_t *root_record)
+{
+    const sm2_pki_service_state_t *state = service_state_const(ctx);
+    if (!ctx || !root_record || !ctx->initialized || !state
+        || !state->issuance_state_ready)
+    {
+        return SM2_PKI_ERR_PARAM;
+    }
+    *root_record = state->issuance_root_record;
+    return SM2_PKI_SUCCESS;
+}
+
 sm2_pki_error_t sm2_pki_service_export_epoch_dir(sm2_pki_service_ctx_t *ctx,
     uint64_t epoch_id, size_t cache_top_levels, uint64_t valid_from,
     uint64_t valid_until, sm2_rev_epoch_dir_t **directory)
@@ -618,13 +743,36 @@ sm2_pki_error_t sm2_pki_service_export_absence_proof(
         sm2_rev_tree_prove_absence(state->rev_tree, serial_number, proof));
 }
 
+sm2_pki_error_t sm2_pki_service_export_issuance_proof(
+    const sm2_pki_service_ctx_t *ctx, const sm2_implicit_cert_t *cert,
+    sm2_pki_issuance_member_proof_t *proof)
+{
+    const sm2_pki_service_state_t *state = service_state_const(ctx);
+    if (!ctx || !ctx->initialized || !state || !cert || !proof
+        || !state->issuance_state_ready)
+    {
+        return SM2_PKI_ERR_PARAM;
+    }
+
+    uint8_t commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN];
+    sm2_ic_error_t ret = sm2_pki_issuance_cert_commitment(cert, commitment);
+    if (ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ret);
+
+    return sm2_pki_error_from_ic(sm2_pki_issuance_tree_prove_member(
+        state->issuance_tree, commitment, proof));
+}
+
 sm2_pki_error_t sm2_pki_service_refresh_root(
     sm2_pki_service_ctx_t *ctx, uint64_t now_ts)
 {
     if (!ctx || !ctx->initialized || !service_state(ctx))
         return SM2_PKI_ERR_PARAM;
-    return sm2_pki_error_from_ic(
-        service_publish_revocation_root(ctx, now_ts, false));
+    sm2_ic_error_t ret = service_publish_revocation_root(ctx, now_ts, false);
+    if (ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ret);
+    ret = service_publish_issuance_root(ctx, now_ts, false);
+    return sm2_pki_error_from_ic(ret);
 }
 
 sm2_pki_error_t sm2_pki_identity_register(sm2_pki_service_ctx_t *ctx,
@@ -705,6 +853,26 @@ sm2_pki_error_t sm2_pki_cert_issue(sm2_pki_service_ctx_t *ctx,
         &state->ca_public_key, now_ts);
     if (ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ret);
+
+    uint8_t issuance_commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN];
+    ret = sm2_pki_issuance_cert_commitment(
+        &result->cert, issuance_commitment);
+    if (ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ret);
+
+    sm2_pki_error_t issued_ret = service_ensure_issued_capacity(state);
+    if (issued_ret != SM2_PKI_SUCCESS)
+        return issued_ret;
+
+    memcpy(state->issuance_commitments[state->issued_count],
+        issuance_commitment, sizeof(issuance_commitment));
+    state->issued_count++;
+    ret = service_publish_issuance_root(ctx, now_ts, true);
+    if (ret != SM2_IC_SUCCESS)
+    {
+        state->issued_count--;
+        return sm2_pki_error_from_ic(ret);
+    }
 
     memset(cert_entry, 0, sizeof(*cert_entry));
     cert_entry->used = true;

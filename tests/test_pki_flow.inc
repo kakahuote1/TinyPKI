@@ -110,10 +110,11 @@ static void test_phase4_service_client_flow()
     const uint8_t msg[] = "PHASE4_FLOW_MESSAGE";
     sm2_auth_signature_t sig;
     sm2_pki_revocation_evidence_t evidence;
+    sm2_pki_issuance_evidence_t issuance_evidence;
     sm2_pki_verify_request_t request;
     TEST_ASSERT(
         pki_build_signed_verify_request(client, msg, sizeof(msg) - 1, auth_now,
-            &sig, &evidence, &request),
+            &sig, &evidence, &issuance_evidence, &request),
         "Build Signed Verify Request");
     size_t matched = 0;
     TEST_ASSERT(
@@ -219,10 +220,12 @@ static void test_phase4_revocation_ocsp_and_cross_domain()
     const uint8_t msg[] = "CROSS_DOMAIN_AUTH";
     sm2_auth_signature_t sig_b;
     sm2_pki_revocation_evidence_t evidence_b;
+    sm2_pki_issuance_evidence_t issuance_evidence_b;
     sm2_pki_verify_request_t req_auth;
     TEST_ASSERT(
         pki_build_signed_verify_request(client_b, msg, sizeof(msg) - 1,
-            auth_now + 20, &sig_b, &evidence_b, &req_auth),
+            auth_now + 20, &sig_b, &evidence_b, &issuance_evidence_b,
+            &req_auth),
         "Build Cross Verify Request");
 
     size_t matched = 0;

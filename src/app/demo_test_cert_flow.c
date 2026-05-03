@@ -39,6 +39,7 @@ int main(void)
     sm2_ec_point_t ca_pub;
     sm2_auth_signature_t sig;
     sm2_pki_revocation_evidence_t evidence;
+    sm2_pki_issuance_evidence_t issuance_evidence;
     size_t matched_idx = 0;
     sm2_pki_verify_request_t auth_req;
     const sm2_implicit_cert_t *cli_cert = NULL;
@@ -55,6 +56,7 @@ int main(void)
     memset(&ca_pub, 0, sizeof(ca_pub));
     memset(&sig, 0, sizeof(sig));
     memset(&evidence, 0, sizeof(evidence));
+    memset(&issuance_evidence, 0, sizeof(issuance_evidence));
     memset(&auth_req, 0, sizeof(auth_req));
 
     /* 1) Initialize in-memory CA/RA service */
@@ -116,7 +118,12 @@ int main(void)
     err = sm2_pki_client_export_revocation_evidence(cli, auth_now, &evidence);
     if (!check_pki(err, "Export Non-Revocation Evidence"))
         goto cleanup;
+    err = sm2_pki_client_export_issuance_evidence(
+        cli, auth_now, &issuance_evidence);
+    if (!check_pki(err, "Export Issuance Transparency Evidence"))
+        goto cleanup;
     auth_req.revocation_evidence = &evidence;
+    auth_req.issuance_evidence = &issuance_evidence;
 
     err = sm2_pki_verify(cli, &auth_req, auth_now, &matched_idx);
     if (!check_pki(err, "Verify Before Revoke"))

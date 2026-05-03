@@ -42,6 +42,7 @@
     const uint8_t msg[] = "P13_FRESHNESS";
     sm2_auth_signature_t sig;
     sm2_pki_revocation_evidence_t evidence;
+    sm2_pki_issuance_evidence_t issuance_evidence;
     sm2_pki_verify_request_t request;
     size_t matched = 0;
 
@@ -57,7 +58,7 @@
     uint64_t expired_now = root_before.valid_until + 1;
 
     TEST_ASSERT(pki_build_signed_verify_request(client, msg, sizeof(msg) - 1,
-                    fresh_now, &sig, &evidence, &request),
+                    fresh_now, &sig, &evidence, &issuance_evidence, &request),
         "Build Initial Evidence Request");
 
     TEST_ASSERT(sm2_pki_verify(client, &request, fresh_now, &matched)
@@ -82,7 +83,8 @@
     TEST_ASSERT(root_after_refresh.valid_until > root_before.valid_until,
         "Explicit Refresh Extends Validity");
     TEST_ASSERT(pki_build_signed_verify_request(client, msg, sizeof(msg) - 1,
-                    expired_now + 20, &sig, &evidence, &request),
+                    expired_now + 20, &sig, &evidence, &issuance_evidence,
+                    &request),
         "Build Refreshed Evidence Request");
     TEST_ASSERT(sm2_pki_verify(client, &request, expired_now + 20, &matched)
             == SM2_PKI_SUCCESS,
@@ -550,10 +552,14 @@ static void test_phase13_secure_pki_session_default_api()
     uint64_t auth_now = test_cert_pair_now(&cert_a.cert, &cert_b.cert);
     sm2_pki_revocation_evidence_t evidence_a;
     sm2_pki_revocation_evidence_t evidence_b;
+    sm2_pki_issuance_evidence_t issuance_a;
+    sm2_pki_issuance_evidence_t issuance_b;
     sm2_pki_verify_request_t req_a_to_b;
     sm2_pki_verify_request_t req_b_to_a;
     memset(&evidence_a, 0, sizeof(evidence_a));
     memset(&evidence_b, 0, sizeof(evidence_b));
+    memset(&issuance_a, 0, sizeof(issuance_a));
+    memset(&issuance_b, 0, sizeof(issuance_b));
     memset(&req_a_to_b, 0, sizeof(req_a_to_b));
     memset(&req_b_to_a, 0, sizeof(req_b_to_a));
     TEST_ASSERT(sm2_pki_client_export_revocation_evidence(
@@ -564,6 +570,14 @@ static void test_phase13_secure_pki_session_default_api()
                     client_b, auth_now, &evidence_b)
             == SM2_PKI_SUCCESS,
         "Evidence B");
+    TEST_ASSERT(sm2_pki_client_export_issuance_evidence(
+                    client_a, auth_now, &issuance_a)
+            == SM2_PKI_SUCCESS,
+        "Issuance Evidence A");
+    TEST_ASSERT(sm2_pki_client_export_issuance_evidence(
+                    client_b, auth_now, &issuance_b)
+            == SM2_PKI_SUCCESS,
+        "Issuance Evidence B");
 
     const sm2_implicit_cert_t *client_a_cert = NULL;
     const sm2_implicit_cert_t *client_b_cert = NULL;
@@ -579,6 +593,7 @@ static void test_phase13_secure_pki_session_default_api()
     req_a_to_b.message_len = bind_a_len;
     req_a_to_b.signature = &sig_a;
     req_a_to_b.revocation_evidence = &evidence_a;
+    req_a_to_b.issuance_evidence = &issuance_a;
 
     req_b_to_a.cert = client_b_cert;
     req_b_to_a.public_key = client_b_pub;
@@ -586,6 +601,7 @@ static void test_phase13_secure_pki_session_default_api()
     req_b_to_a.message_len = bind_b_len;
     req_b_to_a.signature = &sig_b;
     req_b_to_a.revocation_evidence = &evidence_b;
+    req_b_to_a.issuance_evidence = &issuance_b;
 
     uint8_t sk_a[16];
     uint8_t sk_b[16];
@@ -709,10 +725,12 @@ static void test_phase133_revocation_service_binding_lifecycle()
     const uint8_t msg[] = "P133_BINDING";
     sm2_auth_signature_t sig;
     sm2_pki_revocation_evidence_t evidence;
+    sm2_pki_issuance_evidence_t issuance_evidence;
     uint64_t auth_now = test_cert_now(&cert_res.cert);
     TEST_ASSERT(
         pki_build_signed_verify_request(client, msg, sizeof(msg) - 1, auth_now,
-            &sig, &evidence, &(sm2_pki_verify_request_t) { 0 }),
+            &sig, &evidence, &issuance_evidence,
+            &(sm2_pki_verify_request_t) { 0 }),
         "Build Evidence Before Service Cleanup");
 
     sm2_pki_service_destroy(&service);
@@ -977,9 +995,10 @@ static void test_phase138_service_binding_tracks_newer_root_versions()
     const uint8_t msg[] = "P138_TRACK_ROOT";
     sm2_auth_signature_t sig;
     sm2_pki_revocation_evidence_t evidence;
+    sm2_pki_issuance_evidence_t issuance_evidence;
     sm2_pki_verify_request_t request;
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now, &sig, &evidence, &request),
+                    auth_now, &sig, &evidence, &issuance_evidence, &request),
         "Build Initial Evidence Request");
 
     sm2_pki_client_ctx_t *verifier = NULL;
@@ -1008,7 +1027,8 @@ static void test_phase138_service_binding_tracks_newer_root_versions()
         "Revoke Aux Cert");
 
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now + 20, &sig, &evidence, &request),
+                    auth_now + 20, &sig, &evidence, &issuance_evidence,
+                    &request),
         "Build Updated Evidence Request");
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now + 20, &matched)
             == SM2_PKI_SUCCESS,
@@ -1094,6 +1114,8 @@ static void test_phase140_compact_evidence_requires_matching_cached_root()
     sm2_auth_signature_t sig_compact;
     sm2_pki_revocation_evidence_t evidence_full;
     sm2_pki_revocation_evidence_t evidence_compact;
+    sm2_pki_issuance_evidence_t issuance_full;
+    sm2_pki_issuance_evidence_t issuance_compact;
     sm2_pki_verify_request_t request_full;
     sm2_pki_verify_request_t request_compact;
     size_t matched = 0;
@@ -1101,11 +1123,14 @@ static void test_phase140_compact_evidence_requires_matching_cached_root()
     memset(&sig_compact, 0, sizeof(sig_compact));
     memset(&evidence_full, 0, sizeof(evidence_full));
     memset(&evidence_compact, 0, sizeof(evidence_compact));
+    memset(&issuance_full, 0, sizeof(issuance_full));
+    memset(&issuance_compact, 0, sizeof(issuance_compact));
     memset(&request_full, 0, sizeof(request_full));
     memset(&request_compact, 0, sizeof(request_compact));
 
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now, &sig_full, &evidence_full, &request_full),
+                    auth_now, &sig_full, &evidence_full, &issuance_full,
+                    &request_full),
         "Build Full Evidence");
     TEST_ASSERT(evidence_full.mode == SM2_PKI_REV_EVIDENCE_FULL_ROOT,
         "Full Evidence Mode");
@@ -1115,7 +1140,8 @@ static void test_phase140_compact_evidence_requires_matching_cached_root()
 
     TEST_ASSERT(
         pki_build_signed_verify_request_compact(signer, msg, sizeof(msg) - 1,
-            auth_now, &sig_compact, &evidence_compact, &request_compact),
+            auth_now, &sig_compact, &evidence_compact, &issuance_compact,
+            &request_compact),
         "Build Compact Evidence");
     TEST_ASSERT(evidence_compact.mode == SM2_PKI_REV_EVIDENCE_CACHED_ROOT,
         "Compact Evidence Mode");
@@ -1136,14 +1162,16 @@ static void test_phase140_compact_evidence_requires_matching_cached_root()
         "Advance Root Version");
     TEST_ASSERT(
         pki_build_signed_verify_request_compact(signer, msg, sizeof(msg) - 1,
-            auth_now + 20, &sig_compact, &evidence_compact, &request_compact),
+            auth_now + 20, &sig_compact, &evidence_compact,
+            &issuance_compact, &request_compact),
         "Build Compact Evidence After Root Advance");
     TEST_ASSERT(
         sm2_pki_verify(verifier_warm, &request_compact, auth_now + 20, &matched)
             == SM2_PKI_ERR_VERIFY,
         "Stale Warm Cache Rejects Advanced Compact Evidence");
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now + 20, &sig_full, &evidence_full, &request_full),
+                    auth_now + 20, &sig_full, &evidence_full, &issuance_full,
+                    &request_full),
         "Build Full Evidence After Root Advance");
     TEST_ASSERT(
         sm2_pki_verify(verifier_warm, &request_full, auth_now + 20, &matched)
@@ -1156,6 +1184,142 @@ static void test_phase140_compact_evidence_requires_matching_cached_root()
 
     sm2_pki_client_destroy(&verifier_cold);
     sm2_pki_client_destroy(&verifier_warm);
+    sm2_pki_client_destroy(&signer);
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
+static void test_phase141_issuance_transparency_required_and_threshold()
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P141_CT_CA";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 32, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+
+    const uint8_t signer_id[] = "P141_SIGNER";
+    TEST_ASSERT(sm2_pki_identity_register(service, signer_id,
+                    sizeof(signer_id) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Signer Register");
+
+    sm2_ic_cert_request_t req;
+    sm2_private_key_t temp_priv;
+    sm2_ic_cert_result_t cert_res;
+    TEST_ASSERT(
+        pki_create_and_authorize_request(service, signer_id,
+            sizeof(signer_id) - 1, SM2_KU_DIGITAL_SIGNATURE, &req, &temp_priv),
+        "Signer Request");
+    TEST_ASSERT(
+        test_pki_issue_cert(service, &req, &cert_res) == SM2_PKI_SUCCESS,
+        "Signer Issue");
+
+    sm2_ec_point_t ca_pub;
+    TEST_ASSERT(
+        sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
+        "Get CA Pub");
+
+    sm2_pki_client_ctx_t *signer = NULL;
+    sm2_pki_client_ctx_t *verifier = NULL;
+    TEST_ASSERT(
+        sm2_pki_client_create(&signer, &ca_pub, service) == SM2_PKI_SUCCESS,
+        "Signer Init");
+    TEST_ASSERT(
+        sm2_pki_client_create(&verifier, &ca_pub, NULL) == SM2_PKI_SUCCESS,
+        "Verifier Init");
+    TEST_ASSERT(
+        sm2_pki_client_import_cert(signer, &cert_res, &temp_priv, &ca_pub)
+            == SM2_PKI_SUCCESS,
+        "Signer Import");
+
+    const uint8_t msg[] = "P141_TRANSPARENCY";
+    uint64_t auth_now = test_cert_now(&cert_res.cert);
+    sm2_auth_signature_t sig;
+    sm2_pki_revocation_evidence_t rev_evidence;
+    sm2_pki_issuance_evidence_t issuance_evidence;
+    sm2_pki_verify_request_t request;
+    memset(&sig, 0, sizeof(sig));
+    memset(&rev_evidence, 0, sizeof(rev_evidence));
+    memset(&issuance_evidence, 0, sizeof(issuance_evidence));
+    memset(&request, 0, sizeof(request));
+
+    TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
+                    auth_now, &sig, &rev_evidence, &issuance_evidence,
+                    &request),
+        "Build Verify Request");
+
+    request.issuance_evidence = NULL;
+    size_t matched = 0;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Missing Mandatory Issuance Evidence Reject");
+
+    request.issuance_evidence = &issuance_evidence;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Issuance Evidence Verify");
+
+    sm2_pki_issuance_evidence_t wrong_commitment = issuance_evidence;
+    wrong_commitment.member_proof.cert_commitment[0] ^= 0x01U;
+    request.issuance_evidence = &wrong_commitment;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Wrong Issuance Commitment Reject");
+
+    sm2_private_key_t witness_priv[3];
+    sm2_ec_point_t witness_pub[3];
+    sm2_pki_transparency_witness_t witnesses[3];
+    memset(witness_priv, 0, sizeof(witness_priv));
+    memset(witness_pub, 0, sizeof(witness_pub));
+    memset(witnesses, 0, sizeof(witnesses));
+    const uint8_t wid0[] = "witness-0";
+    const uint8_t wid1[] = "witness-1";
+    const uint8_t wid2[] = "witness-2";
+    const uint8_t *wids[] = { wid0, wid1, wid2 };
+    const size_t wid_lens[]
+        = { sizeof(wid0) - 1, sizeof(wid1) - 1, sizeof(wid2) - 1 };
+    for (size_t i = 0; i < 3; i++)
+    {
+        TEST_ASSERT(
+            test_generate_sm2_keypair(&witness_priv[i], &witness_pub[i]),
+            "Generate Witness Key");
+        memcpy(witnesses[i].witness_id, wids[i], wid_lens[i]);
+        witnesses[i].witness_id_len = wid_lens[i];
+        witnesses[i].public_key = witness_pub[i];
+    }
+    sm2_pki_transparency_policy_t policy
+        = { witnesses, sizeof(witnesses) / sizeof(witnesses[0]), 2 };
+    TEST_ASSERT(sm2_pki_client_set_transparency_policy(verifier, &policy)
+            == SM2_PKI_SUCCESS,
+        "Set Verifier Witness Policy");
+
+    sm2_pki_issuance_evidence_t one_sig = issuance_evidence;
+    TEST_ASSERT(
+        sm2_pki_issuance_witness_sign(&one_sig.root_record, wid0,
+            sizeof(wid0) - 1, &witness_priv[0], &one_sig.witness_signatures[0])
+            == SM2_PKI_SUCCESS,
+        "Witness Sign 0");
+    one_sig.witness_signature_count = 1;
+    request.issuance_evidence = &one_sig;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "One Of Two Witnesses Reject");
+
+    sm2_pki_issuance_evidence_t two_sig = one_sig;
+    TEST_ASSERT(
+        sm2_pki_issuance_witness_sign(&two_sig.root_record, wid1,
+            sizeof(wid1) - 1, &witness_priv[1], &two_sig.witness_signatures[1])
+            == SM2_PKI_SUCCESS,
+        "Witness Sign 1");
+    two_sig.witness_signature_count = 2;
+    request.issuance_evidence = &two_sig;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Two Of Three Witnesses Accept");
+
+    sm2_pki_client_destroy(&verifier);
     sm2_pki_client_destroy(&signer);
     sm2_pki_service_destroy(&service);
     TEST_PASS();
@@ -1247,6 +1411,8 @@ static void test_phase139_root_versions_are_scoped_per_authority()
     sm2_auth_signature_t sig_b;
     sm2_pki_revocation_evidence_t evidence_a;
     sm2_pki_revocation_evidence_t evidence_b;
+    sm2_pki_issuance_evidence_t issuance_a;
+    sm2_pki_issuance_evidence_t issuance_b;
     sm2_pki_verify_request_t request_a;
     sm2_pki_verify_request_t request_b;
     const uint8_t msg_a[] = "P139_PIN_A";
@@ -1270,11 +1436,11 @@ static void test_phase139_root_versions_are_scoped_per_authority()
         "Signer B Import");
     TEST_ASSERT(
         pki_build_signed_verify_request(signer_a, msg_a, sizeof(msg_a) - 1,
-            auth_now_a, &sig_a, &evidence_a, &request_a),
+            auth_now_a, &sig_a, &evidence_a, &issuance_a, &request_a),
         "Build Pin A Request");
     TEST_ASSERT(
         pki_build_signed_verify_request(signer_b, msg_b, sizeof(msg_b) - 1,
-            auth_now_b, &sig_b, &evidence_b, &request_b),
+            auth_now_b, &sig_b, &evidence_b, &issuance_b, &request_b),
         "Build Pin B Request");
 
     size_t matched = 0;
