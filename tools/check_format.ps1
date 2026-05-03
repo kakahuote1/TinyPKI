@@ -6,9 +6,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$clangFormatPackage = "clang-format==18.1.8"
+$clangFormatVersion = "18.1.8"
+$clangFormatPackage = "clang-format==$clangFormatVersion"
 
-function Test-ClangFormat18 {
+function Test-ExpectedClangFormat {
     param([string[]]$Command)
 
     $exe = $Command[0]
@@ -23,32 +24,32 @@ function Test-ClangFormat18 {
         return $false
     }
 
-    return $version -match "version 18\."
+    return $version -match "version $([regex]::Escape($clangFormatVersion))"
 }
 
 function Get-ClangFormatCommand {
     if ($env:CLANG_FORMAT) {
         $command = @($env:CLANG_FORMAT)
-        if (Test-ClangFormat18 $command) {
+        if (Test-ExpectedClangFormat $command) {
             return $command
         }
-        throw "CLANG_FORMAT must point to clang-format 18.x."
-    }
-
-    foreach ($name in @("clang-format-18", "clang-format")) {
-        if (Get-Command $name -ErrorAction SilentlyContinue) {
-            $command = @($name)
-            if (Test-ClangFormat18 $command) {
-                return $command
-            }
-        }
+        throw "CLANG_FORMAT must point to clang-format $clangFormatVersion."
     }
 
     if (Get-Command "uvx" -ErrorAction SilentlyContinue) {
         return @("uvx", "--from", $clangFormatPackage, "clang-format")
     }
 
-    throw "clang-format 18.x was not found. Install clang-format-18 or uvx."
+    foreach ($name in @("clang-format-18", "clang-format")) {
+        if (Get-Command $name -ErrorAction SilentlyContinue) {
+            $command = @($name)
+            if (Test-ExpectedClangFormat $command) {
+                return $command
+            }
+        }
+    }
+
+    throw "clang-format $clangFormatVersion was not found. Install uvx or set CLANG_FORMAT to the exact version."
 }
 
 function Invoke-ClangFormat {

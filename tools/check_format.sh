@@ -2,38 +2,28 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-clang_format_package="clang-format==18.1.8"
+clang_format_version="18.1.8"
+clang_format_package="clang-format==${clang_format_version}"
 fix=0
 
 if [[ "${1:-}" == "--fix" ]]; then
     fix=1
 fi
 
-has_clang_format_18() {
+has_expected_clang_format() {
     local version
     version="$("${@}" --version 2>/dev/null || true)"
-    [[ "$version" == *"version 18."* ]]
+    [[ "$version" == *"version ${clang_format_version}"* ]]
 }
 
 resolve_clang_format() {
     if [[ -n "${CLANG_FORMAT:-}" ]]; then
-        if has_clang_format_18 "$CLANG_FORMAT"; then
+        if has_expected_clang_format "$CLANG_FORMAT"; then
             printf '%s\n' "$CLANG_FORMAT"
             return 0
         fi
-        echo "CLANG_FORMAT must point to clang-format 18.x." >&2
+        echo "CLANG_FORMAT must point to clang-format ${clang_format_version}." >&2
         return 1
-    fi
-
-    if command -v clang-format-18 >/dev/null 2>&1; then
-        printf '%s\n' "clang-format-18"
-        return 0
-    fi
-
-    if command -v clang-format >/dev/null 2>&1 &&
-        has_clang_format_18 clang-format; then
-        printf '%s\n' "clang-format"
-        return 0
     fi
 
     if command -v uvx >/dev/null 2>&1; then
@@ -41,7 +31,20 @@ resolve_clang_format() {
         return 0
     fi
 
-    echo "clang-format 18.x was not found. Install clang-format-18 or uvx." >&2
+    if command -v clang-format-18 >/dev/null 2>&1; then
+        if has_expected_clang_format clang-format-18; then
+            printf '%s\n' "clang-format-18"
+            return 0
+        fi
+    fi
+
+    if command -v clang-format >/dev/null 2>&1 &&
+        has_expected_clang_format clang-format; then
+        printf '%s\n' "clang-format"
+        return 0
+    fi
+
+    echo "clang-format ${clang_format_version} was not found. Install uvx or set CLANG_FORMAT to the exact version." >&2
     return 1
 }
 

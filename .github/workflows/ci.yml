@@ -7,8 +7,6 @@ on:
 jobs:
   linux:
     runs-on: ubuntu-latest
-    env:
-      CLANG_FORMAT: clang-format-18
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -16,7 +14,10 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libssl-dev clang-format-18
+          sudo apt-get install -y cmake ninja-build libssl-dev python3-pip
+          python3 -m pip install --user clang-format==18.1.8
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "CLANG_FORMAT=$HOME/.local/bin/clang-format" >> "$GITHUB_ENV"
 
       - name: Format Check
         run: bash tools/check_format.sh
