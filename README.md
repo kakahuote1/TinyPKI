@@ -85,6 +85,24 @@ cmake --build build --target sm2_test_merkle_flow -j 4
 
 当前仓库测试主链路由 `ctest` 与 `test_all` 两个入口组成。按当前基线，`ctest` 拆分为 6 个 suite，`test_all` 聚合执行 86 个用例。
 
+**运行与 CI 相同的格式检查（固定 clang-format 18）：**
+```bash
+# Windows PowerShell
+./tools/check_format.ps1
+
+# Linux / CI
+bash tools/check_format.sh
+```
+
+**自动修复格式：**
+```bash
+# Windows PowerShell
+./tools/format.ps1
+
+# Linux / CI
+bash tools/format.sh
+```
+
 **运行全量自动化集成测试：**
 ```bash
 ctest --test-dir build --output-on-failure
