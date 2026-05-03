@@ -54,14 +54,6 @@ extern "C"
         const sm2_pki_service_ctx_t *ctx, sm2_rev_root_record_t *root_record);
 
     /*
-     * Returns the CA-signed issuance transparency root. Its Merkle leaves are
-     * stable certificate commitments derived from the issued ECQV certificate
-     * encoding.
-     */
-    sm2_pki_error_t sm2_pki_service_get_issuance_root_record(
-        const sm2_pki_service_ctx_t *ctx, sm2_rev_root_record_t *root_record);
-
-    /*
      * Returns the CA-signed epoch root that binds the current revocation root
      * and issuance transparency root into one verifier checkpoint.
      */

@@ -26,33 +26,21 @@ extern "C"
     typedef struct sm2_pki_service_ctx_st sm2_pki_service_ctx_t;
     typedef struct sm2_pki_client_ctx_st sm2_pki_client_ctx_t;
 
-    typedef enum
-    {
-        SM2_PKI_REV_EVIDENCE_FULL_ROOT = 0,
-        SM2_PKI_REV_EVIDENCE_CACHED_ROOT = 1
-    } sm2_pki_revocation_evidence_mode_t;
-
     typedef struct
     {
-        uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
-        size_t authority_id_len;
-        uint64_t root_version;
-        uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN];
-    } sm2_pki_cached_root_hint_t;
-
-    typedef struct
-    {
-        sm2_pki_revocation_evidence_mode_t mode;
-        sm2_pki_cached_root_hint_t cached_root_hint;
-        sm2_rev_root_record_t root_record;
         sm2_rev_absence_proof_t absence_proof;
-    } sm2_pki_revocation_evidence_t;
+    } sm2_pki_epoch_revocation_proof_t;
+
+    typedef struct
+    {
+        sm2_pki_issuance_member_proof_t member_proof;
+    } sm2_pki_epoch_issuance_proof_t;
 
     typedef struct
     {
         sm2_pki_epoch_root_record_t epoch_root_record;
-        sm2_pki_revocation_evidence_t revocation_evidence;
-        sm2_pki_issuance_evidence_t issuance_evidence;
+        sm2_pki_epoch_revocation_proof_t revocation_proof;
+        sm2_pki_epoch_issuance_proof_t issuance_proof;
         sm2_pki_transparency_witness_signature_t
             witness_signatures[SM2_PKI_TRANSPARENCY_MAX_WITNESSES];
         size_t witness_signature_count;
@@ -66,11 +54,6 @@ extern "C"
         size_t message_len;
         const sm2_auth_signature_t *signature;
         const sm2_pki_evidence_bundle_t *evidence_bundle;
-        const sm2_pki_revocation_evidence_t *revocation_evidence;
-        const sm2_pki_issuance_evidence_t *issuance_evidence;
-        /* Kept for source compatibility. Issuance transparency is mandatory. */
-        bool require_issuance_transparency;
-        /* Optional per-request strictness; client policy cannot be weakened. */
         const sm2_pki_transparency_policy_t *transparency_policy;
     } sm2_pki_verify_request_t;
 
@@ -113,110 +96,16 @@ extern "C"
     sm2_pki_error_t sm2_pki_client_bind_revocation(
         sm2_pki_client_ctx_t *ctx, sm2_pki_service_ctx_t *service);
 
-    /*
-     * Imports a CA-signed revocation root record into the client-side cache.
-     * The record must verify under one of the configured trusted CA keys and
-     * must not roll back the highest version previously accepted by this
-     * client. Same-version refresh is allowed only when the root hash is
-     * unchanged. When multiple trusted CAs are configured, first import for an
-     * authority requires an authority-specific CA binding established either by
-     * a local identity certificate, a bound service, or a successful carried-
-     * evidence verification for that authority.
-     */
-    sm2_pki_error_t sm2_pki_client_import_root_record(sm2_pki_client_ctx_t *ctx,
-        const sm2_rev_root_record_t *root_record, uint64_t now_ts);
-
-    /*
-     * Refreshes the cached root record from a bound service-managed
-     * revocation backend. This requires a live binding created via
-     * sm2_pki_client_bind_revocation().
-     */
-    sm2_pki_error_t sm2_pki_client_refresh_root(
-        sm2_pki_client_ctx_t *ctx, uint64_t now_ts);
-
-    /*
-     * Returns the most recently accepted cached CA-signed root record.
-     */
-    sm2_pki_error_t sm2_pki_client_get_cached_root_record(
-        const sm2_pki_client_ctx_t *ctx, sm2_rev_root_record_t *root_record);
-
-    /*
-     * Returns the cached root record for the given authority/issuer.
-     */
-    sm2_pki_error_t sm2_pki_client_get_cached_root_record_for_authority(
-        const sm2_pki_client_ctx_t *ctx, const uint8_t *authority_id,
-        size_t authority_id_len, sm2_rev_root_record_t *root_record);
-
-    /*
-     * Exports the local client's exact non-revocation evidence bundle
-     * for the
-     * currently imported identity certificate. This requires a
-     * live service
-     * binding created via sm2_pki_client_bind_revocation().
-     * The returned
-     * evidence carries the full CA-signed root record and
-     * works for cold-start
-     * verifiers that do not yet cache the issuer's
-     * root state.
-     */
-    sm2_pki_error_t sm2_pki_client_export_revocation_evidence(
-        sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
-        sm2_pki_revocation_evidence_t *evidence);
-
-    /*
-     * Exports a compact non-revocation evidence bundle for hot-path
-     * peers that
-     * already cache the same authority/root version locally.
-     * The proof carries
-     * only a root hint (authority + version + root
-     * hash) instead of the full
-     * signed root record and will be rejected
-     * by verifiers without a matching
-     * cached root.
-     */
-    sm2_pki_error_t sm2_pki_client_export_compact_revocation_evidence(
-        sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
-        sm2_pki_revocation_evidence_t *evidence);
-
-    /*
-     * Exports proof that the local identity certificate appears in the
-     * issuer's
-     * append-only issuance log. This detects certificates that
-     * were signed but
-     * never logged.
-     */
-    sm2_pki_error_t sm2_pki_client_export_issuance_evidence(
-        sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
-        sm2_pki_issuance_evidence_t *evidence);
-
     // Exports a unified evidence bundle. One CA-signed epoch root binds
     // revocation and issuance roots; witnesses sign that epoch root.
     sm2_pki_error_t sm2_pki_client_export_epoch_evidence(
         sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
         sm2_pki_evidence_bundle_t *evidence);
 
-    // Signs a CA-signed issuance root record as an external transparency
-    // witness. Verifiers should enforce t-of-n witness signatures through
-    // sm2_pki_client_set_transparency_policy().
-    sm2_pki_error_t sm2_pki_issuance_witness_sign(
-        const sm2_rev_root_record_t *root_record, const uint8_t *witness_id,
-        size_t witness_id_len, const sm2_private_key_t *witness_private_key,
-        sm2_pki_transparency_witness_signature_t *signature);
+    void sm2_pki_epoch_witness_state_init(sm2_pki_epoch_witness_state_t *state);
 
-    void sm2_pki_issuance_witness_state_init(
-        sm2_pki_issuance_witness_state_t *state);
-
-    void sm2_pki_issuance_witness_state_cleanup(
-        sm2_pki_issuance_witness_state_t *state);
-
-    sm2_pki_error_t sm2_pki_issuance_witness_sign_append_only(
-        sm2_pki_issuance_witness_state_t *state,
-        const sm2_rev_root_record_t *root_record,
-        const sm2_ec_point_t *ca_public_key, uint64_t now_ts,
-        const sm2_pki_issuance_commitment_t *new_commitments,
-        size_t new_commitment_count, const uint8_t *witness_id,
-        size_t witness_id_len, const sm2_private_key_t *witness_private_key,
-        sm2_pki_transparency_witness_signature_t *signature);
+    void sm2_pki_epoch_witness_state_cleanup(
+        sm2_pki_epoch_witness_state_t *state);
 
     sm2_pki_error_t sm2_pki_epoch_witness_sign(
         const sm2_pki_epoch_root_record_t *root_record,
@@ -224,8 +113,12 @@ extern "C"
         const sm2_private_key_t *witness_private_key,
         sm2_pki_transparency_witness_signature_t *signature);
 
+    sm2_ic_error_t sm2_pki_epoch_root_digest(
+        const sm2_pki_epoch_root_record_t *root_record,
+        uint8_t digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN]);
+
     sm2_pki_error_t sm2_pki_epoch_witness_sign_append_only(
-        sm2_pki_issuance_witness_state_t *state,
+        sm2_pki_epoch_witness_state_t *state,
         const sm2_pki_epoch_root_record_t *root_record,
         const sm2_ec_point_t *ca_public_key, uint64_t now_ts,
         const sm2_pki_issuance_commitment_t *new_commitments,
@@ -233,9 +126,9 @@ extern "C"
         size_t witness_id_len, const sm2_private_key_t *witness_private_key,
         sm2_pki_transparency_witness_signature_t *signature);
 
-    sm2_pki_error_t sm2_pki_issuance_quorum_check(
-        const sm2_pki_issuance_root_vote_t *votes, size_t vote_count,
-        size_t threshold, sm2_pki_issuance_quorum_result_t *result);
+    sm2_pki_error_t sm2_pki_epoch_quorum_check(
+        const sm2_pki_epoch_root_vote_t *votes, size_t vote_count,
+        size_t threshold, sm2_pki_epoch_quorum_result_t *result);
 
     /*
      * Reconstructs local identity keys and verifies that the certificate
@@ -263,11 +156,12 @@ extern "C"
         sm2_auth_signature_t *signature);
 
     /*
-     * High-level PKI verification requires the peer to carry both an
-     * exact
-     * non-revocation evidence bundle and issuance transparency
-     * evidence signed
-     * under the issuing CA root.
+     * High-level PKI verification requires a unified epoch evidence
+     * bundle.
+     * The bundle carries the CA-signed checkpoint, revocation
+     * proof, issuance
+     * membership proof, and witness threshold
+     * signatures.
      */
     sm2_pki_error_t sm2_pki_verify(sm2_pki_client_ctx_t *ctx,
         const sm2_pki_verify_request_t *request, uint64_t now_ts,
@@ -283,10 +177,10 @@ extern "C"
     /*
      * Low-level key agreement primitive. Callers must ensure the peer
      * identity,
-     * revocation evidence, issuance transparency evidence and
-     * key usage have
-     * already been verified through a higher-level flow
-     * before using it.
+     * epoch evidence bundle, key usage and handshake binding
+     * have already been
+     * verified through a higher-level flow before
+     * using it.
      */
     sm2_pki_error_t sm2_pki_key_agreement(sm2_pki_client_ctx_t *ctx,
         const sm2_private_key_t *local_ephemeral_private_key,
@@ -301,9 +195,7 @@ extern "C"
      * already carry a signature over the canonical
      * handshake binding produced by
      * sm2_auth_build_handshake_binding(),
-     * plus non-revocation and issuance
-     * transparency evidence accepted by
-     * sm2_pki_verify().
+     * plus an epoch evidence bundle accepted by sm2_pki_verify().
      */
     sm2_pki_error_t sm2_pki_secure_session_establish(sm2_pki_client_ctx_t *ctx,
         const sm2_private_key_t *local_ephemeral_private_key,

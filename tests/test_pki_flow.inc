@@ -1,4 +1,4 @@
-﻿static void test_x509_real_baseline_size()
+static void test_x509_real_baseline_size()
 {
     if (!g_ca_initialized)
         test_setup_ca();
@@ -109,12 +109,11 @@ static void test_phase4_service_client_flow()
 
     const uint8_t msg[] = "PHASE4_FLOW_MESSAGE";
     sm2_auth_signature_t sig;
-    sm2_pki_revocation_evidence_t evidence;
-    sm2_pki_issuance_evidence_t issuance_evidence;
+    sm2_pki_evidence_bundle_t evidence;
     sm2_pki_verify_request_t request;
     TEST_ASSERT(
         pki_build_signed_verify_request(client, msg, sizeof(msg) - 1, auth_now,
-            &sig, &evidence, &issuance_evidence, &request),
+            &sig, &evidence, &request),
         "Build Signed Verify Request");
     size_t matched = 0;
     TEST_ASSERT(
@@ -219,13 +218,11 @@ static void test_phase4_revocation_ocsp_and_cross_domain()
 
     const uint8_t msg[] = "CROSS_DOMAIN_AUTH";
     sm2_auth_signature_t sig_b;
-    sm2_pki_revocation_evidence_t evidence_b;
-    sm2_pki_issuance_evidence_t issuance_evidence_b;
+    sm2_pki_evidence_bundle_t evidence_b;
     sm2_pki_verify_request_t req_auth;
     TEST_ASSERT(
         pki_build_signed_verify_request(client_b, msg, sizeof(msg) - 1,
-            auth_now + 20, &sig_b, &evidence_b, &issuance_evidence_b,
-            &req_auth),
+            auth_now + 20, &sig_b, &evidence_b, &req_auth),
         "Build Cross Verify Request");
 
     size_t matched = 0;
@@ -244,19 +241,17 @@ static void test_phase4_revocation_ocsp_and_cross_domain()
         "Revoke Check Revoked");
     TEST_ASSERT(status == SM2_REV_STATUS_REVOKED, "Status Revoked");
 
-    sm2_rev_root_record_t newer_root_b;
-    memset(&newer_root_b, 0, sizeof(newer_root_b));
-    TEST_ASSERT(sm2_pki_service_get_root_record(svc_b, &newer_root_b)
-            == SM2_PKI_SUCCESS,
-        "Get New CA_B Root");
-    TEST_ASSERT(sm2_pki_client_import_root_record(
-                    verifier, &newer_root_b, auth_now + 50)
-            == SM2_PKI_SUCCESS,
-        "Import New CA_B Root");
-
-    TEST_ASSERT(sm2_pki_verify(verifier, &req_auth, auth_now + 50, &matched)
+    sm2_pki_evidence_bundle_t after_revoke_evidence;
+    memset(&after_revoke_evidence, 0, sizeof(after_revoke_evidence));
+    TEST_ASSERT(sm2_pki_client_export_epoch_evidence(
+                    client_b, auth_now + 50, &after_revoke_evidence)
             == SM2_PKI_ERR_VERIFY,
-        "Verify Blocked After Revoke");
+        "Revoked Peer Cannot Export Fresh Evidence");
+
+    TEST_ASSERT(sm2_pki_verify(verifier, &req_auth,
+                    evidence_b.epoch_root_record.valid_until + 1, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Verify Blocked After Evidence Expiry");
 
     sm2_pki_client_destroy(&verifier);
     sm2_pki_client_destroy(&client_b);

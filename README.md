@@ -9,7 +9,7 @@
 
 TinyPKI 是一个面向 IoT 资源受限、弱网与边缘节点场景的轻量 PKI C11 核心库，覆盖证书签发、吊销证明、认证与会话保护等主链路能力。
 
-本项目基于 OpenSSL EVP 架构与国密算法族（SM2/SM3/SM4）实现，围绕 ECQV 隐式证书构建，并原生提供 CA 签名的 Merkle 撤销根、携带式非吊销证明、强制发证透明证明、撤销状态同步以及面向 service/client 的高层 PKI API。
+本项目基于 OpenSSL EVP 架构与国密算法族（SM2/SM3/SM4）实现，围绕 ECQV 隐式证书构建，并原生提供 CA 签名的统一 epoch 证据包、携带式非吊销证明、强制发证透明证明、撤销状态同步以及面向 service/client 的高层 PKI API。
 
 无论是微控制器、智能网关，还是需要本地化吊销校验与安全会话建立的边缘服务组件，TinyPKI 都能提供较低集成成本且接口清晰的实现基础。
 
@@ -24,10 +24,10 @@ TinyPKI 是一个面向 IoT 资源受限、弱网与边缘节点场景的轻量 
   传统数字证书动辄上千字节，在 NB-IoT、LoRa 等窄带网络中传输成本很高。本项目采用基于国密算法的隐式证书（ECQV）技术，提供请求生成、CA 签发、终端侧公私钥重构与证书一致性验证的完整链路，显著降低证书载荷与设备侧处理负担。当前仓库内 benchmark 快照下，ECQV 隐式证书编码为 `79 bytes`，对照本机生成的 X.509 DER 基线 `691 bytes`，约为其 `11.43%`。
 * 🌳 **极速且保护隐私的证书吊销校验**
 
-  传统的 OCSP 或 CRL 往往带来额外在线查询和隐私暴露。本项目采用“CA 签名根记录 + Merkle member/absence proof”机制，由证书持有方在认证时直接携带精确的非吊销证明，对端结合本地缓存根记录即可完成离线校验，并支持根记录刷新与携带式证据导出。
+  传统的 OCSP 或 CRL 往往带来额外在线查询和隐私暴露。本项目采用“CA 签名 epoch root + Merkle member/absence proof”机制，由证书持有方在认证时直接携带精确的非吊销证明，对端结合同一个 epoch checkpoint 即可完成离线校验。
 * 🔎 **强制发证透明与边缘见证门限**
 
-  高层 `sm2_pki_verify()` 默认要求每个对端同时携带 issuance transparency evidence。CA 侧维护按签发顺序追加的 32-byte 证书承诺 Merkle log，验证端检查成员证明、CA 签名 issuance root，并可通过客户端级 `t-of-n` witness policy 要求多个边缘节点对 root 见证签名。
+  高层 `sm2_pki_verify()` 默认要求每个对端携带统一 epoch evidence bundle。CA 侧维护按签发顺序追加的 32-byte 证书承诺 Merkle log，验证端检查成员证明、CA 签名 epoch root，并可通过客户端级 `t-of-n` witness policy 要求多个边缘节点对 epoch root 见证签名。
 * 📌 **统一 PKI epoch 证据包**
 
   新增 CA 签名的 `epoch root`，将当前吊销 Merkle root 与发证透明 root 绑定成一个检查点；验证端可使用 `sm2_pki_evidence_bundle_t` 一次性验证非吊销证明、发证成员证明和 `t-of-n` witness 签名，witness 签名前会检查 issuance log 的 append-only 演进。
@@ -173,11 +173,11 @@ cmake --build build --target sm2_bench_capability_suite -j 4
 
 ## 🌍 English Summary
 
-**TinyPKI** is a lightweight C11 PKI core for constrained IoT, weakly connected, and edge deployment scenarios. Built on top of OpenSSL EVP with SM2/SM3/SM4, it provides end-to-end flows for ECQV implicit certificates, CA-signed Merkle revocation roots, mandatory issuance transparency evidence, proof-carrying non-revocation evidence, and high-level PKI/auth/session APIs.
+**TinyPKI** is a lightweight C11 PKI core for constrained IoT, weakly connected, and edge deployment scenarios. Built on top of OpenSSL EVP with SM2/SM3/SM4, it provides end-to-end flows for ECQV implicit certificates, CA-signed epoch evidence bundles, mandatory issuance transparency, proof-carrying non-revocation checks, and high-level PKI/auth/session APIs.
 
 - **ECQV Implicit Certificate Flows** covering request generation, CA issuance, endpoint key reconstruction, and certificate verification with substantially smaller payloads than conventional X.509.
-- **Measured Footprint Snapshot**: the current in-repo benchmark reports a `79-byte` ECQV implicit certificate versus a `691-byte` X.509 DER baseline. With mandatory issuance transparency evidence included, the full authentication bundle is `4140 bytes` and the compact-root bundle is `4060 bytes`.
-- **CA-Signed Merkle Revocation Roots and Carried Proofs** supporting exact offline non-revocation checks via member/absence proofs and cached root records.
+- **Measured Footprint Snapshot**: the in-repo capability benchmark reports the final epoch-bundle authentication payload, including ECQV certificate, signature, CA-signed epoch root, revocation proof, issuance proof, and witness signatures.
+- **CA-Signed Epoch Evidence and Carried Proofs** supporting exact offline non-revocation checks via member/absence proofs bound to the same checkpoint as issuance transparency.
 - **Mandatory Issuance Transparency and Unified Epoch Evidence** using 32-byte certificate commitments, a CA-signed epoch root that binds issuance and revocation roots, and client-level `t-of-n` edge witness policies.
 - **Revocation State Sync Tooling** including delta/heartbeat refresh, redirect hints, quorum/BFT helpers, multiproof compression, and epoch/cached proof support.
 - **Mutual Authentication and Secure Sessions** spanning static or ephemeral key agreement, canonical handshake binding, key-usage enforcement, and SM4-GCM/CCM AEAD protection.

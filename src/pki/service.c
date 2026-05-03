@@ -734,19 +734,6 @@ sm2_pki_error_t sm2_pki_service_get_root_record(
     return SM2_PKI_SUCCESS;
 }
 
-sm2_pki_error_t sm2_pki_service_get_issuance_root_record(
-    const sm2_pki_service_ctx_t *ctx, sm2_rev_root_record_t *root_record)
-{
-    const sm2_pki_service_state_t *state = service_state_const(ctx);
-    if (!ctx || !root_record || !ctx->initialized || !state
-        || !state->issuance_state_ready)
-    {
-        return SM2_PKI_ERR_PARAM;
-    }
-    *root_record = state->issuance_root_record;
-    return SM2_PKI_SUCCESS;
-}
-
 sm2_pki_error_t sm2_pki_service_get_epoch_root_record(
     const sm2_pki_service_ctx_t *ctx, sm2_pki_epoch_root_record_t *root_record)
 {

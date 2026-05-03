@@ -154,36 +154,6 @@ sm2_ic_error_t sm2_pki_root_record_sign_hash(const uint8_t *authority_id,
     return SM2_IC_SUCCESS;
 }
 
-sm2_ic_error_t sm2_pki_issuance_root_verify(
-    const sm2_rev_root_record_t *root_record, uint64_t now_ts,
-    sm2_rev_sync_verify_fn verify_fn, void *verify_user_ctx)
-{
-    if (!root_record || !verify_fn)
-        return SM2_IC_ERR_PARAM;
-    if (root_record->authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
-        return SM2_IC_ERR_VERIFY;
-    if (root_record->signature_len == 0
-        || root_record->signature_len > sizeof(root_record->signature))
-    {
-        return SM2_IC_ERR_VERIFY;
-    }
-    if (root_record->valid_until < root_record->valid_from)
-        return SM2_IC_ERR_VERIFY;
-    if (now_ts < root_record->valid_from || now_ts > root_record->valid_until)
-        return SM2_IC_ERR_VERIFY;
-
-    uint8_t auth_buf[256];
-    size_t auth_len = 0;
-    sm2_ic_error_t ret = pki_issuance_serialize_root_for_auth(
-        root_record, auth_buf, sizeof(auth_buf), &auth_len);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    ret = verify_fn(verify_user_ctx, auth_buf, auth_len, root_record->signature,
-        root_record->signature_len);
-    return ret == SM2_IC_SUCCESS ? SM2_IC_SUCCESS : SM2_IC_ERR_VERIFY;
-}
-
 static sm2_ic_error_t pki_epoch_serialize_root_for_auth(
     const sm2_pki_epoch_root_record_t *root_record, uint8_t *output,
     size_t output_cap, size_t *output_len)

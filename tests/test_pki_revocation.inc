@@ -42,11 +42,10 @@ static void test_phase8_merkle_hook_and_service_binding()
 
     const uint8_t msg[] = "P8_CARRIED_EVIDENCE";
     sm2_auth_signature_t sig;
-    sm2_pki_revocation_evidence_t evidence;
-    sm2_pki_issuance_evidence_t issuance_evidence;
+    sm2_pki_evidence_bundle_t evidence;
     sm2_pki_verify_request_t auth_req;
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now, &sig, &evidence, &issuance_evidence, &auth_req),
+                    auth_now, &sig, &evidence, &auth_req),
         "Build Carried Evidence Request");
 
     sm2_pki_client_ctx_t *verifier = NULL;
@@ -63,23 +62,17 @@ static void test_phase8_merkle_hook_and_service_binding()
                     service, cert_res.cert.serial_number, auth_now + 100)
             == SM2_PKI_SUCCESS,
         "Revoke Serial");
-    TEST_ASSERT(sm2_pki_client_export_revocation_evidence(
-                    signer, auth_now + 200, &evidence)
+    sm2_pki_evidence_bundle_t after_revoke_evidence;
+    memset(&after_revoke_evidence, 0, sizeof(after_revoke_evidence));
+    TEST_ASSERT(sm2_pki_client_export_epoch_evidence(
+                    signer, auth_now + 200, &after_revoke_evidence)
             == SM2_PKI_ERR_VERIFY,
         "Revoked Signer Cannot Export Good Evidence");
 
-    sm2_rev_root_record_t newer_root;
-    memset(&newer_root, 0, sizeof(newer_root));
-    TEST_ASSERT(sm2_pki_service_get_root_record(service, &newer_root)
-            == SM2_PKI_SUCCESS,
-        "Get Newer Root");
-    TEST_ASSERT(sm2_pki_client_import_root_record(
-                    verifier, &newer_root, auth_now + 200)
-            == SM2_PKI_SUCCESS,
-        "Import Newer Root");
-    TEST_ASSERT(sm2_pki_verify(verifier, &auth_req, auth_now + 200, &matched)
+    TEST_ASSERT(sm2_pki_verify(verifier, &auth_req,
+                    evidence.epoch_root_record.valid_until + 1, &matched)
             == SM2_PKI_ERR_VERIFY,
-        "Old Carried Evidence Rejected After Root Advance");
+        "Expired Carried Evidence Rejected");
 
     sm2_pki_client_destroy(&verifier);
     sm2_pki_client_destroy(&signer);
@@ -130,11 +123,10 @@ static void test_phase9_epoch_lookup_unknown_query_override_behavior()
 
     const uint8_t msg[] = "P9_CARRIED_EVIDENCE";
     sm2_auth_signature_t sig;
-    sm2_pki_revocation_evidence_t evidence;
-    sm2_pki_issuance_evidence_t issuance_evidence;
+    sm2_pki_evidence_bundle_t evidence;
     sm2_pki_verify_request_t auth_req;
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now, &sig, &evidence, &issuance_evidence, &auth_req),
+                    auth_now, &sig, &evidence, &auth_req),
         "Build Signed Request");
 
     sm2_pki_client_ctx_t *verifier = NULL;
@@ -148,25 +140,25 @@ static void test_phase9_epoch_lookup_unknown_query_override_behavior()
         "Baseline Verify");
 
     sm2_pki_verify_request_t missing_evidence = auth_req;
-    missing_evidence.revocation_evidence = NULL;
+    missing_evidence.evidence_bundle = NULL;
     TEST_ASSERT(sm2_pki_verify(verifier, &missing_evidence, auth_now + 100,
                     &matched)
             == SM2_PKI_ERR_VERIFY,
         "Missing Carried Evidence Reject");
 
-    sm2_pki_revocation_evidence_t wrong_serial = evidence;
-    wrong_serial.absence_proof.target_serial ^= 0x01U;
+    sm2_pki_evidence_bundle_t wrong_serial = evidence;
+    wrong_serial.revocation_proof.absence_proof.target_serial ^= 0x01U;
     sm2_pki_verify_request_t wrong_serial_req = auth_req;
-    wrong_serial_req.revocation_evidence = &wrong_serial;
+    wrong_serial_req.evidence_bundle = &wrong_serial;
     TEST_ASSERT(sm2_pki_verify(verifier, &wrong_serial_req, auth_now + 100,
                     &matched)
             == SM2_PKI_ERR_VERIFY,
         "Wrong Serial Evidence Reject");
 
-    sm2_pki_revocation_evidence_t wrong_authority = evidence;
-    wrong_authority.root_record.authority_id[0] ^= 0x01U;
+    sm2_pki_evidence_bundle_t wrong_authority = evidence;
+    wrong_authority.epoch_root_record.authority_id[0] ^= 0x01U;
     sm2_pki_verify_request_t wrong_authority_req = auth_req;
-    wrong_authority_req.revocation_evidence = &wrong_authority;
+    wrong_authority_req.evidence_bundle = &wrong_authority;
     TEST_ASSERT(sm2_pki_verify(verifier, &wrong_authority_req,
                     auth_now + 100, &matched)
             == SM2_PKI_ERR_VERIFY,
@@ -352,11 +344,10 @@ static void test_phase11_merkle_freshness_e2e_gate()
 
     const uint8_t msg[] = "P11_MERKLE_FRESH";
     sm2_auth_signature_t sig;
-    sm2_pki_revocation_evidence_t evidence;
-    sm2_pki_issuance_evidence_t issuance_evidence;
+    sm2_pki_evidence_bundle_t evidence;
     sm2_pki_verify_request_t auth_req;
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now, &sig, &evidence, &issuance_evidence, &auth_req),
+                    auth_now, &sig, &evidence, &auth_req),
         "Build Fresh Evidence Request");
 
     sm2_pki_client_ctx_t *verifier = NULL;
@@ -369,7 +360,7 @@ static void test_phase11_merkle_freshness_e2e_gate()
             == SM2_PKI_SUCCESS,
         "Fresh Proof Allows Auth");
     TEST_ASSERT(sm2_pki_verify(verifier, &auth_req,
-                    evidence.root_record.valid_until + 1, &matched)
+                    evidence.epoch_root_record.valid_until + 1, &matched)
             == SM2_PKI_ERR_VERIFY,
         "Expired Proof Blocks Auth");
 

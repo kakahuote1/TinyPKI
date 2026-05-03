@@ -47,8 +47,7 @@ typedef struct
     sm2_ic_cert_result_t cert_result;
     sm2_private_key_t temp_private_key;
     sm2_auth_signature_t signature;
-    sm2_pki_revocation_evidence_t evidence;
-    sm2_pki_issuance_evidence_t issuance_evidence;
+    sm2_pki_evidence_bundle_t evidence;
     sm2_pki_verify_request_t verify_request;
     uint8_t message[64];
     size_t message_len;
@@ -242,35 +241,33 @@ static int bench_configure_transparency_verifier(sm2_pki_client_ctx_t *client)
         == SM2_PKI_SUCCESS;
 }
 
-static int bench_attach_issuance_witness(
-    sm2_pki_issuance_evidence_t *issuance_evidence,
-    sm2_pki_verify_request_t *request)
+static int bench_attach_epoch_witness(
+    sm2_pki_evidence_bundle_t *evidence, sm2_pki_verify_request_t *request)
 {
-    if (!issuance_evidence || !request || !bench_transparency_policy_init())
+    if (!evidence || !request || !bench_transparency_policy_init())
         return 0;
-    if (sm2_pki_issuance_witness_sign(&issuance_evidence->root_record,
+    if (sm2_pki_epoch_witness_sign(&evidence->epoch_root_record,
             g_bench_witness.witness_id, g_bench_witness.witness_id_len,
-            &g_bench_witness_priv, &issuance_evidence->witness_signatures[0])
+            &g_bench_witness_priv, &evidence->witness_signatures[0])
         != SM2_PKI_SUCCESS)
     {
         return 0;
     }
-    issuance_evidence->witness_signature_count = 1U;
+    evidence->witness_signature_count = 1U;
     request->transparency_policy = &g_bench_transparency_policy;
     return 1;
 }
 
 static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     const uint8_t *message, size_t message_len, uint64_t now_ts,
-    sm2_auth_signature_t *signature, sm2_pki_revocation_evidence_t *evidence,
-    sm2_pki_issuance_evidence_t *issuance_evidence,
+    sm2_auth_signature_t *signature, sm2_pki_evidence_bundle_t *evidence,
     sm2_pki_verify_request_t *request)
 {
     const sm2_implicit_cert_t *cert = NULL;
     const sm2_ec_point_t *public_key = NULL;
 
     if (!signer || !message || message_len == 0 || !signature || !evidence
-        || !issuance_evidence || !request)
+        || !request)
     {
         return 0;
     }
@@ -282,13 +279,7 @@ static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     }
     if (!client_get_identity_material(signer, &cert, &public_key))
         return 0;
-    if (sm2_pki_client_export_revocation_evidence(signer, now_ts, evidence)
-        != SM2_PKI_SUCCESS)
-    {
-        return 0;
-    }
-    if (sm2_pki_client_export_issuance_evidence(
-            signer, now_ts, issuance_evidence)
+    if (sm2_pki_client_export_epoch_evidence(signer, now_ts, evidence)
         != SM2_PKI_SUCCESS)
     {
         return 0;
@@ -300,9 +291,8 @@ static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     request->message = message;
     request->message_len = message_len;
     request->signature = signature;
-    request->revocation_evidence = evidence;
-    request->issuance_evidence = issuance_evidence;
-    if (!bench_attach_issuance_witness(issuance_evidence, request))
+    request->evidence_bundle = evidence;
+    if (!bench_attach_epoch_witness(evidence, request))
         return 0;
     return 1;
 }
@@ -314,11 +304,22 @@ static int encode_cert_len(
     return sm2_ic_cbor_encode_cert(buf, len, cert) == SM2_IC_SUCCESS;
 }
 
-static int encode_root_len(const sm2_rev_root_record_t *root_record,
-    uint8_t *buf, size_t cap, size_t *len)
+static size_t epoch_root_wire_size(
+    const sm2_pki_epoch_root_record_t *root_record)
 {
-    *len = cap;
-    return sm2_rev_root_encode(root_record, buf, len) == SM2_IC_SUCCESS;
+    if (!root_record)
+        return 0U;
+    return root_record->authority_id_len + (6U * sizeof(uint64_t))
+        + (2U * SM2_REV_MERKLE_HASH_LEN) + root_record->signature_len;
+}
+
+static size_t issuance_proof_wire_size(
+    const sm2_pki_issuance_member_proof_t *proof)
+{
+    if (!proof)
+        return 0U;
+    return SM2_PKI_ISSUANCE_COMMITMENT_LEN + (3U * sizeof(size_t))
+        + proof->sibling_count * (SM2_REV_MERKLE_HASH_LEN + 1U);
 }
 
 static int encode_absence_len(
@@ -384,7 +385,7 @@ static int build_flow_context(bench_flow_ctx_t *ctx)
         : current_unix_ts();
     return build_signed_verify_request(ctx->client, ctx->message,
         ctx->message_len, ctx->auth_now, &ctx->signature, &ctx->evidence,
-        &ctx->issuance_evidence, &ctx->verify_request);
+        &ctx->verify_request);
 }
 
 static void cleanup_flow_context(bench_flow_ctx_t *ctx)
@@ -488,11 +489,12 @@ static int compute_payload_metrics(
 {
     bench_flow_ctx_t flow;
     uint8_t cert_buf[1024];
-    uint8_t root_buf[1024];
     uint8_t absence_buf[8192];
     size_t cert_len = 0;
     size_t root_len = 0;
     size_t absence_len = 0;
+    size_t issuance_len = 0;
+    size_t witness_len = 0;
     int x509_der_len = 0;
 
     enum
@@ -516,11 +518,16 @@ static int compute_payload_metrics(
     if (!encode_cert_len(
             &flow.cert_result.cert, cert_buf, sizeof(cert_buf), &cert_len))
         goto fail;
-    if (!encode_root_len(
-            &flow.evidence.root_record, root_buf, sizeof(root_buf), &root_len))
-        goto fail;
-    if (!encode_absence_len(&flow.evidence.absence_proof, absence_buf,
-            sizeof(absence_buf), &absence_len))
+    root_len = epoch_root_wire_size(&flow.evidence.epoch_root_record);
+    issuance_len
+        = issuance_proof_wire_size(&flow.evidence.issuance_proof.member_proof);
+    for (size_t i = 0; i < flow.evidence.witness_signature_count; i++)
+    {
+        witness_len += flow.evidence.witness_signatures[i].witness_id_len
+            + flow.evidence.witness_signatures[i].signature_len;
+    }
+    if (!encode_absence_len(&flow.evidence.revocation_proof.absence_proof,
+            absence_buf, sizeof(absence_buf), &absence_len))
         goto fail;
 
     revoked = (uint64_t *)calloc(revoked_n, sizeof(uint64_t));
@@ -545,15 +552,14 @@ static int compute_payload_metrics(
     metrics[0].bytes = (size_t)x509_der_len;
     metrics[1].name = "ECQV Implicit Certificate";
     metrics[1].bytes = cert_len;
-    metrics[2].name = "CA-signed Root Record";
+    metrics[2].name = "CA-signed Epoch Root";
     metrics[2].bytes = root_len;
     metrics[3].name = "Merkle Absence Proof";
     metrics[3].bytes = absence_len;
-    metrics[4].name = "Non-Revocation Evidence";
-    metrics[4].bytes = root_len + absence_len;
+    metrics[4].name = "Epoch Evidence Bundle";
+    metrics[4].bytes = root_len + absence_len + issuance_len + witness_len;
     metrics[5].name = "Authentication Bundle";
-    metrics[5].bytes
-        = cert_len + flow.signature.der_len + root_len + absence_len;
+    metrics[5].bytes = cert_len + flow.signature.der_len + metrics[4].bytes;
     metrics[6].name = "Merkle Multiproof (16)";
     metrics[6].bytes = multi_len;
 
@@ -712,9 +718,9 @@ static double measure_export_evidence_median(void)
 
     for (size_t i = 0; i < BENCH_LATENCY_ROUNDS; i++)
     {
-        sm2_pki_revocation_evidence_t evidence;
+        sm2_pki_evidence_bundle_t evidence;
         double t0 = now_ms_highres();
-        if (sm2_pki_client_export_revocation_evidence(
+        if (sm2_pki_client_export_epoch_evidence(
                 flow.client, flow.auth_now, &evidence)
             != SM2_PKI_SUCCESS)
         {
@@ -781,10 +787,8 @@ static double measure_secure_session_median(void)
         size_t bind_b_len = sizeof(bind_b);
         sm2_auth_signature_t sig_a;
         sm2_auth_signature_t sig_b;
-        sm2_pki_revocation_evidence_t evidence_a;
-        sm2_pki_revocation_evidence_t evidence_b;
-        sm2_pki_issuance_evidence_t issuance_a;
-        sm2_pki_issuance_evidence_t issuance_b;
+        sm2_pki_evidence_bundle_t evidence_a;
+        sm2_pki_evidence_bundle_t evidence_b;
         sm2_pki_verify_request_t req_a_to_b;
         sm2_pki_verify_request_t req_b_to_a;
         uint8_t sk_a[16];
@@ -800,8 +804,6 @@ static double measure_secure_session_median(void)
         memset(&sig_b, 0, sizeof(sig_b));
         memset(&evidence_a, 0, sizeof(evidence_a));
         memset(&evidence_b, 0, sizeof(evidence_b));
-        memset(&issuance_a, 0, sizeof(issuance_a));
-        memset(&issuance_b, 0, sizeof(issuance_b));
         memset(&req_a_to_b, 0, sizeof(req_a_to_b));
         memset(&req_b_to_a, 0, sizeof(req_b_to_a));
 
@@ -820,17 +822,11 @@ static double measure_secure_session_median(void)
                 != SM2_PKI_SUCCESS
             || sm2_pki_sign(ctx.client_b, bind_b, bind_b_len, &sig_b)
                 != SM2_PKI_SUCCESS
-            || sm2_pki_client_export_revocation_evidence(
+            || sm2_pki_client_export_epoch_evidence(
                    ctx.client_a, ctx.auth_now, &evidence_a)
                 != SM2_PKI_SUCCESS
-            || sm2_pki_client_export_revocation_evidence(
+            || sm2_pki_client_export_epoch_evidence(
                    ctx.client_b, ctx.auth_now, &evidence_b)
-                != SM2_PKI_SUCCESS
-            || sm2_pki_client_export_issuance_evidence(
-                   ctx.client_a, ctx.auth_now, &issuance_a)
-                != SM2_PKI_SUCCESS
-            || sm2_pki_client_export_issuance_evidence(
-                   ctx.client_b, ctx.auth_now, &issuance_b)
                 != SM2_PKI_SUCCESS
             || !client_get_identity_material(ctx.client_a, &cert_a, &pub_a)
             || !client_get_identity_material(ctx.client_b, &cert_b, &pub_b))
@@ -844,9 +840,8 @@ static double measure_secure_session_median(void)
         req_a_to_b.message = bind_a;
         req_a_to_b.message_len = bind_a_len;
         req_a_to_b.signature = &sig_a;
-        req_a_to_b.revocation_evidence = &evidence_a;
-        req_a_to_b.issuance_evidence = &issuance_a;
-        if (!bench_attach_issuance_witness(&issuance_a, &req_a_to_b))
+        req_a_to_b.evidence_bundle = &evidence_a;
+        if (!bench_attach_epoch_witness(&evidence_a, &req_a_to_b))
         {
             cleanup_session_context(&ctx);
             return 0.0;
@@ -857,9 +852,8 @@ static double measure_secure_session_median(void)
         req_b_to_a.message = bind_b;
         req_b_to_a.message_len = bind_b_len;
         req_b_to_a.signature = &sig_b;
-        req_b_to_a.revocation_evidence = &evidence_b;
-        req_b_to_a.issuance_evidence = &issuance_b;
-        if (!bench_attach_issuance_witness(&issuance_b, &req_b_to_a))
+        req_b_to_a.evidence_bundle = &evidence_b;
+        if (!bench_attach_epoch_witness(&evidence_b, &req_b_to_a))
         {
             cleanup_session_context(&ctx);
             return 0.0;

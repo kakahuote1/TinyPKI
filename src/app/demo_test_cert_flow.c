@@ -42,8 +42,7 @@ int main(void)
     sm2_pki_transparency_witness_t witness;
     sm2_pki_transparency_policy_t transparency_policy;
     sm2_auth_signature_t sig;
-    sm2_pki_revocation_evidence_t evidence;
-    sm2_pki_issuance_evidence_t issuance_evidence;
+    sm2_pki_evidence_bundle_t evidence;
     size_t matched_idx = 0;
     sm2_pki_verify_request_t auth_req;
     const sm2_implicit_cert_t *cli_cert = NULL;
@@ -64,7 +63,6 @@ int main(void)
     memset(&transparency_policy, 0, sizeof(transparency_policy));
     memset(&sig, 0, sizeof(sig));
     memset(&evidence, 0, sizeof(evidence));
-    memset(&issuance_evidence, 0, sizeof(issuance_evidence));
     memset(&auth_req, 0, sizeof(auth_req));
 
     /* 1) Initialize in-memory CA/RA service */
@@ -136,21 +134,17 @@ int main(void)
     auth_req.signature = &sig;
     auth_now
         = cert_res.cert.valid_from != 0 ? cert_res.cert.valid_from : base_now;
-    err = sm2_pki_client_export_revocation_evidence(cli, auth_now, &evidence);
-    if (!check_pki(err, "Export Non-Revocation Evidence"))
+    err = sm2_pki_client_export_epoch_evidence(cli, auth_now, &evidence);
+    if (!check_pki(err, "Export Epoch Evidence Bundle"))
         goto cleanup;
-    err = sm2_pki_client_export_issuance_evidence(
-        cli, auth_now, &issuance_evidence);
-    if (!check_pki(err, "Export Issuance Transparency Evidence"))
-        goto cleanup;
-    err = sm2_pki_issuance_witness_sign(&issuance_evidence.root_record,
+    err = sm2_pki_epoch_witness_sign(&evidence.epoch_root_record,
         witness.witness_id, witness.witness_id_len, &witness_priv,
-        &issuance_evidence.witness_signatures[0]);
-    if (!check_pki(err, "Witness Sign Issuance Root"))
+        &evidence.witness_signatures[0]);
+    if (!check_pki(err, "Witness Sign Epoch Root"))
         goto cleanup;
-    issuance_evidence.witness_signature_count = 1;
-    auth_req.revocation_evidence = &evidence;
-    auth_req.issuance_evidence = &issuance_evidence;
+    evidence.witness_signature_count = 1;
+    auth_req.evidence_bundle = &evidence;
+    auth_req.transparency_policy = &transparency_policy;
 
     err = sm2_pki_verify(cli, &auth_req, auth_now, &matched_idx);
     if (!check_pki(err, "Verify Before Revoke"))
@@ -176,24 +170,19 @@ int main(void)
         goto cleanup;
     }
 
-    sm2_rev_root_record_t newer_root;
-    memset(&newer_root, 0, sizeof(newer_root));
-    err = sm2_pki_service_get_root_record(svc, &newer_root);
-    if (!check_pki(err, "Get New Root Record"))
-        goto cleanup;
-    err = sm2_pki_client_import_root_record(cli, &newer_root, auth_now + 7);
-    if (!check_pki(err, "Import New Root Record"))
-        goto cleanup;
+    sm2_pki_evidence_bundle_t after_revoke_evidence;
+    memset(&after_revoke_evidence, 0, sizeof(after_revoke_evidence));
 
-    /* 7) Verify after revocation should be rejected */
-    err = sm2_pki_verify(cli, &auth_req, auth_now + 7, &matched_idx);
+    /* 7) A revoked certificate cannot mint a fresh epoch evidence bundle. */
+    err = sm2_pki_client_export_epoch_evidence(
+        cli, auth_now + 7, &after_revoke_evidence);
     if (err == SM2_PKI_SUCCESS)
     {
-        printf("[FAIL] Verify After Revoke unexpectedly succeeded\n");
+        printf("[FAIL] Export After Revoke unexpectedly succeeded\n");
         goto cleanup;
     }
     printf(
-        "[OK]   Verify After Revoke blocked as expected, err=%d\n", (int)err);
+        "[OK]   Export After Revoke blocked as expected, err=%d\n", (int)err);
 
     printf("[PASS] demo_test_cert_flow\n");
     sm2_pki_client_destroy(&cli);

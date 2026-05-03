@@ -1,4 +1,4 @@
-﻿static void test_phase13_service_query_cannot_self_refresh_root()
+static void test_phase13_service_query_cannot_self_refresh_root()
 {
     sm2_pki_service_ctx_t *service = NULL;
     const uint8_t issuer[] = "P13_CA";
@@ -41,8 +41,7 @@
 
     const uint8_t msg[] = "P13_FRESHNESS";
     sm2_auth_signature_t sig;
-    sm2_pki_revocation_evidence_t evidence;
-    sm2_pki_issuance_evidence_t issuance_evidence;
+    sm2_pki_evidence_bundle_t evidence;
     sm2_pki_verify_request_t request;
     size_t matched = 0;
 
@@ -58,7 +57,7 @@
     uint64_t expired_now = root_before.valid_until + 1;
 
     TEST_ASSERT(pki_build_signed_verify_request(client, msg, sizeof(msg) - 1,
-                    fresh_now, &sig, &evidence, &issuance_evidence, &request),
+                    fresh_now, &sig, &evidence, &request),
         "Build Initial Evidence Request");
 
     TEST_ASSERT(sm2_pki_verify(client, &request, fresh_now, &matched)
@@ -83,8 +82,7 @@
     TEST_ASSERT(root_after_refresh.valid_until > root_before.valid_until,
         "Explicit Refresh Extends Validity");
     TEST_ASSERT(pki_build_signed_verify_request(client, msg, sizeof(msg) - 1,
-                    expired_now + 20, &sig, &evidence, &issuance_evidence,
-                    &request),
+                    expired_now + 20, &sig, &evidence, &request),
         "Build Refreshed Evidence Request");
     TEST_ASSERT(sm2_pki_verify(client, &request, expired_now + 20, &matched)
             == SM2_PKI_SUCCESS,
@@ -393,7 +391,7 @@ static void test_phase93_reimport_clears_stale_sign_pool()
     TEST_PASS();
 }
 
-static void test_phase93_service_certificate_history_grows_past_legacy_cap()
+static void test_phase93_service_certificate_history_grows_past_previous_cap()
 {
     sm2_pki_service_ctx_t *service = NULL;
     const uint8_t issuer[] = "P93_HISTORY_CA";
@@ -409,8 +407,8 @@ static void test_phase93_service_certificate_history_grows_past_legacy_cap()
             == SM2_PKI_SUCCESS,
         "Identity Register");
 
-    const size_t legacy_cap = (size_t)SM2_PKI_MAX_IDENTITIES * 4U;
-    const size_t issue_total = legacy_cap + 8U;
+    const size_t previous_cap = (size_t)SM2_PKI_MAX_IDENTITIES * 4U;
+    const size_t issue_total = previous_cap + 8U;
     uint64_t first_serial = 0;
     uint64_t last_serial = 0;
 
@@ -550,34 +548,22 @@ static void test_phase13_secure_pki_session_default_api()
         "Sign Bind B");
 
     uint64_t auth_now = test_cert_pair_now(&cert_a.cert, &cert_b.cert);
-    sm2_pki_revocation_evidence_t evidence_a;
-    sm2_pki_revocation_evidence_t evidence_b;
-    sm2_pki_issuance_evidence_t issuance_a;
-    sm2_pki_issuance_evidence_t issuance_b;
+    sm2_pki_evidence_bundle_t evidence_a;
+    sm2_pki_evidence_bundle_t evidence_b;
     sm2_pki_verify_request_t req_a_to_b;
     sm2_pki_verify_request_t req_b_to_a;
     memset(&evidence_a, 0, sizeof(evidence_a));
     memset(&evidence_b, 0, sizeof(evidence_b));
-    memset(&issuance_a, 0, sizeof(issuance_a));
-    memset(&issuance_b, 0, sizeof(issuance_b));
     memset(&req_a_to_b, 0, sizeof(req_a_to_b));
     memset(&req_b_to_a, 0, sizeof(req_b_to_a));
-    TEST_ASSERT(sm2_pki_client_export_revocation_evidence(
+    TEST_ASSERT(sm2_pki_client_export_epoch_evidence(
                     client_a, auth_now, &evidence_a)
             == SM2_PKI_SUCCESS,
         "Evidence A");
-    TEST_ASSERT(sm2_pki_client_export_revocation_evidence(
+    TEST_ASSERT(sm2_pki_client_export_epoch_evidence(
                     client_b, auth_now, &evidence_b)
             == SM2_PKI_SUCCESS,
         "Evidence B");
-    TEST_ASSERT(sm2_pki_client_export_issuance_evidence(
-                    client_a, auth_now, &issuance_a)
-            == SM2_PKI_SUCCESS,
-        "Issuance Evidence A");
-    TEST_ASSERT(sm2_pki_client_export_issuance_evidence(
-                    client_b, auth_now, &issuance_b)
-            == SM2_PKI_SUCCESS,
-        "Issuance Evidence B");
 
     const sm2_implicit_cert_t *client_a_cert = NULL;
     const sm2_implicit_cert_t *client_b_cert = NULL;
@@ -592,9 +578,8 @@ static void test_phase13_secure_pki_session_default_api()
     req_a_to_b.message = bind_a;
     req_a_to_b.message_len = bind_a_len;
     req_a_to_b.signature = &sig_a;
-    req_a_to_b.revocation_evidence = &evidence_a;
-    req_a_to_b.issuance_evidence = &issuance_a;
-    TEST_ASSERT(pki_attach_default_issuance_witness(&issuance_a, &req_a_to_b),
+    req_a_to_b.evidence_bundle = &evidence_a;
+    TEST_ASSERT(pki_attach_default_epoch_witness(&evidence_a, &req_a_to_b),
         "Attach Witness A");
 
     req_b_to_a.cert = client_b_cert;
@@ -602,9 +587,8 @@ static void test_phase13_secure_pki_session_default_api()
     req_b_to_a.message = bind_b;
     req_b_to_a.message_len = bind_b_len;
     req_b_to_a.signature = &sig_b;
-    req_b_to_a.revocation_evidence = &evidence_b;
-    req_b_to_a.issuance_evidence = &issuance_b;
-    TEST_ASSERT(pki_attach_default_issuance_witness(&issuance_b, &req_b_to_a),
+    req_b_to_a.evidence_bundle = &evidence_b;
+    TEST_ASSERT(pki_attach_default_epoch_witness(&evidence_b, &req_b_to_a),
         "Attach Witness B");
 
     uint8_t sk_a[16];
@@ -728,20 +712,15 @@ static void test_phase133_revocation_service_binding_lifecycle()
 
     const uint8_t msg[] = "P133_BINDING";
     sm2_auth_signature_t sig;
-    sm2_pki_revocation_evidence_t evidence;
-    sm2_pki_issuance_evidence_t issuance_evidence;
+    sm2_pki_evidence_bundle_t evidence;
     uint64_t auth_now = test_cert_now(&cert_res.cert);
     TEST_ASSERT(
         pki_build_signed_verify_request(client, msg, sizeof(msg) - 1, auth_now,
-            &sig, &evidence, &issuance_evidence,
-            &(sm2_pki_verify_request_t) { 0 }),
+            &sig, &evidence, &(sm2_pki_verify_request_t) { 0 }),
         "Build Evidence Before Service Cleanup");
 
     sm2_pki_service_destroy(&service);
-    TEST_ASSERT(
-        sm2_pki_client_refresh_root(client, auth_now + 1) == SM2_PKI_ERR_STATE,
-        "Refresh After Service Cleanup Reports Dead Binding");
-    TEST_ASSERT(sm2_pki_client_export_revocation_evidence(
+    TEST_ASSERT(sm2_pki_client_export_epoch_evidence(
                     client, auth_now + 1, &evidence)
             == SM2_PKI_ERR_VERIFY,
         "Bound Service Cleanup Must Fail Closed");
@@ -753,10 +732,10 @@ static void test_phase133_revocation_service_binding_lifecycle()
     TEST_PASS();
 }
 
-static void test_phase134_pki_verify_rejects_request_level_revocation_override()
+static void test_phase134_pki_verify_requires_epoch_bundle()
 {
     sm2_pki_service_ctx_t *service = NULL;
-    const uint8_t issuer[] = "P134_OVERRIDE_CA";
+    const uint8_t issuer[] = "P134_EPOCH_CA";
     uint64_t base_now = test_now_unix();
     TEST_ASSERT(sm2_pki_service_create(
                     &service, issuer, sizeof(issuer) - 1, 16, 300, base_now)
@@ -794,7 +773,7 @@ static void test_phase134_pki_verify_rejects_request_level_revocation_override()
             == SM2_PKI_SUCCESS,
         "Import Cert");
 
-    const uint8_t msg[] = "P134_OVERRIDE";
+    const uint8_t msg[] = "P134_EPOCH_REQUIRED";
     sm2_auth_signature_t sig;
     sm2_pki_verify_request_t request;
     size_t matched = 0;
@@ -822,10 +801,10 @@ static void test_phase134_pki_verify_rejects_request_level_revocation_override()
     TEST_PASS();
 }
 
-static void test_phase137_client_root_cache_import_refresh_and_rollback()
+static void test_phase137_client_epoch_cache_refresh_and_rollback()
 {
     sm2_pki_service_ctx_t *service = NULL;
-    const uint8_t issuer[] = "P137_ROOT_CA";
+    const uint8_t issuer[] = "P137_EPOCH_CA";
     uint64_t base_now = test_now_unix();
     TEST_ASSERT(sm2_pki_service_create(
                     &service, issuer, sizeof(issuer) - 1, 16, 60, base_now)
@@ -854,91 +833,66 @@ static void test_phase137_client_root_cache_import_refresh_and_rollback()
         sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
         "Get CA Pub");
 
-    sm2_pki_client_ctx_t *client = NULL;
-    TEST_ASSERT(
-        sm2_pki_client_create(&client, &ca_pub, NULL) == SM2_PKI_SUCCESS,
-        "Client Init");
-
-    sm2_rev_root_record_t root_initial;
-    memset(&root_initial, 0, sizeof(root_initial));
-    TEST_ASSERT(sm2_pki_service_get_root_record(service, &root_initial)
+    sm2_pki_client_ctx_t *signer = NULL;
+    sm2_pki_client_ctx_t *verifier = NULL;
+    TEST_ASSERT(sm2_pki_client_create(&signer, &ca_pub, service)
             == SM2_PKI_SUCCESS,
-        "Get Initial Root");
-    TEST_ASSERT(root_initial.authority_id_len == sizeof(issuer) - 1,
-        "Initial Root Authority Len");
+        "Signer Init");
+    TEST_ASSERT(sm2_pki_client_create(&verifier, &ca_pub, NULL)
+            == SM2_PKI_SUCCESS,
+        "Verifier Init");
     TEST_ASSERT(
-        memcmp(root_initial.authority_id, issuer, sizeof(issuer) - 1) == 0,
-        "Initial Root Authority Match");
-    sm2_rev_root_record_t root_tampered = root_initial;
-    root_tampered.authority_id[0] ^= 0x01;
-    TEST_ASSERT(sm2_pki_client_import_root_record(
-                    client, &root_tampered, root_initial.valid_from)
+        sm2_pki_client_import_cert(signer, &cert_res, &temp_priv, &ca_pub)
+            == SM2_PKI_SUCCESS,
+        "Signer Import");
+
+    const uint8_t msg[] = "P137_EPOCH_CACHE";
+    uint64_t auth_now = test_cert_now(&cert_res.cert);
+    sm2_auth_signature_t sig_initial;
+    sm2_auth_signature_t sig_refreshed;
+    sm2_pki_evidence_bundle_t evidence_initial;
+    sm2_pki_evidence_bundle_t evidence_refreshed;
+    sm2_pki_verify_request_t request_initial;
+    sm2_pki_verify_request_t request_refreshed;
+    TEST_ASSERT(
+        pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1, auth_now,
+            &sig_initial, &evidence_initial, &request_initial),
+        "Build Initial Request");
+
+    size_t matched = 0;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request_initial, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Verify Initial Epoch");
+
+    sm2_pki_evidence_bundle_t tampered_evidence = evidence_initial;
+    tampered_evidence.epoch_root_record.authority_id[0] ^= 0x01U;
+    sm2_pki_verify_request_t tampered_request = request_initial;
+    tampered_request.evidence_bundle = &tampered_evidence;
+    TEST_ASSERT(sm2_pki_verify(verifier, &tampered_request, auth_now, &matched)
             == SM2_PKI_ERR_VERIFY,
-        "Tampered Authority Reject");
-    TEST_ASSERT(sm2_pki_client_import_root_record(
-                    client, &root_initial, root_initial.valid_from)
-            == SM2_PKI_SUCCESS,
-        "Import Initial Root");
+        "Tampered Epoch Authority Reject");
 
-    sm2_rev_root_record_t cached_root;
-    memset(&cached_root, 0, sizeof(cached_root));
-    TEST_ASSERT(sm2_pki_client_get_cached_root_record(client, &cached_root)
+    TEST_ASSERT(sm2_pki_service_refresh_root(service, auth_now + 10)
             == SM2_PKI_SUCCESS,
-        "Get Cached Root");
-    TEST_ASSERT(sm2_pki_client_get_cached_root_record_for_authority(
-                    client, issuer, sizeof(issuer) - 1, &cached_root)
+        "Refresh Epoch Root");
+    TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
+                    auth_now + 10, &sig_refreshed, &evidence_refreshed,
+                    &request_refreshed),
+        "Build Refreshed Request");
+    TEST_ASSERT(evidence_refreshed.epoch_root_record.epoch_version
+            > evidence_initial.epoch_root_record.epoch_version,
+        "Refreshed Epoch Version Advanced");
+    TEST_ASSERT(sm2_pki_verify(verifier, &request_refreshed, auth_now + 10,
+                    &matched)
             == SM2_PKI_SUCCESS,
-        "Get Cached Root By Authority");
-    TEST_ASSERT(cached_root.root_version == root_initial.root_version,
-        "Initial Root Version Cached");
-    TEST_ASSERT(memcmp(cached_root.root_hash, root_initial.root_hash,
-                    sizeof(cached_root.root_hash))
-            == 0,
-        "Initial Root Hash Cached");
-
-    TEST_ASSERT(
-        sm2_pki_service_refresh_root(service, base_now + 10) == SM2_PKI_SUCCESS,
-        "Refresh Same Version Root");
-    sm2_rev_root_record_t root_refreshed;
-    memset(&root_refreshed, 0, sizeof(root_refreshed));
-    TEST_ASSERT(sm2_pki_service_get_root_record(service, &root_refreshed)
-            == SM2_PKI_SUCCESS,
-        "Get Refreshed Root");
-    TEST_ASSERT(root_refreshed.root_version == root_initial.root_version,
-        "Same Version Refresh");
-    TEST_ASSERT(root_refreshed.valid_until > root_initial.valid_until,
-        "Refresh Extends Validity");
-    TEST_ASSERT(sm2_pki_client_import_root_record(
-                    client, &root_refreshed, base_now + 10)
-            == SM2_PKI_SUCCESS,
-        "Import Refreshed Root");
-    TEST_ASSERT(sm2_pki_client_get_cached_root_record(client, &cached_root)
-            == SM2_PKI_SUCCESS,
-        "Get Cached Refreshed Root");
-    TEST_ASSERT(cached_root.valid_until == root_refreshed.valid_until,
-        "Cached Validity Extended");
-
-    TEST_ASSERT(sm2_pki_service_revoke(
-                    service, cert_res.cert.serial_number, base_now + 20)
-            == SM2_PKI_SUCCESS,
-        "Revoke Cert");
-    sm2_rev_root_record_t root_newer;
-    memset(&root_newer, 0, sizeof(root_newer));
-    TEST_ASSERT(sm2_pki_service_get_root_record(service, &root_newer)
-            == SM2_PKI_SUCCESS,
-        "Get Newer Root");
-    TEST_ASSERT(root_newer.root_version > root_refreshed.root_version,
-        "Newer Root Version");
-    TEST_ASSERT(
-        sm2_pki_client_import_root_record(client, &root_newer, base_now + 20)
-            == SM2_PKI_SUCCESS,
-        "Import Newer Root");
-    TEST_ASSERT(
-        sm2_pki_client_import_root_record(client, &root_initial, base_now + 30)
+        "Verify Refreshed Epoch");
+    TEST_ASSERT(sm2_pki_verify(verifier, &request_initial, auth_now + 10,
+                    &matched)
             == SM2_PKI_ERR_VERIFY,
-        "Rollback Root Reject");
+        "Rollback Epoch Reject");
 
-    sm2_pki_client_destroy(&client);
+    sm2_pki_client_destroy(&verifier);
+    sm2_pki_client_destroy(&signer);
     sm2_pki_service_destroy(&service);
     TEST_PASS();
 }
@@ -998,11 +952,10 @@ static void test_phase138_service_binding_tracks_newer_root_versions()
 
     const uint8_t msg[] = "P138_TRACK_ROOT";
     sm2_auth_signature_t sig;
-    sm2_pki_revocation_evidence_t evidence;
-    sm2_pki_issuance_evidence_t issuance_evidence;
+    sm2_pki_evidence_bundle_t evidence;
     sm2_pki_verify_request_t request;
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now, &sig, &evidence, &issuance_evidence, &request),
+                    auth_now, &sig, &evidence, &request),
         "Build Initial Evidence Request");
 
     sm2_pki_client_ctx_t *verifier = NULL;
@@ -1010,20 +963,12 @@ static void test_phase138_service_binding_tracks_newer_root_versions()
         sm2_pki_client_create(&verifier, &ca_pub, NULL) == SM2_PKI_SUCCESS,
         "Verifier Init");
 
-    sm2_rev_root_record_t cached_root;
-    memset(&cached_root, 0, sizeof(cached_root));
-    TEST_ASSERT(sm2_pki_client_get_cached_root_record(verifier, &cached_root)
-            == SM2_PKI_ERR_STATE,
-        "No Cached Root Before Verify");
-
     size_t matched = 0;
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_SUCCESS,
-        "Initial Verify Imports Root");
-    TEST_ASSERT(sm2_pki_client_get_cached_root_record(verifier, &cached_root)
-            == SM2_PKI_SUCCESS,
-        "Get Cached Root After Verify");
-    uint64_t initial_version = cached_root.root_version;
+        "Initial Verify Imports Epoch");
+    uint64_t initial_version
+        = evidence.epoch_root_record.revocation_root_version;
 
     TEST_ASSERT(sm2_pki_service_revoke(
                     service, cert_aux.cert.serial_number, auth_now + 10)
@@ -1031,17 +976,14 @@ static void test_phase138_service_binding_tracks_newer_root_versions()
         "Revoke Aux Cert");
 
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now + 20, &sig, &evidence, &issuance_evidence,
-                    &request),
+                    auth_now + 20, &sig, &evidence, &request),
         "Build Updated Evidence Request");
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now + 20, &matched)
             == SM2_PKI_SUCCESS,
-        "Verify With Updated Root");
-    TEST_ASSERT(sm2_pki_client_get_cached_root_record(verifier, &cached_root)
-            == SM2_PKI_SUCCESS,
-        "Get Updated Cached Root");
-    TEST_ASSERT(
-        cached_root.root_version > initial_version, "Cached Root Advanced");
+        "Verify With Updated Epoch");
+    TEST_ASSERT(evidence.epoch_root_record.revocation_root_version
+            > initial_version,
+        "Epoch Revocation Root Advanced");
 
     sm2_pki_client_destroy(&verifier);
     sm2_pki_client_destroy(&signer);
@@ -1049,10 +991,10 @@ static void test_phase138_service_binding_tracks_newer_root_versions()
     TEST_PASS();
 }
 
-static void test_phase140_compact_evidence_requires_matching_cached_root()
+static void test_phase140_epoch_bundle_requires_matching_checkpoint()
 {
     sm2_pki_service_ctx_t *service = NULL;
-    const uint8_t issuer[] = "P140_ROOT_CA";
+    const uint8_t issuer[] = "P140_EPOCH_CA";
     uint64_t base_now = test_now_unix();
     TEST_ASSERT(sm2_pki_service_create(
                     &service, issuer, sizeof(issuer) - 1, 32, 300, base_now)
@@ -1075,10 +1017,6 @@ static void test_phase140_compact_evidence_requires_matching_cached_root()
     sm2_private_key_t temp_aux;
     sm2_ic_cert_result_t cert_signer;
     sm2_ic_cert_result_t cert_aux;
-    memset(&req_signer, 0, sizeof(req_signer));
-    memset(&cert_signer, 0, sizeof(cert_signer));
-    memset(&cert_aux, 0, sizeof(cert_aux));
-
     TEST_ASSERT(pki_create_and_authorize_request(service, signer_id,
                     sizeof(signer_id) - 1, SM2_KU_DIGITAL_SIGNATURE,
                     &req_signer, &temp_signer),
@@ -1096,98 +1034,72 @@ static void test_phase140_compact_evidence_requires_matching_cached_root()
         "Get CA Pub");
 
     sm2_pki_client_ctx_t *signer = NULL;
-    sm2_pki_client_ctx_t *verifier_warm = NULL;
-    sm2_pki_client_ctx_t *verifier_cold = NULL;
-    TEST_ASSERT(
-        sm2_pki_client_create(&signer, &ca_pub, service) == SM2_PKI_SUCCESS,
+    sm2_pki_client_ctx_t *verifier = NULL;
+    TEST_ASSERT(sm2_pki_client_create(&signer, &ca_pub, service)
+            == SM2_PKI_SUCCESS,
         "Signer Init");
-    TEST_ASSERT(
-        sm2_pki_client_create(&verifier_warm, &ca_pub, NULL) == SM2_PKI_SUCCESS,
-        "Warm Verifier Init");
-    TEST_ASSERT(
-        sm2_pki_client_create(&verifier_cold, &ca_pub, NULL) == SM2_PKI_SUCCESS,
-        "Cold Verifier Init");
+    TEST_ASSERT(sm2_pki_client_create(&verifier, &ca_pub, NULL)
+            == SM2_PKI_SUCCESS,
+        "Verifier Init");
     TEST_ASSERT(
         sm2_pki_client_import_cert(signer, &cert_signer, &temp_signer, &ca_pub)
             == SM2_PKI_SUCCESS,
         "Signer Import");
 
-    const uint8_t msg[] = "P140_COMPACT";
+    const uint8_t msg[] = "P140_EPOCH_BUNDLE";
     uint64_t auth_now = test_cert_now(&cert_signer.cert);
-    sm2_auth_signature_t sig_full;
-    sm2_auth_signature_t sig_compact;
-    sm2_pki_revocation_evidence_t evidence_full;
-    sm2_pki_revocation_evidence_t evidence_compact;
-    sm2_pki_issuance_evidence_t issuance_full;
-    sm2_pki_issuance_evidence_t issuance_compact;
-    sm2_pki_verify_request_t request_full;
-    sm2_pki_verify_request_t request_compact;
+    sm2_auth_signature_t sig_initial;
+    sm2_auth_signature_t sig_updated;
+    sm2_pki_evidence_bundle_t evidence_initial;
+    sm2_pki_evidence_bundle_t evidence_updated;
+    sm2_pki_verify_request_t request_initial;
+    sm2_pki_verify_request_t request_updated;
     size_t matched = 0;
-    memset(&sig_full, 0, sizeof(sig_full));
-    memset(&sig_compact, 0, sizeof(sig_compact));
-    memset(&evidence_full, 0, sizeof(evidence_full));
-    memset(&evidence_compact, 0, sizeof(evidence_compact));
-    memset(&issuance_full, 0, sizeof(issuance_full));
-    memset(&issuance_compact, 0, sizeof(issuance_compact));
-    memset(&request_full, 0, sizeof(request_full));
-    memset(&request_compact, 0, sizeof(request_compact));
-
-    TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now, &sig_full, &evidence_full, &issuance_full,
-                    &request_full),
-        "Build Full Evidence");
-    TEST_ASSERT(evidence_full.mode == SM2_PKI_REV_EVIDENCE_FULL_ROOT,
-        "Full Evidence Mode");
-    TEST_ASSERT(sm2_pki_verify(verifier_warm, &request_full, auth_now, &matched)
-            == SM2_PKI_SUCCESS,
-        "Full Verify Warms Root Cache");
 
     TEST_ASSERT(
-        pki_build_signed_verify_request_compact(signer, msg, sizeof(msg) - 1,
-            auth_now, &sig_compact, &evidence_compact, &issuance_compact,
-            &request_compact),
-        "Build Compact Evidence");
-    TEST_ASSERT(evidence_compact.mode == SM2_PKI_REV_EVIDENCE_CACHED_ROOT,
-        "Compact Evidence Mode");
-    TEST_ASSERT(evidence_compact.root_record.signature_len == 0,
-        "Compact Evidence Omits Root Record");
-    TEST_ASSERT(
-        sm2_pki_verify(verifier_warm, &request_compact, auth_now, &matched)
+        pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1, auth_now,
+            &sig_initial, &evidence_initial, &request_initial),
+        "Build Initial Evidence");
+    TEST_ASSERT(sm2_pki_verify(verifier, &request_initial, auth_now, &matched)
             == SM2_PKI_SUCCESS,
-        "Warm Verifier Accepts Compact Evidence");
-    TEST_ASSERT(
-        sm2_pki_verify(verifier_cold, &request_compact, auth_now, &matched)
+        "Verify Initial Evidence");
+
+    sm2_pki_evidence_bundle_t wrong_revocation = evidence_initial;
+    wrong_revocation.revocation_proof.absence_proof.target_serial ^= 0x01U;
+    sm2_pki_verify_request_t wrong_revocation_req = request_initial;
+    wrong_revocation_req.evidence_bundle = &wrong_revocation;
+    TEST_ASSERT(sm2_pki_verify(verifier, &wrong_revocation_req, auth_now,
+                    &matched)
             == SM2_PKI_ERR_VERIFY,
-        "Cold Verifier Rejects Compact Evidence");
+        "Wrong Revocation Proof Reject");
+
+    sm2_pki_evidence_bundle_t wrong_issuance = evidence_initial;
+    wrong_issuance.issuance_proof.member_proof.cert_commitment[0] ^= 0x01U;
+    sm2_pki_verify_request_t wrong_issuance_req = request_initial;
+    wrong_issuance_req.evidence_bundle = &wrong_issuance;
+    TEST_ASSERT(sm2_pki_verify(verifier, &wrong_issuance_req, auth_now,
+                    &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Wrong Issuance Proof Reject");
 
     TEST_ASSERT(sm2_pki_service_revoke(
                     service, cert_aux.cert.serial_number, auth_now + 10)
             == SM2_PKI_SUCCESS,
-        "Advance Root Version");
-    TEST_ASSERT(
-        pki_build_signed_verify_request_compact(signer, msg, sizeof(msg) - 1,
-            auth_now + 20, &sig_compact, &evidence_compact,
-            &issuance_compact, &request_compact),
-        "Build Compact Evidence After Root Advance");
-    TEST_ASSERT(
-        sm2_pki_verify(verifier_warm, &request_compact, auth_now + 20, &matched)
-            == SM2_PKI_ERR_VERIFY,
-        "Stale Warm Cache Rejects Advanced Compact Evidence");
+        "Advance Epoch");
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now + 20, &sig_full, &evidence_full, &issuance_full,
-                    &request_full),
-        "Build Full Evidence After Root Advance");
-    TEST_ASSERT(
-        sm2_pki_verify(verifier_warm, &request_full, auth_now + 20, &matched)
+                    auth_now + 20, &sig_updated, &evidence_updated,
+                    &request_updated),
+        "Build Updated Evidence");
+    TEST_ASSERT(sm2_pki_verify(verifier, &request_updated, auth_now + 20,
+                    &matched)
             == SM2_PKI_SUCCESS,
-        "Full Evidence Refreshes Cache");
-    TEST_ASSERT(
-        sm2_pki_verify(verifier_warm, &request_compact, auth_now + 20, &matched)
-            == SM2_PKI_SUCCESS,
-        "Refreshed Cache Accepts Compact Evidence");
+        "Verify Updated Evidence");
+    TEST_ASSERT(sm2_pki_verify(verifier, &request_initial, auth_now + 20,
+                    &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Stale Epoch Reject");
 
-    sm2_pki_client_destroy(&verifier_cold);
-    sm2_pki_client_destroy(&verifier_warm);
+    sm2_pki_client_destroy(&verifier);
     sm2_pki_client_destroy(&signer);
     sm2_pki_service_destroy(&service);
     TEST_PASS();
@@ -1241,26 +1153,23 @@ static void test_phase141_issuance_transparency_required_and_threshold()
     const uint8_t msg[] = "P141_TRANSPARENCY";
     uint64_t auth_now = test_cert_now(&cert_res.cert);
     sm2_auth_signature_t sig;
-    sm2_pki_revocation_evidence_t rev_evidence;
-    sm2_pki_issuance_evidence_t issuance_evidence;
+    sm2_pki_evidence_bundle_t rev_evidence;
     sm2_pki_verify_request_t request;
     memset(&sig, 0, sizeof(sig));
     memset(&rev_evidence, 0, sizeof(rev_evidence));
-    memset(&issuance_evidence, 0, sizeof(issuance_evidence));
     memset(&request, 0, sizeof(request));
 
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
-                    auth_now, &sig, &rev_evidence, &issuance_evidence,
-                    &request),
+                    auth_now, &sig, &rev_evidence, &request),
         "Build Verify Request");
 
-    request.issuance_evidence = NULL;
     size_t matched = 0;
-    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+    sm2_pki_verify_request_t missing_bundle = request;
+    missing_bundle.evidence_bundle = NULL;
+    TEST_ASSERT(sm2_pki_verify(verifier, &missing_bundle, auth_now, &matched)
             == SM2_PKI_ERR_VERIFY,
-        "Missing Mandatory Issuance Evidence Reject");
+        "Missing Mandatory Epoch Bundle Reject");
 
-    request.issuance_evidence = &issuance_evidence;
     const sm2_pki_transparency_policy_t *default_policy
         = request.transparency_policy;
     request.transparency_policy = NULL;
@@ -1269,21 +1178,21 @@ static void test_phase141_issuance_transparency_required_and_threshold()
         "Missing Mandatory Witness Policy Reject");
     request.transparency_policy = default_policy;
 
-    sm2_pki_issuance_evidence_t no_witness = issuance_evidence;
+    sm2_pki_evidence_bundle_t no_witness = rev_evidence;
     no_witness.witness_signature_count = 0;
-    request.issuance_evidence = &no_witness;
+    request.evidence_bundle = &no_witness;
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_ERR_VERIFY,
         "Missing Mandatory Witness Signature Reject");
 
-    request.issuance_evidence = &issuance_evidence;
+    request.evidence_bundle = &rev_evidence;
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_SUCCESS,
-        "Issuance Evidence Verify");
+        "Epoch Evidence Verify");
 
-    sm2_pki_issuance_evidence_t wrong_commitment = issuance_evidence;
-    wrong_commitment.member_proof.cert_commitment[0] ^= 0x01U;
-    request.issuance_evidence = &wrong_commitment;
+    sm2_pki_evidence_bundle_t wrong_commitment = rev_evidence;
+    wrong_commitment.issuance_proof.member_proof.cert_commitment[0] ^= 0x01U;
+    request.evidence_bundle = &wrong_commitment;
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_ERR_VERIFY,
         "Wrong Issuance Commitment Reject");
@@ -1315,26 +1224,27 @@ static void test_phase141_issuance_transparency_required_and_threshold()
             == SM2_PKI_SUCCESS,
         "Set Verifier Witness Policy");
 
-    sm2_pki_issuance_evidence_t one_sig = issuance_evidence;
+    sm2_pki_evidence_bundle_t one_sig = rev_evidence;
+    memset(one_sig.witness_signatures, 0, sizeof(one_sig.witness_signatures));
     TEST_ASSERT(
-        sm2_pki_issuance_witness_sign(&one_sig.root_record, wid0,
+        sm2_pki_epoch_witness_sign(&one_sig.epoch_root_record, wid0,
             sizeof(wid0) - 1, &witness_priv[0], &one_sig.witness_signatures[0])
             == SM2_PKI_SUCCESS,
         "Witness Sign 0");
     one_sig.witness_signature_count = 1;
-    request.issuance_evidence = &one_sig;
+    request.evidence_bundle = &one_sig;
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_ERR_VERIFY,
         "One Of Two Witnesses Reject");
 
-    sm2_pki_issuance_evidence_t two_sig = one_sig;
+    sm2_pki_evidence_bundle_t two_sig = one_sig;
     TEST_ASSERT(
-        sm2_pki_issuance_witness_sign(&two_sig.root_record, wid1,
+        sm2_pki_epoch_witness_sign(&two_sig.epoch_root_record, wid1,
             sizeof(wid1) - 1, &witness_priv[1], &two_sig.witness_signatures[1])
             == SM2_PKI_SUCCESS,
         "Witness Sign 1");
     two_sig.witness_signature_count = 2;
-    request.issuance_evidence = &two_sig;
+    request.evidence_bundle = &two_sig;
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_SUCCESS,
         "Two Of Three Witnesses Accept");
@@ -1345,10 +1255,10 @@ static void test_phase141_issuance_transparency_required_and_threshold()
     TEST_PASS();
 }
 
-static void test_phase142_issuance_witness_append_only_and_quorum()
+static void test_phase142_epoch_witness_append_only_and_quorum()
 {
     sm2_pki_service_ctx_t *service = NULL;
-    const uint8_t issuer[] = "P142_CT_CA";
+    const uint8_t issuer[] = "P142_EPOCH_CA";
     const uint8_t id_a[] = "P142_A";
     const uint8_t id_b[] = "P142_B";
     const uint8_t id_c[] = "P142_C";
@@ -1395,11 +1305,11 @@ static void test_phase142_issuance_witness_append_only_and_quorum()
         sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
         "Get CA Pub");
 
-    sm2_rev_root_record_t root_ab;
+    sm2_pki_epoch_root_record_t root_ab;
     memset(&root_ab, 0, sizeof(root_ab));
-    TEST_ASSERT(sm2_pki_service_get_issuance_root_record(service, &root_ab)
+    TEST_ASSERT(sm2_pki_service_get_epoch_root_record(service, &root_ab)
             == SM2_PKI_SUCCESS,
-        "Get AB Root");
+        "Get AB Epoch Root");
     sm2_pki_issuance_commitment_t commitments[4];
     size_t commitment_count = 0;
     TEST_ASSERT(sm2_pki_service_export_issuance_commitments(service, 0,
@@ -1415,33 +1325,33 @@ static void test_phase142_issuance_witness_append_only_and_quorum()
         test_generate_sm2_keypair(&witness_priv, &witness_pub),
         "Generate Witness Key");
     const uint8_t witness_id[] = "append-witness";
-    sm2_pki_issuance_witness_state_t witness_state;
+    sm2_pki_epoch_witness_state_t witness_state;
     sm2_pki_transparency_witness_signature_t witness_sig;
     memset(&witness_sig, 0, sizeof(witness_sig));
-    sm2_pki_issuance_witness_state_init(&witness_state);
-    TEST_ASSERT(sm2_pki_issuance_witness_sign_append_only(&witness_state,
+    sm2_pki_epoch_witness_state_init(&witness_state);
+    TEST_ASSERT(sm2_pki_epoch_witness_sign_append_only(&witness_state,
                     &root_ab, &ca_pub, base_now, commitments, commitment_count,
                     witness_id, sizeof(witness_id) - 1, &witness_priv,
                     &witness_sig)
             == SM2_PKI_SUCCESS,
         "Initial Append-Only Witness Sign");
 
-    sm2_rev_root_record_t rollback_root = root_ab;
-    rollback_root.root_version--;
-    TEST_ASSERT(sm2_pki_issuance_witness_sign_append_only(&witness_state,
+    sm2_pki_epoch_root_record_t rollback_root = root_ab;
+    rollback_root.epoch_version--;
+    TEST_ASSERT(sm2_pki_epoch_witness_sign_append_only(&witness_state,
                     &rollback_root, &ca_pub, base_now, NULL, 0, witness_id,
                     sizeof(witness_id) - 1, &witness_priv, &witness_sig)
             == SM2_PKI_ERR_VERIFY,
-        "Reject Rollback Root");
+        "Reject Rollback Epoch");
 
     TEST_ASSERT(pki_issue_identity_cert(service, id_c, sizeof(id_c) - 1,
                     SM2_KU_DIGITAL_SIGNATURE, &cert_c, &temp_c),
         "Issue C");
-    sm2_rev_root_record_t root_abc;
+    sm2_pki_epoch_root_record_t root_abc;
     memset(&root_abc, 0, sizeof(root_abc));
-    TEST_ASSERT(sm2_pki_service_get_issuance_root_record(service, &root_abc)
+    TEST_ASSERT(sm2_pki_service_get_epoch_root_record(service, &root_abc)
             == SM2_PKI_SUCCESS,
-        "Get ABC Root");
+        "Get ABC Epoch Root");
     size_t append_count = 0;
     TEST_ASSERT(sm2_pki_service_export_issuance_commitments(service,
                     commitment_count, commitments, 4, &append_count)
@@ -1450,58 +1360,66 @@ static void test_phase142_issuance_witness_append_only_and_quorum()
     TEST_ASSERT(append_count == 1, "Append Commitment Count");
 
     commitments[0][0] ^= 0x01U;
-    TEST_ASSERT(sm2_pki_issuance_witness_sign_append_only(&witness_state,
+    TEST_ASSERT(sm2_pki_epoch_witness_sign_append_only(&witness_state,
                     &root_abc, &ca_pub, base_now, commitments, append_count,
                     witness_id, sizeof(witness_id) - 1, &witness_priv,
                     &witness_sig)
             == SM2_PKI_ERR_VERIFY,
         "Reject Tampered Append Batch");
     commitments[0][0] ^= 0x01U;
-    TEST_ASSERT(sm2_pki_issuance_witness_sign_append_only(&witness_state,
+    TEST_ASSERT(sm2_pki_epoch_witness_sign_append_only(&witness_state,
                     &root_abc, &ca_pub, base_now, commitments, append_count,
                     witness_id, sizeof(witness_id) - 1, &witness_priv,
                     &witness_sig)
             == SM2_PKI_SUCCESS,
         "Accept Append Batch");
 
-    sm2_pki_issuance_root_vote_t votes[3];
+    uint8_t digest_ab[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
+    uint8_t digest_abc[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
+    TEST_ASSERT(sm2_pki_epoch_root_digest(&root_ab, digest_ab)
+            == SM2_IC_SUCCESS,
+        "Digest AB Epoch");
+    TEST_ASSERT(sm2_pki_epoch_root_digest(&root_abc, digest_abc)
+            == SM2_IC_SUCCESS,
+        "Digest ABC Epoch");
+
+    sm2_pki_epoch_root_vote_t votes[3];
     memset(votes, 0, sizeof(votes));
     memcpy(votes[0].node_id, "ea", 2);
     votes[0].node_id_len = 2;
-    votes[0].root_version = root_abc.root_version;
-    memcpy(votes[0].root_hash, root_abc.root_hash, sizeof(votes[0].root_hash));
+    votes[0].epoch_version = root_abc.epoch_version;
+    memcpy(votes[0].epoch_digest, digest_abc, sizeof(votes[0].epoch_digest));
     votes[0].proof_valid = true;
     memcpy(votes[1].node_id, "eb", 2);
     votes[1].node_id_len = 2;
-    votes[1].root_version = root_abc.root_version;
-    memcpy(votes[1].root_hash, root_abc.root_hash, sizeof(votes[1].root_hash));
+    votes[1].epoch_version = root_abc.epoch_version;
+    memcpy(votes[1].epoch_digest, digest_abc, sizeof(votes[1].epoch_digest));
     votes[1].proof_valid = true;
     memcpy(votes[2].node_id, "ec", 2);
     votes[2].node_id_len = 2;
-    votes[2].root_version = root_abc.root_version;
-    memcpy(votes[2].root_hash, root_abc.root_hash, sizeof(votes[2].root_hash));
-    votes[2].root_hash[0] ^= 0x80U;
+    votes[2].epoch_version = root_abc.epoch_version;
+    memcpy(votes[2].epoch_digest, digest_abc, sizeof(votes[2].epoch_digest));
+    votes[2].epoch_digest[0] ^= 0x80U;
     votes[2].proof_valid = true;
 
-    sm2_pki_issuance_quorum_result_t quorum;
-    TEST_ASSERT(sm2_pki_issuance_quorum_check(votes, 3, 2, &quorum)
+    sm2_pki_epoch_quorum_result_t quorum;
+    TEST_ASSERT(sm2_pki_epoch_quorum_check(votes, 3, 2, &quorum)
             == SM2_PKI_ERR_VERIFY,
         "Quorum Detects Fork");
     TEST_ASSERT(quorum.fork_detected, "Fork Flag Set");
 
-    votes[2].root_version = root_ab.root_version;
-    memcpy(votes[2].root_hash, root_ab.root_hash, sizeof(votes[2].root_hash));
-    TEST_ASSERT(sm2_pki_issuance_quorum_check(votes, 3, 2, &quorum)
+    votes[2].epoch_version = root_ab.epoch_version;
+    memcpy(votes[2].epoch_digest, digest_ab, sizeof(votes[2].epoch_digest));
+    TEST_ASSERT(sm2_pki_epoch_quorum_check(votes, 3, 2, &quorum)
             == SM2_PKI_SUCCESS,
-        "Quorum Accepts Matching Latest Root");
-    TEST_ASSERT(quorum.quorum_met, "Issuance Quorum Met");
+        "Quorum Accepts Matching Latest Epoch");
+    TEST_ASSERT(quorum.quorum_met, "Epoch Quorum Met");
     TEST_ASSERT(quorum.stale_vote_count == 1, "Stale Vote Count");
 
-    sm2_pki_issuance_witness_state_cleanup(&witness_state);
+    sm2_pki_epoch_witness_state_cleanup(&witness_state);
     sm2_pki_service_destroy(&service);
     TEST_PASS();
 }
-
 static void test_phase143_epoch_bundle_binds_roots_and_witnesses()
 {
     sm2_pki_service_ctx_t *service = NULL;
@@ -1562,11 +1480,9 @@ static void test_phase143_epoch_bundle_binds_roots_and_witnesses()
     memset(&sig, 0, sizeof(sig));
     memset(&bundle, 0, sizeof(bundle));
     memset(&request, 0, sizeof(request));
-    TEST_ASSERT(pki_build_signed_epoch_verify_request(signer, msg,
-                    sizeof(msg) - 1, auth_now, &sig, &bundle, &request),
+    TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
+                    auth_now, &sig, &bundle, &request),
         "Build Epoch Verify Request");
-    TEST_ASSERT(request.revocation_evidence == NULL, "No Legacy Rev Evidence");
-    TEST_ASSERT(request.issuance_evidence == NULL, "No Legacy CT Evidence");
 
     size_t matched = 0;
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
@@ -1581,14 +1497,14 @@ static void test_phase143_epoch_bundle_binds_roots_and_witnesses()
         "Epoch Missing Witness Reject");
 
     sm2_pki_evidence_bundle_t wrong_rev_hint = bundle;
-    wrong_rev_hint.revocation_evidence.cached_root_hint.root_hash[0] ^= 0x01U;
+    wrong_rev_hint.revocation_proof.absence_proof.target_serial ^= 0x01U;
     request.evidence_bundle = &wrong_rev_hint;
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_ERR_VERIFY,
         "Epoch Revocation Root Binding Reject");
 
     sm2_pki_evidence_bundle_t wrong_issuance = bundle;
-    wrong_issuance.issuance_evidence.member_proof.cert_commitment[0] ^= 0x01U;
+    wrong_issuance.issuance_proof.member_proof.cert_commitment[0] ^= 0x01U;
     request.evidence_bundle = &wrong_issuance;
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_ERR_VERIFY,
@@ -1602,10 +1518,10 @@ static void test_phase143_epoch_bundle_binds_roots_and_witnesses()
         test_generate_sm2_keypair(&witness_priv, &witness_pub),
         "Generate Epoch Witness Key");
     const uint8_t witness_id[] = "epoch-append-witness";
-    sm2_pki_issuance_witness_state_t witness_state;
+    sm2_pki_epoch_witness_state_t witness_state;
     sm2_pki_transparency_witness_signature_t witness_sig;
     memset(&witness_sig, 0, sizeof(witness_sig));
-    sm2_pki_issuance_witness_state_init(&witness_state);
+    sm2_pki_epoch_witness_state_init(&witness_state);
 
     sm2_pki_epoch_root_record_t epoch_root;
     memset(&epoch_root, 0, sizeof(epoch_root));
@@ -1670,7 +1586,7 @@ static void test_phase143_epoch_bundle_binds_roots_and_witnesses()
             == SM2_PKI_SUCCESS,
         "Epoch Witness Accepts Rev-Only Advance");
 
-    sm2_pki_issuance_witness_state_cleanup(&witness_state);
+    sm2_pki_epoch_witness_state_cleanup(&witness_state);
     sm2_pki_client_destroy(&verifier);
     sm2_pki_client_destroy(&signer);
     sm2_pki_service_destroy(&service);
@@ -1761,10 +1677,8 @@ static void test_phase139_root_versions_are_scoped_per_authority()
     sm2_pki_client_ctx_t *signer_b = NULL;
     sm2_auth_signature_t sig_a;
     sm2_auth_signature_t sig_b;
-    sm2_pki_revocation_evidence_t evidence_a;
-    sm2_pki_revocation_evidence_t evidence_b;
-    sm2_pki_issuance_evidence_t issuance_a;
-    sm2_pki_issuance_evidence_t issuance_b;
+    sm2_pki_evidence_bundle_t evidence_a;
+    sm2_pki_evidence_bundle_t evidence_b;
     sm2_pki_verify_request_t request_a;
     sm2_pki_verify_request_t request_b;
     const uint8_t msg_a[] = "P139_PIN_A";
@@ -1788,11 +1702,11 @@ static void test_phase139_root_versions_are_scoped_per_authority()
         "Signer B Import");
     TEST_ASSERT(
         pki_build_signed_verify_request(signer_a, msg_a, sizeof(msg_a) - 1,
-            auth_now_a, &sig_a, &evidence_a, &issuance_a, &request_a),
+            auth_now_a, &sig_a, &evidence_a, &request_a),
         "Build Pin A Request");
     TEST_ASSERT(
         pki_build_signed_verify_request(signer_b, msg_b, sizeof(msg_b) - 1,
-            auth_now_b, &sig_b, &evidence_b, &issuance_b, &request_b),
+            auth_now_b, &sig_b, &evidence_b, &request_b),
         "Build Pin B Request");
 
     size_t matched = 0;
@@ -1808,53 +1722,25 @@ static void test_phase139_root_versions_are_scoped_per_authority()
             == SM2_PKI_SUCCESS,
         "Revoke A");
 
-    sm2_rev_root_record_t root_a;
-    sm2_rev_root_record_t root_b;
-    memset(&root_a, 0, sizeof(root_a));
-    memset(&root_b, 0, sizeof(root_b));
+    sm2_auth_signature_t sig_a_new;
+    sm2_pki_evidence_bundle_t evidence_a_new;
+    sm2_pki_verify_request_t request_a_new;
     TEST_ASSERT(
-        sm2_pki_service_get_root_record(service_a, &root_a) == SM2_PKI_SUCCESS,
-        "Get Root A");
-    TEST_ASSERT(
-        sm2_pki_service_get_root_record(service_b, &root_b) == SM2_PKI_SUCCESS,
-        "Get Root B");
-    TEST_ASSERT(
-        root_a.root_version > root_b.root_version, "Root A Version Higher");
-
-    TEST_ASSERT(
-        sm2_pki_client_import_root_record(client, &root_a, base_now + 20)
+        pki_build_signed_verify_request(signer_a, msg_a, sizeof(msg_a) - 1,
+            base_now + 20, &sig_a_new, &evidence_a_new, &request_a_new),
+        "Build Advanced A Request");
+    TEST_ASSERT(evidence_a_new.epoch_root_record.revocation_root_version
+            > evidence_b.epoch_root_record.revocation_root_version,
+        "Authority A Version Higher Than B");
+    TEST_ASSERT(sm2_pki_verify(client, &request_a_new, base_now + 20, &matched)
             == SM2_PKI_SUCCESS,
-        "Import Root A");
-    TEST_ASSERT(
-        sm2_pki_client_import_root_record(client, &root_b, base_now + 20)
+        "Verify Advanced A");
+    TEST_ASSERT(sm2_pki_verify(client, &request_b, auth_now_b, &matched)
             == SM2_PKI_SUCCESS,
-        "Import Root B With Lower Scoped Version");
-
-    sm2_rev_root_record_t cached_a;
-    sm2_rev_root_record_t cached_b;
-    memset(&cached_a, 0, sizeof(cached_a));
-    memset(&cached_b, 0, sizeof(cached_b));
-    TEST_ASSERT(sm2_pki_client_get_cached_root_record_for_authority(
-                    client, issuer_a, sizeof(issuer_a) - 1, &cached_a)
-            == SM2_PKI_SUCCESS,
-        "Cached A");
-    TEST_ASSERT(sm2_pki_client_get_cached_root_record_for_authority(
-                    client, issuer_b, sizeof(issuer_b) - 1, &cached_b)
-            == SM2_PKI_SUCCESS,
-        "Cached B");
-    TEST_ASSERT(
-        cached_a.root_version == root_a.root_version, "Cached A Version");
-    TEST_ASSERT(
-        cached_b.root_version == root_b.root_version, "Cached B Version");
-
-    TEST_ASSERT(
-        sm2_pki_client_import_root_record(client, &root_b, base_now + 21)
-            == SM2_PKI_SUCCESS,
-        "Reimport Same Root B");
-    TEST_ASSERT(
-        sm2_pki_client_import_root_record(client, &root_a, base_now + 21)
-            == SM2_PKI_SUCCESS,
-        "Reimport Root A");
+        "Authority B Lower Version Still Accepted");
+    TEST_ASSERT(sm2_pki_verify(client, &request_a, base_now + 20, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Authority A Stale Epoch Reject");
 
     sm2_pki_client_destroy(&signer_b);
     sm2_pki_client_destroy(&signer_a);
@@ -1864,51 +1750,108 @@ static void test_phase139_root_versions_are_scoped_per_authority()
     TEST_PASS();
 }
 
-static void
-test_phase139_unpinned_multi_ca_root_import_rejects_spoofed_authority()
+static void test_phase139_multi_ca_epoch_rejects_spoofed_authority()
 {
-    const uint8_t authority_a[] = "P139_SPOOF_A";
-    uint64_t revoked[] = { 0x1234ULL, 0x5678ULL };
-    sm2_private_key_t ca_priv_a;
-    sm2_private_key_t ca_priv_b;
+    sm2_pki_service_ctx_t *service_a = NULL;
+    sm2_pki_service_ctx_t *service_b = NULL;
+    const uint8_t authority[] = "P139_SPOOF_AUTH";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(&service_a, authority,
+                    sizeof(authority) - 1, 16, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service A Init");
+    TEST_ASSERT(sm2_pki_service_create(&service_b, authority,
+                    sizeof(authority) - 1, 16, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service B Init");
+
+    const uint8_t identity_a[] = "P139_SPOOF_A";
+    const uint8_t identity_b[] = "P139_SPOOF_B";
+    TEST_ASSERT(sm2_pki_identity_register(service_a, identity_a,
+                    sizeof(identity_a) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Identity A Register");
+    TEST_ASSERT(sm2_pki_identity_register(service_b, identity_b,
+                    sizeof(identity_b) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Identity B Register");
+
+    sm2_ic_cert_result_t cert_a;
+    sm2_ic_cert_result_t cert_b;
+    sm2_private_key_t temp_a;
+    sm2_private_key_t temp_b;
+    TEST_ASSERT(pki_issue_identity_cert(service_a, identity_a,
+                    sizeof(identity_a) - 1, SM2_KU_DIGITAL_SIGNATURE,
+                    &cert_a, &temp_a),
+        "Issue A");
+    TEST_ASSERT(pki_issue_identity_cert(service_b, identity_b,
+                    sizeof(identity_b) - 1, SM2_KU_DIGITAL_SIGNATURE,
+                    &cert_b, &temp_b),
+        "Issue B");
+
     sm2_ec_point_t ca_pub_a;
     sm2_ec_point_t ca_pub_b;
-    sm2_rev_tree_t *tree = NULL;
-    sm2_rev_root_record_t spoofed_root;
+    TEST_ASSERT(sm2_pki_service_get_ca_public_key(service_a, &ca_pub_a)
+            == SM2_PKI_SUCCESS,
+        "Get CA A");
+    TEST_ASSERT(sm2_pki_service_get_ca_public_key(service_b, &ca_pub_b)
+            == SM2_PKI_SUCCESS,
+        "Get CA B");
+
     sm2_pki_client_ctx_t *client = NULL;
-    pki_merkle_sign_ctx_t sign_ctx_b;
-
-    memset(&ca_priv_a, 0, sizeof(ca_priv_a));
-    memset(&ca_priv_b, 0, sizeof(ca_priv_b));
-    memset(&ca_pub_a, 0, sizeof(ca_pub_a));
-    memset(&ca_pub_b, 0, sizeof(ca_pub_b));
-    memset(&spoofed_root, 0, sizeof(spoofed_root));
-    memset(&sign_ctx_b, 0, sizeof(sign_ctx_b));
-
-    TEST_ASSERT(test_generate_sm2_keypair(&ca_priv_a, &ca_pub_a), "Gen CA A");
-    TEST_ASSERT(test_generate_sm2_keypair(&ca_priv_b, &ca_pub_b), "Gen CA B");
-    TEST_ASSERT(sm2_rev_tree_build(
-                    &tree, revoked, sizeof(revoked) / sizeof(revoked[0]), 77)
-            == SM2_IC_SUCCESS,
-        "Build Tree");
-    sign_ctx_b.ca_priv = &ca_priv_b;
-    TEST_ASSERT(sm2_rev_root_sign_with_authority(tree, authority_a,
-                    sizeof(authority_a) - 1, 1000, 2000, pki_merkle_sign_cb,
-                    &sign_ctx_b, &spoofed_root)
-            == SM2_IC_SUCCESS,
-        "Sign Spoofed Root");
-
-    TEST_ASSERT(
-        sm2_pki_client_create(&client, &ca_pub_a, NULL) == SM2_PKI_SUCCESS,
+    sm2_pki_client_ctx_t *signer_a = NULL;
+    sm2_pki_client_ctx_t *signer_b = NULL;
+    TEST_ASSERT(sm2_pki_client_create(&client, &ca_pub_a, NULL)
+            == SM2_PKI_SUCCESS,
         "Client Init");
-    TEST_ASSERT(
-        sm2_pki_client_add_trusted_ca(client, &ca_pub_b) == SM2_PKI_SUCCESS,
+    TEST_ASSERT(sm2_pki_client_add_trusted_ca(client, &ca_pub_b)
+            == SM2_PKI_SUCCESS,
         "Add CA B");
-    TEST_ASSERT(sm2_pki_client_import_root_record(client, &spoofed_root, 1500)
-            == SM2_PKI_ERR_VERIFY,
-        "Unpinned Spoofed Authority Reject");
+    TEST_ASSERT(sm2_pki_client_create(&signer_a, &ca_pub_a, service_a)
+            == SM2_PKI_SUCCESS,
+        "Signer A Init");
+    TEST_ASSERT(sm2_pki_client_create(&signer_b, &ca_pub_b, service_b)
+            == SM2_PKI_SUCCESS,
+        "Signer B Init");
+    TEST_ASSERT(sm2_pki_client_import_cert(signer_a, &cert_a, &temp_a,
+                    &ca_pub_a)
+            == SM2_PKI_SUCCESS,
+        "Signer A Import");
+    TEST_ASSERT(sm2_pki_client_import_cert(signer_b, &cert_b, &temp_b,
+                    &ca_pub_b)
+            == SM2_PKI_SUCCESS,
+        "Signer B Import");
 
+    const uint8_t msg_a[] = "P139_SPOOF_PIN_A";
+    const uint8_t msg_b[] = "P139_SPOOF_PIN_B";
+    uint64_t auth_now = test_cert_pair_now(&cert_a.cert, &cert_b.cert);
+    sm2_auth_signature_t sig_a;
+    sm2_auth_signature_t sig_b;
+    sm2_pki_evidence_bundle_t evidence_a;
+    sm2_pki_evidence_bundle_t evidence_b;
+    sm2_pki_verify_request_t request_a;
+    sm2_pki_verify_request_t request_b;
+    TEST_ASSERT(pki_build_signed_verify_request(signer_a, msg_a,
+                    sizeof(msg_a) - 1, auth_now, &sig_a, &evidence_a,
+                    &request_a),
+        "Build A Request");
+    TEST_ASSERT(pki_build_signed_verify_request(signer_b, msg_b,
+                    sizeof(msg_b) - 1, auth_now, &sig_b, &evidence_b,
+                    &request_b),
+        "Build B Request");
+
+    size_t matched = 0;
+    TEST_ASSERT(sm2_pki_verify(client, &request_a, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Pin Authority To CA A");
+    TEST_ASSERT(sm2_pki_verify(client, &request_b, auth_now, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Same Authority From CA B Reject");
+
+    sm2_pki_client_destroy(&signer_b);
+    sm2_pki_client_destroy(&signer_a);
     sm2_pki_client_destroy(&client);
-    sm2_rev_tree_cleanup(&tree);
+    sm2_pki_service_destroy(&service_b);
+    sm2_pki_service_destroy(&service_a);
     TEST_PASS();
 }

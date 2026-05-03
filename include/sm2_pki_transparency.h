@@ -78,15 +78,6 @@ extern "C"
 
     typedef struct
     {
-        sm2_rev_root_record_t root_record;
-        sm2_pki_issuance_member_proof_t member_proof;
-        sm2_pki_transparency_witness_signature_t
-            witness_signatures[SM2_PKI_TRANSPARENCY_MAX_WITNESSES];
-        size_t witness_signature_count;
-    } sm2_pki_issuance_evidence_t;
-
-    typedef struct
-    {
         bool initialized;
         bool has_authority;
         uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
@@ -95,26 +86,26 @@ extern "C"
         uint8_t latest_epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
         uint64_t latest_revocation_root_version;
         uint8_t latest_revocation_root_hash[SM2_REV_MERKLE_HASH_LEN];
-        uint64_t latest_root_version;
-        uint8_t latest_root_hash[SM2_REV_MERKLE_HASH_LEN];
+        uint64_t latest_issuance_root_version;
+        uint8_t latest_issuance_root_hash[SM2_REV_MERKLE_HASH_LEN];
         sm2_pki_issuance_commitment_t *commitments;
         size_t commitment_count;
         size_t commitment_capacity;
-    } sm2_pki_issuance_witness_state_t;
+    } sm2_pki_epoch_witness_state_t;
 
     typedef struct
     {
         uint8_t node_id[SM2_REV_SYNC_NODE_ID_MAX_LEN];
         size_t node_id_len;
-        uint64_t root_version;
-        uint8_t root_hash[SM2_REV_SYNC_DIGEST_LEN];
+        uint64_t epoch_version;
+        uint8_t epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
         bool proof_valid;
-    } sm2_pki_issuance_root_vote_t;
+    } sm2_pki_epoch_root_vote_t;
 
     typedef struct
     {
-        uint64_t selected_root_version;
-        uint8_t selected_root_hash[SM2_REV_SYNC_DIGEST_LEN];
+        uint64_t selected_epoch_version;
+        uint8_t selected_epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
         size_t unique_node_count;
         size_t valid_vote_count;
         size_t stale_vote_count;
@@ -122,7 +113,7 @@ extern "C"
         size_t threshold;
         bool quorum_met;
         bool fork_detected;
-    } sm2_pki_issuance_quorum_result_t;
+    } sm2_pki_epoch_quorum_result_t;
 
 #ifdef __cplusplus
 }
