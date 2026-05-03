@@ -365,12 +365,11 @@ sm2_ic_error_t sm2_pki_issuance_tree_build(sm2_pki_issuance_tree_t **tree,
 
     if (commitment_count > SIZE_MAX / sizeof(*state->commitments))
         return SM2_IC_ERR_MEMORY;
-    state->commitments = (uint8_t (*)[SM2_PKI_ISSUANCE_COMMITMENT_LEN])malloc(
-        commitment_count * sizeof(*state->commitments));
+    size_t commitments_size = commitment_count * sizeof(*state->commitments);
+    state->commitments = malloc(commitments_size);
     if (!state->commitments)
         return SM2_IC_ERR_MEMORY;
-    memcpy(state->commitments, commitments,
-        commitment_count * sizeof(*state->commitments));
+    memcpy(state->commitments, commitments, commitments_size);
     state->leaf_count = commitment_count;
 
     size_t total_nodes = 0;

@@ -178,13 +178,9 @@ extern "C"
         sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
         sm2_pki_issuance_evidence_t *evidence);
 
-    /*
-     * Signs a CA-signed issuance root record as an external
-     * transparency
-     * witness. Verifiers should enforce t-of-n witness
-     * signatures through
-     * sm2_pki_client_set_transparency_policy().
- */
+    // Signs a CA-signed issuance root record as an external transparency
+    // witness. Verifiers should enforce t-of-n witness signatures through
+    // sm2_pki_client_set_transparency_policy().
     sm2_pki_error_t sm2_pki_issuance_witness_sign(
         const sm2_rev_root_record_t *root_record, const uint8_t *witness_id,
         size_t witness_id_len, const sm2_private_key_t *witness_private_key,

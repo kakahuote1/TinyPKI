@@ -424,15 +424,14 @@ static sm2_pki_error_t service_ensure_issued_capacity(
         return SM2_PKI_ERR_MEMORY;
     }
 
-    uint8_t (*new_commitments)[SM2_PKI_ISSUANCE_COMMITMENT_LEN]
-        = (uint8_t (*)[SM2_PKI_ISSUANCE_COMMITMENT_LEN])calloc(
-            new_capacity, sizeof(*new_commitments));
+    size_t commitment_size = sizeof(*state->issuance_commitments);
+    void *new_commitments = calloc(new_capacity, commitment_size);
     if (!new_commitments)
         return SM2_PKI_ERR_MEMORY;
     if (state->issuance_commitments && state->issued_count > 0)
     {
         memcpy(new_commitments, state->issuance_commitments,
-            state->issued_count * sizeof(*new_commitments));
+            state->issued_count * commitment_size);
     }
 
     free(state->issuance_commitments);
