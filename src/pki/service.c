@@ -407,6 +407,51 @@ static sm2_ic_error_t service_publish_issuance_root(
     return SM2_IC_SUCCESS;
 }
 
+static sm2_ic_error_t service_publish_epoch_root(
+    sm2_pki_service_ctx_t *ctx, uint64_t now_ts)
+{
+    sm2_pki_service_state_t *state = service_state(ctx);
+    if (!ctx || !state || !state->revocation_state_ready
+        || !state->issuance_state_ready)
+    {
+        return SM2_IC_ERR_PARAM;
+    }
+
+    uint64_t valid_from = state->rev_root_record.valid_from
+            > state->issuance_root_record.valid_from
+        ? state->rev_root_record.valid_from
+        : state->issuance_root_record.valid_from;
+    uint64_t valid_until = state->rev_root_record.valid_until
+            < state->issuance_root_record.valid_until
+        ? state->rev_root_record.valid_until
+        : state->issuance_root_record.valid_until;
+    if (now_ts > valid_from)
+        valid_from = now_ts;
+    if (valid_until < valid_from)
+        return SM2_IC_ERR_VERIFY;
+
+    uint64_t next_epoch_version
+        = state->epoch_state_ready ? state->epoch_version + 1U : 1U;
+    if (next_epoch_version == 0)
+        return SM2_IC_ERR_VERIFY;
+
+    sm2_pki_epoch_root_record_t epoch_root;
+    memset(&epoch_root, 0, sizeof(epoch_root));
+    sm2_ic_error_t ret = sm2_pki_epoch_root_sign(state->issuer_id,
+        state->issuer_id_len, next_epoch_version,
+        state->rev_root_record.root_version, state->rev_root_record.root_hash,
+        state->issuance_root_record.root_version,
+        state->issuance_root_record.root_hash, valid_from, valid_until,
+        service_merkle_sign_cb, ctx, &epoch_root);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    state->epoch_root_record = epoch_root;
+    state->epoch_version = next_epoch_version;
+    state->epoch_state_ready = true;
+    return SM2_IC_SUCCESS;
+}
+
 static sm2_pki_error_t service_ensure_issued_capacity(
     sm2_pki_service_state_t *state)
 {
@@ -624,6 +669,13 @@ sm2_pki_error_t sm2_pki_service_create(sm2_pki_service_ctx_t **ctx,
         return sm2_pki_error_from_ic(ic_ret);
     }
 
+    ic_ret = service_publish_epoch_root(state, now_ts);
+    if (ic_ret != SM2_IC_SUCCESS)
+    {
+        sm2_pki_service_destroy(&state);
+        return sm2_pki_error_from_ic(ic_ret);
+    }
+
     ic_ret = sm2_rev_set_lookup(state->rev_ctx, service_merkle_query, state);
     if (ic_ret != SM2_IC_SUCCESS)
     {
@@ -692,6 +744,19 @@ sm2_pki_error_t sm2_pki_service_get_issuance_root_record(
         return SM2_PKI_ERR_PARAM;
     }
     *root_record = state->issuance_root_record;
+    return SM2_PKI_SUCCESS;
+}
+
+sm2_pki_error_t sm2_pki_service_get_epoch_root_record(
+    const sm2_pki_service_ctx_t *ctx, sm2_pki_epoch_root_record_t *root_record)
+{
+    const sm2_pki_service_state_t *state = service_state_const(ctx);
+    if (!ctx || !root_record || !ctx->initialized || !state
+        || !state->epoch_state_ready)
+    {
+        return SM2_PKI_ERR_PARAM;
+    }
+    *root_record = state->epoch_root_record;
     return SM2_PKI_SUCCESS;
 }
 
@@ -809,6 +874,9 @@ sm2_pki_error_t sm2_pki_service_refresh_root(
     if (ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ret);
     ret = service_publish_issuance_root(ctx, now_ts, false);
+    if (ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ret);
+    ret = service_publish_epoch_root(ctx, now_ts);
     return sm2_pki_error_from_ic(ret);
 }
 
@@ -909,6 +977,9 @@ sm2_pki_error_t sm2_pki_cert_issue(sm2_pki_service_ctx_t *ctx,
         state->issued_count--;
         return sm2_pki_error_from_ic(ret);
     }
+    ret = service_publish_epoch_root(ctx, now_ts);
+    if (ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ret);
 
     memset(cert_entry, 0, sizeof(*cert_entry));
     cert_entry->used = true;
@@ -961,6 +1032,9 @@ sm2_pki_error_t sm2_pki_service_revoke(
 
     sm2_pki_rev_snapshot_release(&rollback);
     entry->revoked = true;
+    ret = service_publish_epoch_root(ctx, now_ts);
+    if (ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ret);
     return SM2_PKI_SUCCESS;
 }
 

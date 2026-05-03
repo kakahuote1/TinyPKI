@@ -28,6 +28,9 @@ TinyPKI 是一个面向 IoT 资源受限、弱网与边缘节点场景的轻量 
 * 🔎 **强制发证透明与边缘见证门限**
 
   高层 `sm2_pki_verify()` 默认要求每个对端同时携带 issuance transparency evidence。CA 侧维护按签发顺序追加的 32-byte 证书承诺 Merkle log，验证端检查成员证明、CA 签名 issuance root，并可通过客户端级 `t-of-n` witness policy 要求多个边缘节点对 root 见证签名。
+* 📌 **统一 PKI epoch 证据包**
+
+  新增 CA 签名的 `epoch root`，将当前吊销 Merkle root 与发证透明 root 绑定成一个检查点；验证端可使用 `sm2_pki_evidence_bundle_t` 一次性验证非吊销证明、发证成员证明和 `t-of-n` witness 签名，witness 签名前会检查 issuance log 的 append-only 演进。
 * 🛡️ **面向断网与多节点同步的撤销状态维护**
 
   在边缘与弱连接场景中，撤销状态往往需要跨节点同步而不是依赖单点在线查询。本项目提供 delta/heartbeat、重定向候选、quorum/BFT 检查以及 epoch/cached proof 相关能力，用于在断网、时钟漂移和部分节点异常时维持撤销状态的一致性与可用性。
@@ -83,7 +86,7 @@ cmake --build build --target sm2_test_merkle_flow -j 4
 
 ## 🧪 测试验证 (Testing)
 
-当前仓库测试主链路由 `ctest` 与 `test_all` 两个入口组成。按当前基线，`ctest` 拆分为 6 个 suite，`test_all` 聚合执行 87 个用例。
+当前仓库测试主链路由 `ctest` 与 `test_all` 两个入口组成。按当前基线，`ctest` 拆分为 6 个 suite，`test_all` 聚合执行 88 个用例。
 
 **运行与 CI 相同的格式检查（固定 clang-format 18）：**
 ```bash
@@ -160,7 +163,7 @@ cmake --build build --target sm2_bench_capability_suite -j 4
 
 * `include/sm2_implicit_cert.h`: ECQV 请求生成、CA 签发、证书验证与终端侧密钥重构
 * `include/sm2_revocation.h`: Merkle 根记录、member/absence proof、multiproof、epoch 缓存与撤销同步/BFT 辅助能力
-* `include/sm2_pki_transparency.h`: 发证透明 proof、witness 签名与 `t-of-n` 见证策略类型
+* `include/sm2_pki_transparency.h`: 发证透明 proof、统一 epoch root、witness 签名与 `t-of-n` 见证策略类型
 * `include/sm2_auth.h`: 认证请求校验、revocation policy、握手绑定、双向握手与 AEAD 会话保护
 * `include/sm2_crypto.h`: 底层签名、验签、随机数、哈希、AEAD 以及统一 PKI 错误映射
 * `include/sm2_pki_service.h` / `sm2_pki_client.h`: 面向内存态 CA/RA 服务端与设备侧客户端的高层流程 API（Opaque Handle 隔离）
@@ -175,10 +178,10 @@ cmake --build build --target sm2_bench_capability_suite -j 4
 - **ECQV Implicit Certificate Flows** covering request generation, CA issuance, endpoint key reconstruction, and certificate verification with substantially smaller payloads than conventional X.509.
 - **Measured Footprint Snapshot**: the current in-repo benchmark reports a `79-byte` ECQV implicit certificate versus a `691-byte` X.509 DER baseline. With mandatory issuance transparency evidence included, the full authentication bundle is `4140 bytes` and the compact-root bundle is `4060 bytes`.
 - **CA-Signed Merkle Revocation Roots and Carried Proofs** supporting exact offline non-revocation checks via member/absence proofs and cached root records.
-- **Mandatory Issuance Transparency** using 32-byte certificate commitments, CA-signed issuance roots, and client-level `t-of-n` edge witness policies.
+- **Mandatory Issuance Transparency and Unified Epoch Evidence** using 32-byte certificate commitments, a CA-signed epoch root that binds issuance and revocation roots, and client-level `t-of-n` edge witness policies.
 - **Revocation State Sync Tooling** including delta/heartbeat refresh, redirect hints, quorum/BFT helpers, multiproof compression, and epoch/cached proof support.
 - **Mutual Authentication and Secure Sessions** spanning static or ephemeral key agreement, canonical handshake binding, key-usage enforcement, and SM4-GCM/CCM AEAD protection.
-- **Misuse-Resistant High-Level APIs** built around opaque handles, secure defaults, unified error mapping, and a current automated test baseline of 87 cases across `ctest` and `test_all`.
+- **Misuse-Resistant High-Level APIs** built around opaque handles, secure defaults, unified error mapping, and a current automated test baseline of 88 cases across `ctest` and `test_all`.
 
 ## 📄 开源许可证 (License)
 

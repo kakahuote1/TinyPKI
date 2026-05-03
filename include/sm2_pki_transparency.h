@@ -23,9 +23,25 @@ extern "C"
 #define SM2_PKI_TRANSPARENCY_WITNESS_ID_MAX_LEN 32
 #define SM2_PKI_ISSUANCE_COMMITMENT_LEN SM2_REV_MERKLE_HASH_LEN
 #define SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH SM2_REV_MERKLE_MAX_DEPTH
+#define SM2_PKI_EPOCH_ROOT_DIGEST_LEN SM2_REV_MERKLE_HASH_LEN
 
     typedef uint8_t
         sm2_pki_issuance_commitment_t[SM2_PKI_ISSUANCE_COMMITMENT_LEN];
+
+    typedef struct
+    {
+        uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
+        size_t authority_id_len;
+        uint64_t epoch_version;
+        uint64_t revocation_root_version;
+        uint8_t revocation_root_hash[SM2_REV_MERKLE_HASH_LEN];
+        uint64_t issuance_root_version;
+        uint8_t issuance_root_hash[SM2_REV_MERKLE_HASH_LEN];
+        uint64_t valid_from;
+        uint64_t valid_until;
+        uint8_t signature[SM2_REV_SYNC_MAX_SIG_LEN];
+        size_t signature_len;
+    } sm2_pki_epoch_root_record_t;
 
     typedef struct
     {
@@ -75,6 +91,10 @@ extern "C"
         bool has_authority;
         uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
         size_t authority_id_len;
+        uint64_t latest_epoch_version;
+        uint8_t latest_epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
+        uint64_t latest_revocation_root_version;
+        uint8_t latest_revocation_root_hash[SM2_REV_MERKLE_HASH_LEN];
         uint64_t latest_root_version;
         uint8_t latest_root_hash[SM2_REV_MERKLE_HASH_LEN];
         sm2_pki_issuance_commitment_t *commitments;

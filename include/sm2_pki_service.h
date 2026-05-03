@@ -62,6 +62,14 @@ extern "C"
         const sm2_pki_service_ctx_t *ctx, sm2_rev_root_record_t *root_record);
 
     /*
+     * Returns the CA-signed epoch root that binds the current revocation root
+     * and issuance transparency root into one verifier checkpoint.
+     */
+    sm2_pki_error_t sm2_pki_service_get_epoch_root_record(
+        const sm2_pki_service_ctx_t *ctx,
+        sm2_pki_epoch_root_record_t *root_record);
+
+    /*
      * Preferred publication/export APIs for revocation artifacts. These keep
      * the service-side Merkle tree internal while exposing signed outputs.
      */

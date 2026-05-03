@@ -50,11 +50,22 @@ extern "C"
 
     typedef struct
     {
+        sm2_pki_epoch_root_record_t epoch_root_record;
+        sm2_pki_revocation_evidence_t revocation_evidence;
+        sm2_pki_issuance_evidence_t issuance_evidence;
+        sm2_pki_transparency_witness_signature_t
+            witness_signatures[SM2_PKI_TRANSPARENCY_MAX_WITNESSES];
+        size_t witness_signature_count;
+    } sm2_pki_evidence_bundle_t;
+
+    typedef struct
+    {
         const sm2_implicit_cert_t *cert;
         const sm2_ec_point_t *public_key;
         const uint8_t *message;
         size_t message_len;
         const sm2_auth_signature_t *signature;
+        const sm2_pki_evidence_bundle_t *evidence_bundle;
         const sm2_pki_revocation_evidence_t *revocation_evidence;
         const sm2_pki_issuance_evidence_t *issuance_evidence;
         /* Kept for source compatibility. Issuance transparency is mandatory. */
@@ -178,6 +189,17 @@ extern "C"
         sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
         sm2_pki_issuance_evidence_t *evidence);
 
+    /*
+     * Exports the final-form evidence bundle: a single CA-signed epoch
+     * root
+     * binds the revocation and issuance roots, while witnesses sign
+     * that epoch
+     * root instead of signing each subroot separately.
+ */
+    sm2_pki_error_t sm2_pki_client_export_epoch_evidence(
+        sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
+        sm2_pki_evidence_bundle_t *evidence);
+
     // Signs a CA-signed issuance root record as an external transparency
     // witness. Verifiers should enforce t-of-n witness signatures through
     // sm2_pki_client_set_transparency_policy().
@@ -195,6 +217,21 @@ extern "C"
     sm2_pki_error_t sm2_pki_issuance_witness_sign_append_only(
         sm2_pki_issuance_witness_state_t *state,
         const sm2_rev_root_record_t *root_record,
+        const sm2_ec_point_t *ca_public_key, uint64_t now_ts,
+        const sm2_pki_issuance_commitment_t *new_commitments,
+        size_t new_commitment_count, const uint8_t *witness_id,
+        size_t witness_id_len, const sm2_private_key_t *witness_private_key,
+        sm2_pki_transparency_witness_signature_t *signature);
+
+    sm2_pki_error_t sm2_pki_epoch_witness_sign(
+        const sm2_pki_epoch_root_record_t *root_record,
+        const uint8_t *witness_id, size_t witness_id_len,
+        const sm2_private_key_t *witness_private_key,
+        sm2_pki_transparency_witness_signature_t *signature);
+
+    sm2_pki_error_t sm2_pki_epoch_witness_sign_append_only(
+        sm2_pki_issuance_witness_state_t *state,
+        const sm2_pki_epoch_root_record_t *root_record,
         const sm2_ec_point_t *ca_public_key, uint64_t now_ts,
         const sm2_pki_issuance_commitment_t *new_commitments,
         size_t new_commitment_count, const uint8_t *witness_id,

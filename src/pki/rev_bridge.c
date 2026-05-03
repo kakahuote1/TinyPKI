@@ -184,6 +184,195 @@ sm2_ic_error_t sm2_pki_issuance_root_verify(
     return ret == SM2_IC_SUCCESS ? SM2_IC_SUCCESS : SM2_IC_ERR_VERIFY;
 }
 
+static sm2_ic_error_t pki_epoch_serialize_root_for_auth(
+    const sm2_pki_epoch_root_record_t *root_record, uint8_t *output,
+    size_t output_cap, size_t *output_len)
+{
+    static const uint8_t tag[] = "SM2PKI_EPOCH_ROOT_V1";
+    size_t need = (sizeof(tag) - 1U) + 8U + SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN
+        + 8U + 8U + SM2_REV_MERKLE_HASH_LEN + 8U + SM2_REV_MERKLE_HASH_LEN + 8U
+        + 8U;
+
+    if (!root_record || !output || !output_len)
+        return SM2_IC_ERR_PARAM;
+    if (root_record->authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
+        return SM2_IC_ERR_PARAM;
+    if (output_cap < need)
+        return SM2_IC_ERR_MEMORY;
+
+    size_t off = 0;
+    memcpy(output + off, tag, sizeof(tag) - 1U);
+    off += sizeof(tag) - 1U;
+
+    pki_issuance_u64_to_be(
+        (uint64_t)root_record->authority_id_len, output + off);
+    off += 8U;
+    memcpy(
+        output + off, root_record->authority_id, root_record->authority_id_len);
+    off += root_record->authority_id_len;
+
+    pki_issuance_u64_to_be(root_record->epoch_version, output + off);
+    off += 8U;
+
+    pki_issuance_u64_to_be(root_record->revocation_root_version, output + off);
+    off += 8U;
+    memcpy(output + off, root_record->revocation_root_hash,
+        SM2_REV_MERKLE_HASH_LEN);
+    off += SM2_REV_MERKLE_HASH_LEN;
+
+    pki_issuance_u64_to_be(root_record->issuance_root_version, output + off);
+    off += 8U;
+    memcpy(
+        output + off, root_record->issuance_root_hash, SM2_REV_MERKLE_HASH_LEN);
+    off += SM2_REV_MERKLE_HASH_LEN;
+
+    pki_issuance_u64_to_be(root_record->valid_from, output + off);
+    off += 8U;
+
+    pki_issuance_u64_to_be(root_record->valid_until, output + off);
+    off += 8U;
+
+    *output_len = off;
+    return SM2_IC_SUCCESS;
+}
+
+sm2_ic_error_t sm2_pki_epoch_root_sign(const uint8_t *authority_id,
+    size_t authority_id_len, uint64_t epoch_version,
+    uint64_t revocation_root_version,
+    const uint8_t revocation_root_hash[SM2_REV_MERKLE_HASH_LEN],
+    uint64_t issuance_root_version,
+    const uint8_t issuance_root_hash[SM2_REV_MERKLE_HASH_LEN],
+    uint64_t valid_from, uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn,
+    void *sign_user_ctx, sm2_pki_epoch_root_record_t *root_record)
+{
+    if (!authority_id || authority_id_len == 0
+        || authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN
+        || !revocation_root_hash || !issuance_root_hash || !sign_fn
+        || !root_record)
+    {
+        return SM2_IC_ERR_PARAM;
+    }
+    if (epoch_version == 0 || valid_until < valid_from)
+        return SM2_IC_ERR_PARAM;
+
+    memset(root_record, 0, sizeof(*root_record));
+    memcpy(root_record->authority_id, authority_id, authority_id_len);
+    root_record->authority_id_len = authority_id_len;
+    root_record->epoch_version = epoch_version;
+    root_record->revocation_root_version = revocation_root_version;
+    memcpy(root_record->revocation_root_hash, revocation_root_hash,
+        SM2_REV_MERKLE_HASH_LEN);
+    root_record->issuance_root_version = issuance_root_version;
+    memcpy(root_record->issuance_root_hash, issuance_root_hash,
+        SM2_REV_MERKLE_HASH_LEN);
+    root_record->valid_from = valid_from;
+    root_record->valid_until = valid_until;
+
+    uint8_t auth_buf[256];
+    size_t auth_len = 0;
+    sm2_ic_error_t ret = pki_epoch_serialize_root_for_auth(
+        root_record, auth_buf, sizeof(auth_buf), &auth_len);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    size_t sig_len = sizeof(root_record->signature);
+    ret = sign_fn(
+        sign_user_ctx, auth_buf, auth_len, root_record->signature, &sig_len);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+    if (sig_len == 0 || sig_len > sizeof(root_record->signature))
+        return SM2_IC_ERR_VERIFY;
+    root_record->signature_len = sig_len;
+    return SM2_IC_SUCCESS;
+}
+
+sm2_ic_error_t sm2_pki_epoch_root_verify(
+    const sm2_pki_epoch_root_record_t *root_record, uint64_t now_ts,
+    sm2_rev_sync_verify_fn verify_fn, void *verify_user_ctx)
+{
+    if (!root_record || !verify_fn)
+        return SM2_IC_ERR_PARAM;
+    if (root_record->authority_id_len == 0
+        || root_record->authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
+    {
+        return SM2_IC_ERR_VERIFY;
+    }
+    if (root_record->epoch_version == 0
+        || root_record->valid_until < root_record->valid_from
+        || now_ts < root_record->valid_from || now_ts > root_record->valid_until
+        || root_record->signature_len == 0
+        || root_record->signature_len > sizeof(root_record->signature))
+    {
+        return SM2_IC_ERR_VERIFY;
+    }
+
+    uint8_t auth_buf[256];
+    size_t auth_len = 0;
+    sm2_ic_error_t ret = pki_epoch_serialize_root_for_auth(
+        root_record, auth_buf, sizeof(auth_buf), &auth_len);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    ret = verify_fn(verify_user_ctx, auth_buf, auth_len, root_record->signature,
+        root_record->signature_len);
+    return ret == SM2_IC_SUCCESS ? SM2_IC_SUCCESS : SM2_IC_ERR_VERIFY;
+}
+
+sm2_ic_error_t sm2_pki_epoch_root_digest(
+    const sm2_pki_epoch_root_record_t *root_record,
+    uint8_t digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN])
+{
+    uint8_t auth_buf[256];
+    size_t auth_len = 0;
+    if (!root_record || !digest)
+        return SM2_IC_ERR_PARAM;
+    sm2_ic_error_t ret = pki_epoch_serialize_root_for_auth(
+        root_record, auth_buf, sizeof(auth_buf), &auth_len);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+    return sm2_ic_sm3_hash(auth_buf, auth_len, digest);
+}
+
+sm2_ic_error_t sm2_pki_epoch_root_encode_witness_payload(
+    const sm2_pki_epoch_root_record_t *root_record, uint8_t *output,
+    size_t output_cap, size_t *output_len)
+{
+    static const uint8_t tag[] = "SM2PKI_EPOCH_WITNESS_V1";
+    uint8_t auth_buf[256];
+    size_t auth_len = 0;
+    if (!root_record || !output || !output_len)
+        return SM2_IC_ERR_PARAM;
+    if (root_record->signature_len == 0
+        || root_record->signature_len > sizeof(root_record->signature))
+    {
+        return SM2_IC_ERR_VERIFY;
+    }
+
+    sm2_ic_error_t ret = pki_epoch_serialize_root_for_auth(
+        root_record, auth_buf, sizeof(auth_buf), &auth_len);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    size_t need
+        = (sizeof(tag) - 1U) + 8U + auth_len + 8U + root_record->signature_len;
+    if (output_cap < need)
+        return SM2_IC_ERR_MEMORY;
+
+    size_t off = 0;
+    memcpy(output + off, tag, sizeof(tag) - 1U);
+    off += sizeof(tag) - 1U;
+    pki_issuance_u64_to_be((uint64_t)auth_len, output + off);
+    off += 8U;
+    memcpy(output + off, auth_buf, auth_len);
+    off += auth_len;
+    pki_issuance_u64_to_be((uint64_t)root_record->signature_len, output + off);
+    off += 8U;
+    memcpy(output + off, root_record->signature, root_record->signature_len);
+    off += root_record->signature_len;
+    *output_len = off;
+    return SM2_IC_SUCCESS;
+}
+
 sm2_ic_error_t sm2_pki_issuance_cert_commitment(const sm2_implicit_cert_t *cert,
     uint8_t commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN])
 {

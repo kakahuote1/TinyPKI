@@ -29,6 +29,23 @@ sm2_ic_error_t sm2_pki_root_record_sign_hash(const uint8_t *authority_id,
 sm2_ic_error_t sm2_pki_issuance_root_verify(
     const sm2_rev_root_record_t *root_record, uint64_t now_ts,
     sm2_rev_sync_verify_fn verify_fn, void *verify_user_ctx);
+sm2_ic_error_t sm2_pki_epoch_root_sign(const uint8_t *authority_id,
+    size_t authority_id_len, uint64_t epoch_version,
+    uint64_t revocation_root_version,
+    const uint8_t revocation_root_hash[SM2_REV_MERKLE_HASH_LEN],
+    uint64_t issuance_root_version,
+    const uint8_t issuance_root_hash[SM2_REV_MERKLE_HASH_LEN],
+    uint64_t valid_from, uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn,
+    void *sign_user_ctx, sm2_pki_epoch_root_record_t *root_record);
+sm2_ic_error_t sm2_pki_epoch_root_verify(
+    const sm2_pki_epoch_root_record_t *root_record, uint64_t now_ts,
+    sm2_rev_sync_verify_fn verify_fn, void *verify_user_ctx);
+sm2_ic_error_t sm2_pki_epoch_root_digest(
+    const sm2_pki_epoch_root_record_t *root_record,
+    uint8_t digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN]);
+sm2_ic_error_t sm2_pki_epoch_root_encode_witness_payload(
+    const sm2_pki_epoch_root_record_t *root_record, uint8_t *output,
+    size_t output_cap, size_t *output_len);
 void sm2_pki_rev_set_root_valid_until(
     sm2_rev_ctx_t *ctx, uint64_t root_valid_until);
 sm2_ic_error_t sm2_pki_issuance_leaf_key(
@@ -68,6 +85,25 @@ typedef struct
     sm2_rev_root_record_t root_record;
     uint64_t highest_seen_root_version;
 } sm2_pki_root_cache_entry_t;
+
+typedef struct
+{
+    bool used;
+    bool has_epoch_record;
+    bool has_pinned_ca_index;
+    bool has_revocation_root;
+    bool has_issuance_root;
+    uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
+    size_t authority_id_len;
+    size_t pinned_ca_index;
+    sm2_pki_epoch_root_record_t epoch_record;
+    uint8_t epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
+    uint64_t highest_seen_epoch_version;
+    uint64_t highest_seen_revocation_root_version;
+    uint8_t latest_revocation_root_hash[SM2_REV_MERKLE_HASH_LEN];
+    uint64_t highest_seen_issuance_root_version;
+    uint8_t latest_issuance_root_hash[SM2_REV_MERKLE_HASH_LEN];
+} sm2_pki_epoch_cache_entry_t;
 
 typedef struct
 {
@@ -115,6 +151,9 @@ struct sm2_pki_service_ctx_st
     sm2_pki_issuance_tree_t *issuance_tree;
     sm2_rev_root_record_t issuance_root_record;
     bool issuance_state_ready;
+    uint64_t epoch_version;
+    sm2_pki_epoch_root_record_t epoch_root_record;
+    bool epoch_state_ready;
 
     size_t revocation_binding_refs;
     bool revocation_binding_retired;
@@ -132,6 +171,7 @@ struct sm2_pki_client_ctx_st
     sm2_pki_service_state_t *revocation_service;
     sm2_pki_root_cache_entry_t root_cache[SM2_AUTH_MAX_CA_STORE];
     sm2_pki_root_cache_entry_t issuance_root_cache[SM2_AUTH_MAX_CA_STORE];
+    sm2_pki_epoch_cache_entry_t epoch_root_cache[SM2_AUTH_MAX_CA_STORE];
     size_t last_root_cache_index;
     bool has_last_root_cache_index;
 

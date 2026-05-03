@@ -1502,6 +1502,181 @@ static void test_phase142_issuance_witness_append_only_and_quorum()
     TEST_PASS();
 }
 
+static void test_phase143_epoch_bundle_binds_roots_and_witnesses()
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P143_EPOCH_CA";
+    const uint8_t signer_id[] = "P143_SIGNER";
+    const uint8_t aux_id[] = "P143_AUX";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 32, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+    TEST_ASSERT(sm2_pki_identity_register(service, signer_id,
+                    sizeof(signer_id) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Signer Register");
+    TEST_ASSERT(sm2_pki_identity_register(service, aux_id, sizeof(aux_id) - 1,
+                    SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Aux Register");
+
+    sm2_ic_cert_result_t signer_cert;
+    sm2_ic_cert_result_t aux_cert;
+    sm2_private_key_t signer_temp;
+    sm2_private_key_t aux_temp;
+    memset(&signer_cert, 0, sizeof(signer_cert));
+    memset(&aux_cert, 0, sizeof(aux_cert));
+    memset(&signer_temp, 0, sizeof(signer_temp));
+    memset(&aux_temp, 0, sizeof(aux_temp));
+    TEST_ASSERT(pki_issue_identity_cert(service, signer_id,
+                    sizeof(signer_id) - 1, SM2_KU_DIGITAL_SIGNATURE,
+                    &signer_cert, &signer_temp),
+        "Issue Signer");
+
+    sm2_ec_point_t ca_pub;
+    memset(&ca_pub, 0, sizeof(ca_pub));
+    TEST_ASSERT(
+        sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
+        "Get CA Pub");
+
+    sm2_pki_client_ctx_t *signer = NULL;
+    sm2_pki_client_ctx_t *verifier = NULL;
+    TEST_ASSERT(
+        sm2_pki_client_create(&signer, &ca_pub, service) == SM2_PKI_SUCCESS,
+        "Signer Init");
+    TEST_ASSERT(
+        sm2_pki_client_create(&verifier, &ca_pub, NULL) == SM2_PKI_SUCCESS,
+        "Verifier Init");
+    TEST_ASSERT(
+        sm2_pki_client_import_cert(signer, &signer_cert, &signer_temp, &ca_pub)
+            == SM2_PKI_SUCCESS,
+        "Signer Import");
+
+    const uint8_t msg[] = "P143_EPOCH_BUNDLE";
+    uint64_t auth_now = test_cert_now(&signer_cert.cert);
+    sm2_auth_signature_t sig;
+    sm2_pki_evidence_bundle_t bundle;
+    sm2_pki_verify_request_t request;
+    memset(&sig, 0, sizeof(sig));
+    memset(&bundle, 0, sizeof(bundle));
+    memset(&request, 0, sizeof(request));
+    TEST_ASSERT(pki_build_signed_epoch_verify_request(signer, msg,
+                    sizeof(msg) - 1, auth_now, &sig, &bundle, &request),
+        "Build Epoch Verify Request");
+    TEST_ASSERT(request.revocation_evidence == NULL, "No Legacy Rev Evidence");
+    TEST_ASSERT(request.issuance_evidence == NULL, "No Legacy CT Evidence");
+
+    size_t matched = 0;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Epoch Bundle Verify");
+
+    sm2_pki_evidence_bundle_t missing_witness = bundle;
+    missing_witness.witness_signature_count = 0;
+    request.evidence_bundle = &missing_witness;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Epoch Missing Witness Reject");
+
+    sm2_pki_evidence_bundle_t wrong_rev_hint = bundle;
+    wrong_rev_hint.revocation_evidence.cached_root_hint.root_hash[0] ^= 0x01U;
+    request.evidence_bundle = &wrong_rev_hint;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Epoch Revocation Root Binding Reject");
+
+    sm2_pki_evidence_bundle_t wrong_issuance = bundle;
+    wrong_issuance.issuance_evidence.member_proof.cert_commitment[0] ^= 0x01U;
+    request.evidence_bundle = &wrong_issuance;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Epoch Issuance Proof Binding Reject");
+    request.evidence_bundle = &bundle;
+
+    sm2_private_key_t witness_priv;
+    sm2_ec_point_t witness_pub;
+    (void)witness_pub;
+    TEST_ASSERT(
+        test_generate_sm2_keypair(&witness_priv, &witness_pub),
+        "Generate Epoch Witness Key");
+    const uint8_t witness_id[] = "epoch-append-witness";
+    sm2_pki_issuance_witness_state_t witness_state;
+    sm2_pki_transparency_witness_signature_t witness_sig;
+    memset(&witness_sig, 0, sizeof(witness_sig));
+    sm2_pki_issuance_witness_state_init(&witness_state);
+
+    sm2_pki_epoch_root_record_t epoch_root;
+    memset(&epoch_root, 0, sizeof(epoch_root));
+    TEST_ASSERT(sm2_pki_service_get_epoch_root_record(service, &epoch_root)
+            == SM2_PKI_SUCCESS,
+        "Get Initial Epoch Root");
+    sm2_pki_issuance_commitment_t commitments[8];
+    size_t commitment_count = 0;
+    TEST_ASSERT(sm2_pki_service_export_issuance_commitments(service, 0,
+                    commitments, 8, &commitment_count)
+            == SM2_PKI_SUCCESS,
+        "Export Initial Epoch Commitments");
+    TEST_ASSERT(sm2_pki_epoch_witness_sign_append_only(&witness_state,
+                    &epoch_root, &ca_pub, auth_now, commitments,
+                    commitment_count, witness_id, sizeof(witness_id) - 1,
+                    &witness_priv, &witness_sig)
+            == SM2_PKI_SUCCESS,
+        "Epoch Witness Initial Sign");
+
+    TEST_ASSERT(pki_issue_identity_cert(service, aux_id, sizeof(aux_id) - 1,
+                    SM2_KU_DIGITAL_SIGNATURE, &aux_cert, &aux_temp),
+        "Issue Aux");
+    sm2_pki_epoch_root_record_t appended_epoch;
+    memset(&appended_epoch, 0, sizeof(appended_epoch));
+    TEST_ASSERT(sm2_pki_service_get_epoch_root_record(service, &appended_epoch)
+            == SM2_PKI_SUCCESS,
+        "Get Appended Epoch Root");
+    size_t append_count = 0;
+    TEST_ASSERT(sm2_pki_service_export_issuance_commitments(service,
+                    commitment_count, commitments, 8, &append_count)
+            == SM2_PKI_SUCCESS,
+        "Export Epoch Append Commitments");
+    TEST_ASSERT(append_count == 1, "Epoch Append Commitment Count");
+    commitments[0][0] ^= 0x01U;
+    TEST_ASSERT(sm2_pki_epoch_witness_sign_append_only(&witness_state,
+                    &appended_epoch, &ca_pub, auth_now, commitments,
+                    append_count, witness_id, sizeof(witness_id) - 1,
+                    &witness_priv, &witness_sig)
+            == SM2_PKI_ERR_VERIFY,
+        "Epoch Witness Rejects Tampered Append");
+    commitments[0][0] ^= 0x01U;
+    TEST_ASSERT(sm2_pki_epoch_witness_sign_append_only(&witness_state,
+                    &appended_epoch, &ca_pub, auth_now, commitments,
+                    append_count, witness_id, sizeof(witness_id) - 1,
+                    &witness_priv, &witness_sig)
+            == SM2_PKI_SUCCESS,
+        "Epoch Witness Accepts Append");
+
+    TEST_ASSERT(sm2_pki_service_revoke(
+                    service, aux_cert.cert.serial_number, auth_now + 10)
+            == SM2_PKI_SUCCESS,
+        "Advance Revocation Root");
+    sm2_pki_epoch_root_record_t rev_only_epoch;
+    memset(&rev_only_epoch, 0, sizeof(rev_only_epoch));
+    TEST_ASSERT(sm2_pki_service_get_epoch_root_record(service, &rev_only_epoch)
+            == SM2_PKI_SUCCESS,
+        "Get Rev-Only Epoch Root");
+    TEST_ASSERT(sm2_pki_epoch_witness_sign_append_only(&witness_state,
+                    &rev_only_epoch, &ca_pub, auth_now + 10, NULL, 0,
+                    witness_id, sizeof(witness_id) - 1, &witness_priv,
+                    &witness_sig)
+            == SM2_PKI_SUCCESS,
+        "Epoch Witness Accepts Rev-Only Advance");
+
+    sm2_pki_issuance_witness_state_cleanup(&witness_state);
+    sm2_pki_client_destroy(&verifier);
+    sm2_pki_client_destroy(&signer);
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
 static void test_phase139_root_versions_are_scoped_per_authority()
 {
     sm2_pki_service_ctx_t *service_a = NULL;

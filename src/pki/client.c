@@ -147,6 +147,26 @@ static sm2_pki_root_cache_entry_t *pki_client_find_issuance_root_cache_entry(
     return NULL;
 }
 
+static sm2_pki_epoch_cache_entry_t *pki_client_find_epoch_root_cache_entry(
+    sm2_pki_client_state_t *state, const uint8_t *authority_id,
+    size_t authority_id_len)
+{
+    if (!state
+        || !pki_client_authority_id_valid(authority_id, authority_id_len))
+        return NULL;
+
+    for (size_t i = 0; i < SM2_AUTH_MAX_CA_STORE; i++)
+    {
+        sm2_pki_epoch_cache_entry_t *entry = &state->epoch_root_cache[i];
+        if (!entry->used || entry->authority_id_len != authority_id_len)
+            continue;
+        if (memcmp(entry->authority_id, authority_id, authority_id_len) == 0)
+            return entry;
+    }
+
+    return NULL;
+}
+
 static const sm2_pki_root_cache_entry_t *pki_client_find_root_cache_entry_const(
     const sm2_pki_client_state_t *state, const uint8_t *authority_id,
     size_t authority_id_len)
@@ -198,6 +218,30 @@ static sm2_pki_root_cache_entry_t *pki_client_ensure_issuance_root_cache_entry(
     for (size_t i = 0; i < SM2_AUTH_MAX_CA_STORE; i++)
     {
         entry = &state->issuance_root_cache[i];
+        if (entry->used)
+            continue;
+
+        memset(entry, 0, sizeof(*entry));
+        memcpy(entry->authority_id, authority_id, authority_id_len);
+        entry->authority_id_len = authority_id_len;
+        return entry;
+    }
+
+    return NULL;
+}
+
+static sm2_pki_epoch_cache_entry_t *pki_client_ensure_epoch_root_cache_entry(
+    sm2_pki_client_state_t *state, const uint8_t *authority_id,
+    size_t authority_id_len)
+{
+    sm2_pki_epoch_cache_entry_t *entry = pki_client_find_epoch_root_cache_entry(
+        state, authority_id, authority_id_len);
+    if (entry)
+        return entry;
+
+    for (size_t i = 0; i < SM2_AUTH_MAX_CA_STORE; i++)
+    {
+        entry = &state->epoch_root_cache[i];
         if (entry->used)
             continue;
 
@@ -500,6 +544,113 @@ static sm2_pki_error_t pki_client_accept_issuance_root_record(
     return SM2_PKI_SUCCESS;
 }
 
+static sm2_pki_error_t pki_client_accept_epoch_root_record(
+    sm2_pki_client_state_t *state,
+    const sm2_pki_epoch_root_record_t *root_record, uint64_t now_ts,
+    size_t matched_ca_index)
+{
+    if (!state || !root_record)
+        return SM2_PKI_ERR_PARAM;
+    if (!pki_client_authority_id_valid(
+            root_record->authority_id, root_record->authority_id_len))
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+    if (matched_ca_index >= state->trust_store.count)
+        return SM2_PKI_ERR_VERIFY;
+
+    pki_client_root_verify_ctx_t verify_ctx = { .store = &state->trust_store,
+        .require_specific_index = true,
+        .required_index = matched_ca_index };
+    sm2_ic_error_t ic_ret = sm2_pki_epoch_root_verify(
+        root_record, now_ts, pki_client_root_record_verify_cb, &verify_ctx);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+
+    uint8_t epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
+    ic_ret = sm2_pki_epoch_root_digest(root_record, epoch_digest);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+
+    sm2_pki_epoch_cache_entry_t *entry
+        = pki_client_ensure_epoch_root_cache_entry(
+            state, root_record->authority_id, root_record->authority_id_len);
+    if (!entry)
+        return SM2_PKI_ERR_MEMORY;
+
+    if (root_record->epoch_version < entry->highest_seen_epoch_version)
+        return SM2_PKI_ERR_VERIFY;
+    if (entry->has_epoch_record
+        && root_record->epoch_version == entry->highest_seen_epoch_version)
+    {
+        if (memcmp(epoch_digest, entry->epoch_digest, sizeof(epoch_digest))
+            != 0)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+    }
+    if (entry->has_pinned_ca_index
+        && entry->pinned_ca_index != matched_ca_index)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+    if (entry->has_revocation_root)
+    {
+        if (root_record->revocation_root_version
+            < entry->highest_seen_revocation_root_version)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+        if (root_record->revocation_root_version
+                == entry->highest_seen_revocation_root_version
+            && memcmp(root_record->revocation_root_hash,
+                   entry->latest_revocation_root_hash,
+                   sizeof(root_record->revocation_root_hash))
+                != 0)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+    }
+    if (entry->has_issuance_root)
+    {
+        if (root_record->issuance_root_version
+            < entry->highest_seen_issuance_root_version)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+        if (root_record->issuance_root_version
+                == entry->highest_seen_issuance_root_version
+            && memcmp(root_record->issuance_root_hash,
+                   entry->latest_issuance_root_hash,
+                   sizeof(root_record->issuance_root_hash))
+                != 0)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+    }
+
+    entry->epoch_record = *root_record;
+    memcpy(entry->epoch_digest, epoch_digest, sizeof(entry->epoch_digest));
+    entry->used = true;
+    entry->has_epoch_record = true;
+    entry->has_pinned_ca_index = true;
+    entry->pinned_ca_index = matched_ca_index;
+    if (root_record->epoch_version > entry->highest_seen_epoch_version)
+        entry->highest_seen_epoch_version = root_record->epoch_version;
+    entry->highest_seen_revocation_root_version
+        = root_record->revocation_root_version;
+    memcpy(entry->latest_revocation_root_hash,
+        root_record->revocation_root_hash,
+        sizeof(entry->latest_revocation_root_hash));
+    entry->has_revocation_root = true;
+    entry->highest_seen_issuance_root_version
+        = root_record->issuance_root_version;
+    memcpy(entry->latest_issuance_root_hash, root_record->issuance_root_hash,
+        sizeof(entry->latest_issuance_root_hash));
+    entry->has_issuance_root = true;
+    return SM2_PKI_SUCCESS;
+}
+
 static sm2_pki_error_t pki_client_import_bound_root(
     sm2_pki_client_state_t *state, uint64_t now_ts,
     const pki_client_root_verify_ctx_t *verify_ctx)
@@ -661,36 +812,55 @@ static sm2_pki_error_t pki_client_validate_transparency_policy(
     return SM2_PKI_SUCCESS;
 }
 
+static sm2_pki_error_t pki_client_verify_witness_signature_set(
+    const uint8_t *payload, size_t payload_len,
+    const sm2_pki_transparency_witness_signature_t *signatures,
+    size_t signature_count, const sm2_pki_transparency_policy_t *policy);
+
 static sm2_pki_error_t pki_client_verify_witness_threshold(
     const sm2_pki_issuance_evidence_t *evidence,
     const sm2_pki_transparency_policy_t *policy)
 {
     uint8_t payload[SM2_PKI_WITNESS_PAYLOAD_MAX];
     size_t payload_len = sizeof(payload);
+
+    if (!evidence)
+        return SM2_PKI_ERR_PARAM;
+    sm2_pki_error_t ret = pki_client_encode_witness_payload(
+        &evidence->root_record, payload, &payload_len);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    return pki_client_verify_witness_signature_set(payload, payload_len,
+        evidence->witness_signatures, evidence->witness_signature_count,
+        policy);
+}
+
+static sm2_pki_error_t pki_client_verify_witness_signature_set(
+    const uint8_t *payload, size_t payload_len,
+    const sm2_pki_transparency_witness_signature_t *signatures,
+    size_t signature_count, const sm2_pki_transparency_policy_t *policy)
+{
     bool used[SM2_PKI_TRANSPARENCY_MAX_WITNESSES];
     size_t valid_count = 0;
 
     if (!policy || policy->threshold == 0)
         return SM2_PKI_SUCCESS;
-    if (!evidence || !policy->witnesses || policy->witness_count == 0
+    if (!payload || payload_len == 0 || (!signatures && signature_count > 0))
+        return SM2_PKI_ERR_VERIFY;
+    if (!policy->witnesses || policy->witness_count == 0
         || policy->witness_count > SM2_PKI_TRANSPARENCY_MAX_WITNESSES
         || policy->threshold > policy->witness_count
-        || evidence->witness_signature_count
-            > SM2_PKI_TRANSPARENCY_MAX_WITNESSES)
+        || signature_count > SM2_PKI_TRANSPARENCY_MAX_WITNESSES)
     {
         return SM2_PKI_ERR_VERIFY;
     }
 
-    sm2_pki_error_t ret = pki_client_encode_witness_payload(
-        &evidence->root_record, payload, &payload_len);
-    if (ret != SM2_PKI_SUCCESS)
-        return ret;
     memset(used, 0, sizeof(used));
 
-    for (size_t i = 0; i < evidence->witness_signature_count; i++)
+    for (size_t i = 0; i < signature_count; i++)
     {
         const sm2_pki_transparency_witness_signature_t *sig_entry
-            = &evidence->witness_signatures[i];
+            = &signatures[i];
         if (!pki_client_witness_id_valid(
                 sig_entry->witness_id, sig_entry->witness_id_len)
             || sig_entry->signature_len == 0
@@ -781,6 +951,177 @@ static sm2_pki_error_t pki_client_verify_issuance_evidence(
 
     return pki_client_accept_issuance_root_record(
         state, &evidence->root_record, now_ts, matched_ca_index);
+}
+
+static bool pki_client_hash_is_zero(const uint8_t hash[SM2_REV_MERKLE_HASH_LEN])
+{
+    uint8_t zero[SM2_REV_MERKLE_HASH_LEN];
+    memset(zero, 0, sizeof(zero));
+    return hash && memcmp(hash, zero, sizeof(zero)) == 0;
+}
+
+static sm2_pki_error_t pki_client_verify_epoch_witness_threshold(
+    const sm2_pki_evidence_bundle_t *evidence,
+    const sm2_pki_transparency_policy_t *policy)
+{
+    uint8_t payload[SM2_PKI_WITNESS_PAYLOAD_MAX];
+    size_t payload_len = 0;
+    if (!evidence)
+        return SM2_PKI_ERR_PARAM;
+    sm2_ic_error_t ic_ret = sm2_pki_epoch_root_encode_witness_payload(
+        &evidence->epoch_root_record, payload, sizeof(payload), &payload_len);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+    return pki_client_verify_witness_signature_set(payload, payload_len,
+        evidence->witness_signatures, evidence->witness_signature_count,
+        policy);
+}
+
+static sm2_pki_error_t pki_client_verify_revocation_evidence_with_epoch(
+    const sm2_implicit_cert_t *cert, const sm2_pki_epoch_root_record_t *epoch,
+    const sm2_pki_revocation_evidence_t *evidence)
+{
+    if (!cert || !epoch || !evidence)
+        return SM2_PKI_ERR_PARAM;
+    if (evidence->absence_proof.target_serial != cert->serial_number)
+        return SM2_PKI_ERR_VERIFY;
+
+    switch (evidence->mode)
+    {
+        case SM2_PKI_REV_EVIDENCE_FULL_ROOT:
+            if (evidence->root_record.authority_id_len
+                    != epoch->authority_id_len
+                || memcmp(evidence->root_record.authority_id,
+                       epoch->authority_id, epoch->authority_id_len)
+                    != 0
+                || evidence->root_record.root_version
+                    != epoch->revocation_root_version
+                || memcmp(evidence->root_record.root_hash,
+                       epoch->revocation_root_hash,
+                       sizeof(epoch->revocation_root_hash))
+                    != 0)
+            {
+                return SM2_PKI_ERR_VERIFY;
+            }
+            break;
+        case SM2_PKI_REV_EVIDENCE_CACHED_ROOT:
+            if (evidence->cached_root_hint.authority_id_len
+                    != epoch->authority_id_len
+                || memcmp(evidence->cached_root_hint.authority_id,
+                       epoch->authority_id, epoch->authority_id_len)
+                    != 0
+                || evidence->cached_root_hint.root_version
+                    != epoch->revocation_root_version
+                || memcmp(evidence->cached_root_hint.root_hash,
+                       epoch->revocation_root_hash,
+                       sizeof(epoch->revocation_root_hash))
+                    != 0)
+            {
+                return SM2_PKI_ERR_VERIFY;
+            }
+            break;
+        default:
+            return SM2_PKI_ERR_VERIFY;
+    }
+
+    sm2_ic_error_t ic_ret = sm2_rev_tree_verify_absence(
+        epoch->revocation_root_hash, &evidence->absence_proof);
+    return sm2_pki_error_from_ic(ic_ret);
+}
+
+static sm2_pki_error_t pki_client_verify_issuance_evidence_with_epoch(
+    const sm2_implicit_cert_t *cert, const sm2_pki_epoch_root_record_t *epoch,
+    const sm2_pki_issuance_evidence_t *evidence)
+{
+    if (!cert || !epoch || !evidence)
+        return SM2_PKI_ERR_PARAM;
+    if (evidence->member_proof.leaf_count != epoch->issuance_root_version)
+        return SM2_PKI_ERR_VERIFY;
+
+    const sm2_rev_root_record_t *hint = &evidence->root_record;
+    if (hint->authority_id_len > 0)
+    {
+        if (hint->authority_id_len != epoch->authority_id_len
+            || memcmp(hint->authority_id, epoch->authority_id,
+                   epoch->authority_id_len)
+                != 0)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+    }
+    if (hint->root_version != 0
+        && hint->root_version != epoch->issuance_root_version)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+    if (!pki_client_hash_is_zero(hint->root_hash)
+        && memcmp(hint->root_hash, epoch->issuance_root_hash,
+               sizeof(epoch->issuance_root_hash))
+            != 0)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+
+    uint8_t expected_commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN];
+    sm2_ic_error_t ic_ret
+        = sm2_pki_issuance_cert_commitment(cert, expected_commitment);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+    if (memcmp(evidence->member_proof.cert_commitment, expected_commitment,
+            sizeof(expected_commitment))
+        != 0)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+
+    ic_ret = sm2_pki_issuance_tree_verify_member(
+        epoch->issuance_root_hash, &evidence->member_proof);
+    return sm2_pki_error_from_ic(ic_ret);
+}
+
+static sm2_pki_error_t pki_client_verify_epoch_evidence_bundle(
+    sm2_pki_client_state_t *state, const sm2_implicit_cert_t *cert,
+    const sm2_pki_evidence_bundle_t *evidence, uint64_t now_ts,
+    size_t matched_ca_index, const sm2_pki_transparency_policy_t *policy)
+{
+    if (!state || !cert || !evidence || !policy || policy->threshold == 0)
+        return SM2_PKI_ERR_PARAM;
+
+    const sm2_pki_epoch_root_record_t *epoch = &evidence->epoch_root_record;
+    const uint8_t *authority_id = NULL;
+    size_t authority_id_len = 0;
+    sm2_pki_error_t ret = pki_client_expected_authority_from_cert(
+        cert, &authority_id, &authority_id_len);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    if (epoch->authority_id_len != authority_id_len
+        || memcmp(epoch->authority_id, authority_id, authority_id_len) != 0)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+
+    pki_client_root_verify_ctx_t verify_ctx = { .store = &state->trust_store,
+        .require_specific_index = true,
+        .required_index = matched_ca_index };
+    sm2_ic_error_t ic_ret = sm2_pki_epoch_root_verify(
+        epoch, now_ts, pki_client_root_record_verify_cb, &verify_ctx);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+
+    ret = pki_client_verify_epoch_witness_threshold(evidence, policy);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    ret = pki_client_verify_revocation_evidence_with_epoch(
+        cert, epoch, &evidence->revocation_evidence);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    ret = pki_client_verify_issuance_evidence_with_epoch(
+        cert, epoch, &evidence->issuance_evidence);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+
+    return pki_client_accept_epoch_root_record(
+        state, epoch, now_ts, matched_ca_index);
 }
 
 static sm2_pki_error_t pki_client_verify_carried_evidence(
@@ -1226,6 +1567,101 @@ sm2_pki_error_t sm2_pki_client_export_issuance_evidence(
         state, &state->cert, evidence, now_ts, matched_ca_index, NULL);
 }
 
+sm2_pki_error_t sm2_pki_client_export_epoch_evidence(sm2_pki_client_ctx_t *ctx,
+    uint64_t now_ts, sm2_pki_evidence_bundle_t *evidence)
+{
+    sm2_pki_client_state_t *state = pki_client_state(ctx);
+    if (!ctx || !ctx->initialized || !state || !evidence
+        || !state->has_identity_keys)
+    {
+        return SM2_PKI_ERR_PARAM;
+    }
+    if (!state->revocation_service)
+        return SM2_PKI_ERR_STATE;
+    if (!pki_client_bound_service_live(state))
+        return SM2_PKI_ERR_VERIFY;
+
+    size_t matched_ca_index = 0;
+    sm2_ic_error_t ic_ret = sm2_auth_verify_cert_with_store(&state->cert,
+        &state->public_key, &state->trust_store, &matched_ca_index);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+
+    memset(evidence, 0, sizeof(*evidence));
+    sm2_rev_root_record_t rev_root;
+    sm2_rev_root_record_t issuance_root;
+    memset(&rev_root, 0, sizeof(rev_root));
+    memset(&issuance_root, 0, sizeof(issuance_root));
+
+    sm2_pki_error_t ret = sm2_pki_service_get_root_record(
+        (sm2_pki_service_ctx_t *)state->revocation_service, &rev_root);
+    if (ret != SM2_PKI_SUCCESS)
+        return pki_client_map_service_failure_closed(ret);
+    ret = sm2_pki_service_get_issuance_root_record(
+        (sm2_pki_service_ctx_t *)state->revocation_service, &issuance_root);
+    if (ret != SM2_PKI_SUCCESS)
+        return pki_client_map_service_failure_closed(ret);
+    ret = sm2_pki_service_get_epoch_root_record(
+        (sm2_pki_service_ctx_t *)state->revocation_service,
+        &evidence->epoch_root_record);
+    if (ret != SM2_PKI_SUCCESS)
+        return pki_client_map_service_failure_closed(ret);
+
+    const sm2_pki_epoch_root_record_t *epoch = &evidence->epoch_root_record;
+    if (epoch->revocation_root_version != rev_root.root_version
+        || memcmp(epoch->revocation_root_hash, rev_root.root_hash,
+               sizeof(epoch->revocation_root_hash))
+            != 0
+        || epoch->issuance_root_version != issuance_root.root_version
+        || memcmp(epoch->issuance_root_hash, issuance_root.root_hash,
+               sizeof(epoch->issuance_root_hash))
+            != 0)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+
+    pki_client_root_verify_ctx_t verify_ctx = { .store = &state->trust_store,
+        .require_specific_index = true,
+        .required_index = matched_ca_index };
+    ic_ret = sm2_pki_epoch_root_verify(
+        epoch, now_ts, pki_client_root_record_verify_cb, &verify_ctx);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+
+    evidence->revocation_evidence.mode = SM2_PKI_REV_EVIDENCE_CACHED_ROOT;
+    pki_client_fill_root_hint(
+        &evidence->revocation_evidence.cached_root_hint, &rev_root);
+    ret = sm2_pki_service_export_absence_proof(
+        (sm2_pki_service_ctx_t *)state->revocation_service,
+        state->cert.serial_number,
+        &evidence->revocation_evidence.absence_proof);
+    if (ret != SM2_PKI_SUCCESS)
+        return pki_client_map_service_failure_closed(ret);
+
+    sm2_rev_root_record_t *issuance_hint
+        = &evidence->issuance_evidence.root_record;
+    memcpy(issuance_hint->authority_id, issuance_root.authority_id,
+        issuance_root.authority_id_len);
+    issuance_hint->authority_id_len = issuance_root.authority_id_len;
+    issuance_hint->root_version = issuance_root.root_version;
+    memcpy(issuance_hint->root_hash, issuance_root.root_hash,
+        sizeof(issuance_hint->root_hash));
+    issuance_hint->valid_from = issuance_root.valid_from;
+    issuance_hint->valid_until = issuance_root.valid_until;
+    ret = sm2_pki_service_export_issuance_proof(
+        (sm2_pki_service_ctx_t *)state->revocation_service, &state->cert,
+        &evidence->issuance_evidence.member_proof);
+    if (ret != SM2_PKI_SUCCESS)
+        return pki_client_map_service_failure_closed(ret);
+
+    ret = pki_client_verify_revocation_evidence_with_epoch(
+        &state->cert, epoch, &evidence->revocation_evidence);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    return pki_client_verify_issuance_evidence_with_epoch(
+        &state->cert, epoch, &evidence->issuance_evidence);
+}
+
 sm2_pki_error_t sm2_pki_issuance_witness_sign(
     const sm2_rev_root_record_t *root_record, const uint8_t *witness_id,
     size_t witness_id_len, const sm2_private_key_t *witness_private_key,
@@ -1247,6 +1683,39 @@ sm2_pki_error_t sm2_pki_issuance_witness_sign(
     sm2_auth_signature_t sig;
     sm2_ic_error_t ic_ret
         = sm2_auth_sign(witness_private_key, payload, payload_len, &sig);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+    if (sig.der_len == 0 || sig.der_len > sizeof(signature->signature))
+        return SM2_PKI_ERR_VERIFY;
+
+    memset(signature, 0, sizeof(*signature));
+    memcpy(signature->witness_id, witness_id, witness_id_len);
+    signature->witness_id_len = witness_id_len;
+    memcpy(signature->signature, sig.der, sig.der_len);
+    signature->signature_len = sig.der_len;
+    return SM2_PKI_SUCCESS;
+}
+
+sm2_pki_error_t sm2_pki_epoch_witness_sign(
+    const sm2_pki_epoch_root_record_t *root_record, const uint8_t *witness_id,
+    size_t witness_id_len, const sm2_private_key_t *witness_private_key,
+    sm2_pki_transparency_witness_signature_t *signature)
+{
+    uint8_t payload[SM2_PKI_WITNESS_PAYLOAD_MAX];
+    size_t payload_len = 0;
+    if (!root_record || !witness_private_key || !signature
+        || !pki_client_witness_id_valid(witness_id, witness_id_len))
+    {
+        return SM2_PKI_ERR_PARAM;
+    }
+
+    sm2_ic_error_t ic_ret = sm2_pki_epoch_root_encode_witness_payload(
+        root_record, payload, sizeof(payload), &payload_len);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+
+    sm2_auth_signature_t sig;
+    ic_ret = sm2_auth_sign(witness_private_key, payload, payload_len, &sig);
     if (ic_ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ic_ret);
     if (sig.der_len == 0 || sig.der_len > sizeof(signature->signature))
@@ -1431,6 +1900,146 @@ sm2_pki_error_t sm2_pki_issuance_witness_sign_append_only(
     return SM2_PKI_SUCCESS;
 }
 
+sm2_pki_error_t sm2_pki_epoch_witness_sign_append_only(
+    sm2_pki_issuance_witness_state_t *state,
+    const sm2_pki_epoch_root_record_t *root_record,
+    const sm2_ec_point_t *ca_public_key, uint64_t now_ts,
+    const sm2_pki_issuance_commitment_t *new_commitments,
+    size_t new_commitment_count, const uint8_t *witness_id,
+    size_t witness_id_len, const sm2_private_key_t *witness_private_key,
+    sm2_pki_transparency_witness_signature_t *signature)
+{
+    if (!state || !state->initialized || !root_record || !ca_public_key
+        || !witness_private_key || !signature
+        || !pki_client_authority_id_valid(
+            root_record->authority_id, root_record->authority_id_len))
+    {
+        return SM2_PKI_ERR_PARAM;
+    }
+    if (root_record->issuance_root_version > SIZE_MAX)
+        return SM2_PKI_ERR_MEMORY;
+
+    sm2_ic_error_t verify_ret = sm2_pki_epoch_root_verify(
+        root_record, now_ts, pki_witness_ca_verify_cb, (void *)ca_public_key);
+    if (verify_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(verify_ret);
+
+    uint8_t epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
+    sm2_ic_error_t ic_ret
+        = sm2_pki_epoch_root_digest(root_record, epoch_digest);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+
+    if (state->has_authority
+        && (state->authority_id_len != root_record->authority_id_len
+            || memcmp(state->authority_id, root_record->authority_id,
+                   root_record->authority_id_len)
+                != 0))
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+    if (root_record->epoch_version < state->latest_epoch_version)
+        return SM2_PKI_ERR_VERIFY;
+    if (root_record->epoch_version == state->latest_epoch_version
+        && state->has_authority
+        && memcmp(
+               epoch_digest, state->latest_epoch_digest, sizeof(epoch_digest))
+            != 0)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+    if (state->has_authority)
+    {
+        if (root_record->revocation_root_version
+            < state->latest_revocation_root_version)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+        if (root_record->revocation_root_version
+                == state->latest_revocation_root_version
+            && memcmp(root_record->revocation_root_hash,
+                   state->latest_revocation_root_hash,
+                   sizeof(root_record->revocation_root_hash))
+                != 0)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+        if (root_record->issuance_root_version < state->latest_root_version)
+            return SM2_PKI_ERR_VERIFY;
+        if (root_record->issuance_root_version == state->latest_root_version
+            && memcmp(root_record->issuance_root_hash, state->latest_root_hash,
+                   sizeof(root_record->issuance_root_hash))
+                != 0)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+    }
+
+    sm2_pki_issuance_commitment_t *candidate = NULL;
+    size_t candidate_count = 0;
+    sm2_pki_error_t ret = pki_witness_build_candidate_commitments(state,
+        new_commitments, new_commitment_count, &candidate, &candidate_count);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    if (candidate_count != (size_t)root_record->issuance_root_version)
+    {
+        free(candidate);
+        return SM2_PKI_ERR_VERIFY;
+    }
+
+    sm2_pki_issuance_tree_t *tree = NULL;
+    ic_ret = sm2_pki_issuance_tree_build(
+        &tree, candidate, candidate_count, root_record->issuance_root_version);
+    if (ic_ret != SM2_IC_SUCCESS)
+    {
+        free(candidate);
+        return sm2_pki_error_from_ic(ic_ret);
+    }
+    uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN];
+    ic_ret = sm2_pki_issuance_tree_get_root_hash(tree, root_hash);
+    sm2_pki_issuance_tree_cleanup(&tree);
+    if (ic_ret != SM2_IC_SUCCESS)
+    {
+        free(candidate);
+        return sm2_pki_error_from_ic(ic_ret);
+    }
+    if (memcmp(root_hash, root_record->issuance_root_hash, sizeof(root_hash))
+        != 0)
+    {
+        free(candidate);
+        return SM2_PKI_ERR_VERIFY;
+    }
+
+    ret = sm2_pki_epoch_witness_sign(root_record, witness_id, witness_id_len,
+        witness_private_key, signature);
+    if (ret != SM2_PKI_SUCCESS)
+    {
+        free(candidate);
+        return ret;
+    }
+
+    free(state->commitments);
+    state->commitments = candidate;
+    state->commitment_count = candidate_count;
+    state->commitment_capacity = candidate_count;
+    memcpy(state->authority_id, root_record->authority_id,
+        root_record->authority_id_len);
+    state->authority_id_len = root_record->authority_id_len;
+    state->latest_epoch_version = root_record->epoch_version;
+    memcpy(state->latest_epoch_digest, epoch_digest,
+        sizeof(state->latest_epoch_digest));
+    state->latest_revocation_root_version
+        = root_record->revocation_root_version;
+    memcpy(state->latest_revocation_root_hash,
+        root_record->revocation_root_hash,
+        sizeof(state->latest_revocation_root_hash));
+    state->latest_root_version = root_record->issuance_root_version;
+    memcpy(state->latest_root_hash, root_record->issuance_root_hash,
+        sizeof(state->latest_root_hash));
+    state->has_authority = true;
+    return SM2_PKI_SUCCESS;
+}
+
 sm2_pki_error_t sm2_pki_issuance_quorum_check(
     const sm2_pki_issuance_root_vote_t *votes, size_t vote_count,
     size_t threshold, sm2_pki_issuance_quorum_result_t *result)
@@ -1588,7 +2197,7 @@ sm2_pki_error_t sm2_pki_verify(sm2_pki_client_ctx_t *ctx,
     if (!ctx || !ctx->initialized || !state || !request)
         return SM2_PKI_ERR_PARAM;
 
-    if (!request->revocation_evidence)
+    if (!request->evidence_bundle && !request->revocation_evidence)
         return SM2_PKI_ERR_VERIFY;
 
     size_t local_matched_index = 0;
@@ -1599,13 +2208,6 @@ sm2_pki_error_t sm2_pki_verify(sm2_pki_client_ctx_t *ctx,
     if (matched_ca_index)
         *matched_ca_index = local_matched_index;
 
-    ret = pki_client_verify_carried_evidence(state, request->cert,
-        request->revocation_evidence, now_ts, local_matched_index);
-    if (ret != SM2_PKI_SUCCESS)
-        return ret;
-
-    if (!request->issuance_evidence)
-        return SM2_PKI_ERR_VERIFY;
     const sm2_pki_transparency_policy_t *policy = state->has_transparency_policy
         ? &state->transparency_policy
         : request->transparency_policy;
@@ -1613,6 +2215,20 @@ sm2_pki_error_t sm2_pki_verify(sm2_pki_client_ctx_t *ctx,
         return SM2_PKI_ERR_VERIFY;
     ret = pki_client_validate_transparency_policy(policy);
     if (ret != SM2_PKI_SUCCESS)
+        return SM2_PKI_ERR_VERIFY;
+
+    if (request->evidence_bundle)
+    {
+        return pki_client_verify_epoch_evidence_bundle(state, request->cert,
+            request->evidence_bundle, now_ts, local_matched_index, policy);
+    }
+
+    ret = pki_client_verify_carried_evidence(state, request->cert,
+        request->revocation_evidence, now_ts, local_matched_index);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+
+    if (!request->issuance_evidence)
         return SM2_PKI_ERR_VERIFY;
     ret = pki_client_verify_issuance_evidence(state, request->cert,
         request->issuance_evidence, now_ts, local_matched_index, policy);
