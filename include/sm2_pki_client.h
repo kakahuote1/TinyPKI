@@ -189,13 +189,8 @@ extern "C"
         sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
         sm2_pki_issuance_evidence_t *evidence);
 
-    /*
-     * Exports the final-form evidence bundle: a single CA-signed epoch
-     * root
-     * binds the revocation and issuance roots, while witnesses sign
-     * that epoch
-     * root instead of signing each subroot separately.
- */
+    // Exports a unified evidence bundle. One CA-signed epoch root binds
+    // revocation and issuance roots; witnesses sign that epoch root.
     sm2_pki_error_t sm2_pki_client_export_epoch_evidence(
         sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
         sm2_pki_evidence_bundle_t *evidence);
