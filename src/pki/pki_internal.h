@@ -53,6 +53,9 @@ void sm2_pki_issuance_tree_cleanup(sm2_pki_issuance_tree_t **tree);
 sm2_ic_error_t sm2_pki_issuance_tree_build(sm2_pki_issuance_tree_t **tree,
     const uint8_t (*commitments)[SM2_PKI_ISSUANCE_COMMITMENT_LEN],
     size_t commitment_count, uint64_t root_version);
+sm2_ic_error_t sm2_pki_issuance_tree_append(sm2_pki_issuance_tree_t **tree,
+    const uint8_t commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN],
+    uint64_t root_version);
 sm2_ic_error_t sm2_pki_issuance_tree_get_root_hash(
     const sm2_pki_issuance_tree_t *tree,
     uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN]);
@@ -104,6 +107,7 @@ typedef struct
     bool used;
     size_t identity_index;
     uint64_t serial_number;
+    uint64_t valid_until;
     bool revoked;
 } sm2_pki_cert_entry_t;
 

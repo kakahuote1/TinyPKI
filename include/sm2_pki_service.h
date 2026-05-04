@@ -66,8 +66,8 @@ extern "C"
      * the service-side Merkle tree internal while exposing signed outputs.
      */
     sm2_pki_error_t sm2_pki_service_export_epoch_dir(sm2_pki_service_ctx_t *ctx,
-        uint64_t epoch_id, size_t cache_top_levels, uint64_t valid_from,
-        uint64_t valid_until, sm2_rev_epoch_dir_t **directory);
+        uint64_t epoch_id, uint64_t valid_from, uint64_t valid_until,
+        sm2_rev_epoch_dir_t **directory);
 
     sm2_pki_error_t sm2_pki_service_export_member_proof(
         const sm2_pki_service_ctx_t *ctx, uint64_t serial_number,
@@ -112,6 +112,10 @@ extern "C"
 
     sm2_pki_error_t sm2_pki_service_revoke(
         sm2_pki_service_ctx_t *ctx, uint64_t serial_number, uint64_t now_ts);
+
+    sm2_pki_error_t sm2_pki_service_prune_expired_revocations(
+        sm2_pki_service_ctx_t *ctx, uint64_t now_ts, uint64_t grace_sec,
+        size_t *pruned_count);
 
     sm2_pki_error_t sm2_pki_service_check_revocation(sm2_pki_service_ctx_t *ctx,
         uint64_t serial_number, uint64_t now_ts, sm2_rev_status_t *status,

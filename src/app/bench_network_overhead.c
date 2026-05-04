@@ -489,7 +489,7 @@ static int compute_payload_metrics(
 {
     bench_flow_ctx_t flow;
     uint8_t cert_buf[1024];
-    uint8_t absence_buf[8192];
+    uint8_t absence_buf[16384];
     size_t cert_len = 0;
     size_t root_len = 0;
     size_t absence_len = 0;
@@ -505,7 +505,7 @@ static int compute_payload_metrics(
     uint64_t *revoked = NULL;
     sm2_rev_tree_t *tree = NULL;
     sm2_rev_multi_proof_t *multi = NULL;
-    uint8_t multi_buf[262144];
+    uint8_t multi_buf[1048576];
     size_t multi_len = sizeof(multi_buf);
 
     if (!metrics || metric_count < 7)

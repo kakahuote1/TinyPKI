@@ -69,7 +69,7 @@ void run_test_merkle_suite(void)
     RUN_TEST(test_rev_root_signature_and_light_verify);
     RUN_TEST(test_rev_multi_proof_roundtrip);
     RUN_TEST(test_rev_multi_proof_bandwidth_gain);
-    RUN_TEST(test_rev_epoch_dir_cached_proof);
+    RUN_TEST(test_rev_epoch_dir_sparse_proof);
     RUN_TEST(test_rev_epoch_patch_priority);
     RUN_TEST(test_rev_epoch_switch_monotonic);
     RUN_TEST(test_rev_multi_proof_dynamic_growth_path);
@@ -79,7 +79,7 @@ void run_test_merkle_suite(void)
     RUN_TEST(test_merkle_expired_root_record_rejected);
     RUN_TEST(test_merkle_hot_patch_stale_version_rejected);
     RUN_TEST(test_merkle_multiproof_over_limit_rejected);
-    RUN_TEST(test_merkle_member_leaf_index_path_bound);
-    RUN_TEST(test_merkle_absence_anchor_neighbor_commitment);
+    RUN_TEST(test_merkle_member_sparse_key_path_bound);
+    RUN_TEST(test_merkle_absence_sparse_path_commitment);
     RUN_TEST(test_merkle_quorum_dedup_node_id);
 }

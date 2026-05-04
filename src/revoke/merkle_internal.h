@@ -25,12 +25,7 @@ extern "C"
     {
         uint64_t root_version;
         size_t leaf_count;
-        uint64_t *serials;
-        size_t level_count;
-        size_t level_offsets[SM2_REV_MERKLE_MAX_DEPTH];
-        size_t level_sizes[SM2_REV_MERKLE_MAX_DEPTH];
-        uint8_t *node_hashes;
-        size_t node_hashes_len;
+        struct sm2_rev_sparse_node_st *root;
         uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN];
     };
 
@@ -47,12 +42,6 @@ extern "C"
         uint64_t epoch_id;
         sm2_rev_root_record_t root_record;
         size_t tree_level_count;
-        size_t cache_level_count;
-        size_t cached_level_indices[SM2_REV_MERKLE_MAX_DEPTH];
-        size_t cached_level_sizes[SM2_REV_MERKLE_MAX_DEPTH];
-        size_t cached_level_offsets[SM2_REV_MERKLE_MAX_DEPTH];
-        size_t cached_hash_count;
-        uint8_t (*cached_hashes)[SM2_REV_MERKLE_HASH_LEN];
         uint64_t patch_version;
         sm2_crl_delta_item_t *patch_items;
         size_t patch_item_count;
@@ -63,8 +52,11 @@ extern "C"
     /* ---- hash primitives (domain-separated SM3) ---- */
     void merkle_u64_to_be(uint64_t v, uint8_t out[8]);
 
-    sm2_ic_error_t merkle_hash_leaf(uint64_t serial_number, bool has_prev,
-        uint64_t prev_serial, bool has_next, uint64_t next_serial,
+    sm2_ic_error_t merkle_serial_key(
+        uint64_t serial_number, uint8_t out_key[SM2_REV_MERKLE_HASH_LEN]);
+
+    sm2_ic_error_t merkle_hash_leaf(uint64_t serial_number,
+        const uint8_t key[SM2_REV_MERKLE_HASH_LEN],
         uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN]);
 
     sm2_ic_error_t merkle_hash_parent(
@@ -72,14 +64,21 @@ extern "C"
         const uint8_t right[SM2_REV_MERKLE_HASH_LEN],
         uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN]);
 
-    sm2_ic_error_t merkle_hash_empty(uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN]);
+    sm2_ic_error_t merkle_hash_empty_leaf(
+        uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN]);
+
+    sm2_ic_error_t merkle_empty_hash_at_depth(
+        size_t depth, uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN]);
 
     /* ---- tree layout & search ---- */
-    sm2_ic_error_t merkle_calc_layout(
-        sm2_rev_tree_t *tree, size_t leaf_count, size_t *out_total_nodes);
-
     bool merkle_find_serial(
         const sm2_rev_tree_t *tree, uint64_t serial, size_t *pos);
+
+    sm2_ic_error_t merkle_tree_update_serial(
+        sm2_rev_tree_t *tree, uint64_t serial, bool revoked);
+    void merkle_tree_set_root_version(sm2_rev_tree_t *tree, uint64_t version);
+    sm2_ic_error_t merkle_tree_clone(
+        const sm2_rev_tree_t *src, sm2_rev_tree_t **dst);
 
     /* ---- sort comparators ---- */
     int merkle_cmp_u64(const void *a, const void *b);
@@ -149,14 +148,8 @@ extern "C"
     bool merkle_epoch_patch_lookup(
         const sm2_rev_epoch_dir_t *directory, uint64_t serial, bool *revoked);
 
-    bool merkle_epoch_get_cached_hash(const sm2_rev_epoch_dir_t *directory,
-        size_t level_index, size_t node_index,
-        uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN]);
-
     sm2_ic_error_t merkle_epoch_directory_clone(
         sm2_rev_epoch_dir_t *dst, const sm2_rev_epoch_dir_t *src);
-
-    size_t merkle_expected_sibling_count(size_t leaf_count);
 
 #ifdef __cplusplus
 }

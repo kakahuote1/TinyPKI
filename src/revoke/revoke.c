@@ -5,6 +5,7 @@
  * @brief Revocation state management for Merkle-only query path.
  */
 
+#include "merkle_internal.h"
 #include "revoke_internal.h"
 #include "sm2_secure_mem.h"
 
@@ -129,24 +130,32 @@ static sm2_ic_error_t rev_ctx_clone_local_state(
     dst->revoked_serials = NULL;
     dst->revoked_count = 0;
     dst->revoked_capacity = 0;
+    dst->rev_tree = NULL;
 
-    if (src->revoked_count == 0)
-        return SM2_IC_SUCCESS;
-    if (!src->revoked_serials || src->revoked_capacity < src->revoked_count)
+    if (src->revoked_count > 0
+        && (!src->revoked_serials
+            || src->revoked_capacity < src->revoked_count))
+    {
         return SM2_IC_ERR_VERIFY;
+    }
     if (src->revoked_capacity > SIZE_MAX / sizeof(uint64_t))
         return SM2_IC_ERR_MEMORY;
 
-    dst->revoked_serials
-        = (uint64_t *)calloc(src->revoked_capacity, sizeof(uint64_t));
-    if (!dst->revoked_serials)
-        return SM2_IC_ERR_MEMORY;
+    if (src->revoked_capacity > 0)
+    {
+        dst->revoked_serials
+            = (uint64_t *)calloc(src->revoked_capacity, sizeof(uint64_t));
+        if (!dst->revoked_serials)
+            return SM2_IC_ERR_MEMORY;
 
-    memcpy(dst->revoked_serials, src->revoked_serials,
-        src->revoked_count * sizeof(uint64_t));
-    dst->revoked_count = src->revoked_count;
-    dst->revoked_capacity = src->revoked_capacity;
-    return SM2_IC_SUCCESS;
+        memcpy(dst->revoked_serials, src->revoked_serials,
+            src->revoked_count * sizeof(uint64_t));
+        dst->revoked_count = src->revoked_count;
+        dst->revoked_capacity = src->revoked_capacity;
+    }
+
+    return sm2_rev_tree_build(&dst->rev_tree, dst->revoked_serials,
+        dst->revoked_count, dst->crl_version);
 }
 
 static uint64_t rev_ctx_compute_valid_until(
@@ -210,15 +219,20 @@ static sm2_ic_error_t rev_ctx_refresh_root_hash(sm2_rev_ctx_t *ctx)
     if (!ctx)
         return SM2_IC_ERR_PARAM;
 
-    sm2_rev_tree_t *tree = NULL;
-    sm2_ic_error_t ret = sm2_rev_tree_build(
-        &tree, ctx->revoked_serials, ctx->revoked_count, ctx->crl_version);
+    if (!ctx->rev_tree)
+    {
+        sm2_ic_error_t ret = sm2_rev_tree_build(&ctx->rev_tree,
+            ctx->revoked_serials, ctx->revoked_count, ctx->crl_version);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
+    }
+
+    merkle_tree_set_root_version(ctx->rev_tree, ctx->crl_version);
+    sm2_ic_error_t ret
+        = sm2_rev_tree_get_root_hash(ctx->rev_tree, ctx->root_hash);
     if (ret != SM2_IC_SUCCESS)
         return ret;
-
-    ret = sm2_rev_tree_get_root_hash(tree, ctx->root_hash);
-    sm2_rev_tree_cleanup(&tree);
-    return ret;
+    return SM2_IC_SUCCESS;
 }
 
 static void rev_ctx_compute_publication_window(const sm2_rev_ctx_t *ctx,
@@ -252,6 +266,7 @@ static void rev_state_reset(sm2_rev_ctx_t *ctx)
     }
 
     free(ctx->revoked_serials);
+    sm2_rev_tree_cleanup(&ctx->rev_tree);
     sm2_secure_memzero(ctx, sizeof(*ctx));
 }
 
@@ -267,6 +282,7 @@ void sm2_rev_internal_snapshot_release(sm2_rev_ctx_t *snapshot)
         return;
 
     rev_local_list_release(&snapshot->revoked_serials);
+    sm2_rev_tree_cleanup(&snapshot->rev_tree);
     memset(snapshot, 0, sizeof(*snapshot));
 }
 
@@ -277,8 +293,10 @@ void sm2_rev_internal_snapshot_restore(
         return;
 
     rev_local_list_release(&dst->revoked_serials);
+    sm2_rev_tree_cleanup(&dst->rev_tree);
     *dst = *snapshot;
     snapshot->revoked_serials = NULL;
+    snapshot->rev_tree = NULL;
     snapshot->revoked_count = 0;
     snapshot->revoked_capacity = 0;
     memset(snapshot, 0, sizeof(*snapshot));
@@ -306,8 +324,12 @@ sm2_ic_error_t sm2_rev_internal_prepare_root_publication(
     uint64_t valid_until = 0;
     rev_ctx_compute_publication_window(ctx, now_ts, &valid_from, &valid_until);
 
-    sm2_ic_error_t ret = sm2_rev_tree_build(
-        tree, ctx->revoked_serials, ctx->revoked_count, ctx->crl_version);
+    sm2_ic_error_t ret;
+    if (ctx->rev_tree)
+        ret = merkle_tree_clone(ctx->rev_tree, tree);
+    else
+        ret = sm2_rev_tree_build(
+            tree, ctx->revoked_serials, ctx->revoked_count, ctx->crl_version);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -458,31 +480,48 @@ sm2_ic_error_t sm2_rev_apply_delta(
             if (ret != SM2_IC_SUCCESS)
             {
                 rev_local_list_release(&scratch.revoked_serials);
+                sm2_rev_tree_cleanup(&scratch.rev_tree);
                 return ret;
             }
+            ret = merkle_tree_update_serial(
+                scratch.rev_tree, it->serial_number, true);
         }
         else
         {
             local_list_remove(&scratch, it->serial_number);
+            ret = merkle_tree_update_serial(
+                scratch.rev_tree, it->serial_number, false);
+        }
+        if (ret != SM2_IC_SUCCESS)
+        {
+            rev_local_list_release(&scratch.revoked_serials);
+            sm2_rev_tree_cleanup(&scratch.rev_tree);
+            return ret;
         }
     }
 
     scratch.crl_version = delta->new_version;
+    merkle_tree_set_root_version(scratch.rev_tree, scratch.crl_version);
     scratch.root_valid_until = rev_ctx_compute_valid_until(&scratch, now_ts);
     ret = rev_ctx_refresh_root_hash(&scratch);
     if (ret != SM2_IC_SUCCESS)
     {
         rev_local_list_release(&scratch.revoked_serials);
+        sm2_rev_tree_cleanup(&scratch.rev_tree);
         return ret;
     }
 
     rev_local_list_release(&ctx->revoked_serials);
+    sm2_rev_tree_cleanup(&ctx->rev_tree);
     ctx->revoked_serials = scratch.revoked_serials;
     ctx->revoked_count = scratch.revoked_count;
     ctx->revoked_capacity = scratch.revoked_capacity;
+    ctx->rev_tree = scratch.rev_tree;
     ctx->crl_version = scratch.crl_version;
     ctx->root_valid_until = scratch.root_valid_until;
     memcpy(ctx->root_hash, scratch.root_hash, sizeof(ctx->root_hash));
+    scratch.revoked_serials = NULL;
+    scratch.rev_tree = NULL;
     return SM2_IC_SUCCESS;
 }
 

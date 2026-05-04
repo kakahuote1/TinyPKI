@@ -157,7 +157,7 @@ static size_t service_identity_index(
     return (size_t)(entry - state->identities);
 }
 
-static void service_compact_revoked_certificates(sm2_pki_service_state_t *state)
+static void service_compact_certificate_table(sm2_pki_service_state_t *state)
 {
     if (!state || !state->certs || state->cert_capacity == 0)
         return;
@@ -166,7 +166,7 @@ static void service_compact_revoked_certificates(sm2_pki_service_state_t *state)
     for (size_t read_index = 0; read_index < state->cert_capacity; read_index++)
     {
         sm2_pki_cert_entry_t *entry = &state->certs[read_index];
-        if (!entry->used || entry->revoked)
+        if (!entry->used)
             continue;
         if (write_index != read_index)
             state->certs[write_index] = *entry;
@@ -229,7 +229,7 @@ static sm2_pki_error_t service_alloc_certificate(
         }
     }
 
-    service_compact_revoked_certificates(state);
+    service_compact_certificate_table(state);
     for (size_t i = 0; i < state->cert_capacity; i++)
     {
         if (!state->certs[i].used)
@@ -748,8 +748,8 @@ sm2_pki_error_t sm2_pki_service_get_epoch_root_record(
 }
 
 sm2_pki_error_t sm2_pki_service_export_epoch_dir(sm2_pki_service_ctx_t *ctx,
-    uint64_t epoch_id, size_t cache_top_levels, uint64_t valid_from,
-    uint64_t valid_until, sm2_rev_epoch_dir_t **directory)
+    uint64_t epoch_id, uint64_t valid_from, uint64_t valid_until,
+    sm2_rev_epoch_dir_t **directory)
 {
     sm2_pki_service_state_t *state = service_state(ctx);
     if (!ctx || !ctx->initialized || !state || !directory
@@ -758,10 +758,9 @@ sm2_pki_error_t sm2_pki_service_export_epoch_dir(sm2_pki_service_ctx_t *ctx,
         return SM2_PKI_ERR_PARAM;
     }
 
-    return sm2_pki_error_from_ic(
-        sm2_rev_epoch_dir_build_with_authority(state->rev_tree, epoch_id,
-            state->issuer_id, state->issuer_id_len, cache_top_levels,
-            valid_from, valid_until, service_merkle_sign_cb, ctx, directory));
+    return sm2_pki_error_from_ic(sm2_rev_epoch_dir_build_with_authority(
+        state->rev_tree, epoch_id, state->issuer_id, state->issuer_id_len,
+        valid_from, valid_until, service_merkle_sign_cb, ctx, directory));
 }
 
 sm2_pki_error_t sm2_pki_service_export_member_proof(
@@ -955,13 +954,21 @@ sm2_pki_error_t sm2_pki_cert_issue(sm2_pki_service_ctx_t *ctx,
     if (issued_ret != SM2_PKI_SUCCESS)
         return issued_ret;
 
+    ret = sm2_pki_issuance_tree_append(&state->issuance_tree,
+        issuance_commitment, (uint64_t)state->issued_count + 1U);
+    if (ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ret);
+
     memcpy(state->issuance_commitments[state->issued_count],
         issuance_commitment, sizeof(issuance_commitment));
     state->issued_count++;
-    ret = service_publish_issuance_root(ctx, now_ts, true);
+    ret = service_publish_issuance_root(ctx, now_ts, false);
     if (ret != SM2_IC_SUCCESS)
     {
         state->issued_count--;
+        sm2_pki_issuance_tree_build(&state->issuance_tree,
+            state->issuance_commitments, state->issued_count,
+            (uint64_t)state->issued_count);
         return sm2_pki_error_from_ic(ret);
     }
     ret = service_publish_epoch_root(ctx, now_ts);
@@ -972,6 +979,10 @@ sm2_pki_error_t sm2_pki_cert_issue(sm2_pki_service_ctx_t *ctx,
     cert_entry->used = true;
     cert_entry->identity_index = service_identity_index(state, entry);
     cert_entry->serial_number = result->cert.serial_number;
+    cert_entry->valid_until
+        = result->cert.valid_duration <= UINT64_MAX - result->cert.valid_from
+        ? result->cert.valid_from + result->cert.valid_duration
+        : UINT64_MAX;
     cert_entry->revoked = false;
     state->cert_count++;
     service_clear_pending_request(entry);
@@ -1019,6 +1030,102 @@ sm2_pki_error_t sm2_pki_service_revoke(
 
     sm2_pki_rev_snapshot_release(&rollback);
     entry->revoked = true;
+    ret = service_publish_epoch_root(ctx, now_ts);
+    if (ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ret);
+    return SM2_PKI_SUCCESS;
+}
+
+static bool service_cert_prunable(
+    const sm2_pki_cert_entry_t *entry, uint64_t now_ts, uint64_t grace_sec)
+{
+    if (!entry || !entry->used || !entry->revoked)
+        return false;
+    if (now_ts <= entry->valid_until)
+        return false;
+    return now_ts - entry->valid_until > grace_sec;
+}
+
+sm2_pki_error_t sm2_pki_service_prune_expired_revocations(
+    sm2_pki_service_ctx_t *ctx, uint64_t now_ts, uint64_t grace_sec,
+    size_t *pruned_count)
+{
+    sm2_pki_service_state_t *state = service_state(ctx);
+    if (!ctx || !ctx->initialized || !state)
+        return SM2_PKI_ERR_PARAM;
+    if (pruned_count)
+        *pruned_count = 0;
+
+    size_t candidate_count = 0;
+    for (size_t i = 0; i < state->cert_capacity; i++)
+    {
+        if (service_cert_prunable(&state->certs[i], now_ts, grace_sec))
+            candidate_count++;
+    }
+    if (candidate_count == 0)
+        return SM2_PKI_SUCCESS;
+
+    sm2_crl_delta_item_t *items
+        = (sm2_crl_delta_item_t *)calloc(candidate_count, sizeof(*items));
+    if (!items)
+        return SM2_PKI_ERR_MEMORY;
+
+    size_t write = 0;
+    for (size_t i = 0; i < state->cert_capacity; i++)
+    {
+        if (!service_cert_prunable(&state->certs[i], now_ts, grace_sec))
+            continue;
+        items[write].serial_number = state->certs[i].serial_number;
+        items[write].revoked = false;
+        write++;
+    }
+
+    sm2_crl_delta_t delta;
+    delta.base_version = sm2_rev_version(state->rev_ctx);
+    delta.new_version = delta.base_version + 1U;
+    delta.items = items;
+    delta.item_count = write;
+
+    sm2_rev_ctx_t *rollback = NULL;
+    sm2_ic_error_t ret = sm2_pki_rev_snapshot_create(state->rev_ctx, &rollback);
+    if (ret != SM2_IC_SUCCESS)
+    {
+        free(items);
+        return sm2_pki_error_from_ic(ret);
+    }
+
+    ret = sm2_rev_apply_delta(state->rev_ctx, &delta, now_ts);
+    if (ret != SM2_IC_SUCCESS)
+    {
+        sm2_pki_rev_snapshot_release(&rollback);
+        free(items);
+        return sm2_pki_error_from_ic(ret);
+    }
+
+    ret = service_publish_revocation_root(ctx, now_ts, true);
+    if (ret != SM2_IC_SUCCESS)
+    {
+        sm2_pki_rev_snapshot_restore(state->rev_ctx, &rollback);
+        free(items);
+        return sm2_pki_error_from_ic(ret);
+    }
+    sm2_pki_rev_snapshot_release(&rollback);
+
+    for (size_t i = 0; i < state->cert_capacity; i++)
+    {
+        if (!service_cert_prunable(&state->certs[i], now_ts, grace_sec))
+            continue;
+        memset(&state->certs[i], 0, sizeof(state->certs[i]));
+        if (state->cert_count > 0)
+            state->cert_count--;
+    }
+    if (pruned_count)
+        *pruned_count = write;
+
+    free(items);
+    ret = service_publish_issuance_root(ctx, now_ts, false);
+    if (ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ret);
     ret = service_publish_epoch_root(ctx, now_ts);
     if (ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ret);

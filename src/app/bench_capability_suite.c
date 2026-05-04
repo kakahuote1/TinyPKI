@@ -277,7 +277,7 @@ static int collect_size_metrics(
     capability_flow_ctx_t *ctx, capability_size_metrics_t *metrics)
 {
     uint8_t cert_buf[1024];
-    uint8_t absence_buf[8192];
+    uint8_t absence_buf[16384];
     size_t cert_len = sizeof(cert_buf);
     size_t absence_len = sizeof(absence_buf);
 

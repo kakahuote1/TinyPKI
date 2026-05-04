@@ -43,7 +43,7 @@ int main(void)
     uint64_t queries[query_n];
     uint8_t tree_root_hash[SM2_REV_MERKLE_HASH_LEN];
 
-    uint8_t multi_buf[262144];
+    uint8_t multi_buf[1048576];
     size_t multi_len = sizeof(multi_buf);
 
     memset(&mp_real, 0, sizeof(mp_real));
@@ -107,7 +107,7 @@ int main(void)
     for (size_t i = 0; i < query_n; i++)
     {
         sm2_rev_member_proof_t mp_each;
-        uint8_t mp_buf[8192];
+        uint8_t mp_buf[16384];
         size_t mp_len = sizeof(mp_buf);
 
         memset(&mp_each, 0, sizeof(mp_each));

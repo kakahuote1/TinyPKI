@@ -3,7 +3,8 @@
 /**
  * @file merkle_cbor.c
  * @brief CBOR codec for Merkle proof types (member, absence, multiproof,
- *        root record, cached member, epoch directory).
+ *
+ * root record, epoch directory).
  */
 
 #include "merkle_internal.h"
@@ -220,32 +221,6 @@ sm2_ic_error_t cbor_get_null(const uint8_t *in, size_t in_len, size_t *offset)
     return SM2_IC_SUCCESS;
 }
 
-static sm2_ic_error_t cbor_put_optional_u64(
-    bool present, uint64_t value, uint8_t *out, size_t out_cap, size_t *offset)
-{
-    if (present)
-        return cbor_put_type_value(0, value, out, out_cap, offset);
-    return cbor_put_null(out, out_cap, offset);
-}
-
-static sm2_ic_error_t cbor_get_optional_u64(const uint8_t *in, size_t in_len,
-    size_t *offset, bool present, uint64_t *value)
-{
-    if (!value)
-        return SM2_IC_ERR_PARAM;
-    if (!present)
-    {
-        *value = 0;
-        return cbor_get_null(in, in_len, offset);
-    }
-
-    uint8_t major = 0;
-    sm2_ic_error_t ret = cbor_get_type_value(in, in_len, offset, &major, value);
-    if (ret != SM2_IC_SUCCESS || major != 0)
-        return SM2_IC_ERR_CBOR;
-    return SM2_IC_SUCCESS;
-}
-
 sm2_ic_error_t cbor_encode_member_proof_inner(
     const sm2_rev_member_proof_t *proof, uint8_t *output, size_t output_cap,
     size_t *offset)
@@ -255,7 +230,7 @@ sm2_ic_error_t cbor_encode_member_proof_inner(
     if (proof->sibling_count > SM2_REV_MERKLE_MAX_DEPTH)
         return SM2_IC_ERR_PARAM;
 
-    sm2_ic_error_t ret = cbor_put_type_value(4, 10, output, output_cap, offset);
+    sm2_ic_error_t ret = cbor_put_type_value(4, 5, output, output_cap, offset);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -264,31 +239,8 @@ sm2_ic_error_t cbor_encode_member_proof_inner(
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    ret = cbor_put_type_value(
-        0, (uint64_t)proof->leaf_index, output, output_cap, offset);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    ret = cbor_put_type_value(
-        0, (uint64_t)proof->leaf_count, output, output_cap, offset);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    ret = cbor_put_bool(proof->has_prev, output, output_cap, offset);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    ret = cbor_put_optional_u64(
-        proof->has_prev, proof->prev_serial, output, output_cap, offset);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    ret = cbor_put_bool(proof->has_next, output, output_cap, offset);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    ret = cbor_put_optional_u64(
-        proof->has_next, proof->next_serial, output, output_cap, offset);
+    ret = cbor_put_bytes(
+        proof->key, SM2_REV_MERKLE_HASH_LEN, output, output_cap, offset);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -330,7 +282,7 @@ sm2_ic_error_t cbor_decode_member_proof_inner(sm2_rev_member_proof_t *proof,
         = cbor_get_type_value(input, input_len, offset, &major, &arr_len);
     if (ret != SM2_IC_SUCCESS)
         return ret;
-    if (major != 4 || arr_len != 10)
+    if (major != 4 || arr_len != 5)
         return SM2_IC_ERR_CBOR;
 
     uint64_t serial = 0;
@@ -338,39 +290,11 @@ sm2_ic_error_t cbor_decode_member_proof_inner(sm2_rev_member_proof_t *proof,
     if (ret != SM2_IC_SUCCESS || major != 0)
         return SM2_IC_ERR_CBOR;
 
-    uint64_t leaf_idx = 0;
-    ret = cbor_get_type_value(input, input_len, offset, &major, &leaf_idx);
-    if (ret != SM2_IC_SUCCESS || major != 0)
+    uint8_t key[SM2_REV_MERKLE_HASH_LEN];
+    size_t key_len = 0;
+    ret = cbor_get_bytes(input, input_len, offset, key, sizeof(key), &key_len);
+    if (ret != SM2_IC_SUCCESS || key_len != SM2_REV_MERKLE_HASH_LEN)
         return SM2_IC_ERR_CBOR;
-
-    uint64_t leaf_count = 0;
-    ret = cbor_get_type_value(input, input_len, offset, &major, &leaf_count);
-    if (ret != SM2_IC_SUCCESS || major != 0)
-        return SM2_IC_ERR_CBOR;
-    if (leaf_idx > SIZE_MAX || leaf_count > SIZE_MAX)
-        return SM2_IC_ERR_CBOR;
-
-    bool has_prev = false;
-    ret = cbor_get_bool(input, input_len, offset, &has_prev);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    uint64_t prev_serial = 0;
-    ret = cbor_get_optional_u64(
-        input, input_len, offset, has_prev, &prev_serial);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    bool has_next = false;
-    ret = cbor_get_bool(input, input_len, offset, &has_next);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    uint64_t next_serial = 0;
-    ret = cbor_get_optional_u64(
-        input, input_len, offset, has_next, &next_serial);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
 
     uint64_t sibling_count = 0;
     ret = cbor_get_type_value(input, input_len, offset, &major, &sibling_count);
@@ -386,12 +310,7 @@ sm2_ic_error_t cbor_decode_member_proof_inner(sm2_rev_member_proof_t *proof,
 
     memset(proof, 0, sizeof(*proof));
     proof->serial_number = serial;
-    proof->leaf_index = (size_t)leaf_idx;
-    proof->leaf_count = (size_t)leaf_count;
-    proof->has_prev = has_prev;
-    proof->prev_serial = prev_serial;
-    proof->has_next = has_next;
-    proof->next_serial = next_serial;
+    memcpy(proof->key, key, SM2_REV_MERKLE_HASH_LEN);
     proof->sibling_count = (size_t)sibling_count;
 
     for (size_t i = 0; i < proof->sibling_count; i++)
@@ -451,7 +370,10 @@ sm2_ic_error_t sm2_rev_absence_proof_encode(
         return SM2_IC_ERR_PARAM;
 
     size_t off = 0;
-    sm2_ic_error_t ret = cbor_put_type_value(4, 4, output, *output_len, &off);
+    if (proof->sibling_count > SM2_REV_MERKLE_MAX_DEPTH)
+        return SM2_IC_ERR_PARAM;
+
+    sm2_ic_error_t ret = cbor_put_type_value(4, 6, output, *output_len, &off);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -460,27 +382,37 @@ sm2_ic_error_t sm2_rev_absence_proof_encode(
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    ret = cbor_put_type_value(0, proof->leaf_count, output, *output_len, &off);
+    ret = cbor_put_bytes(
+        proof->target_key, SM2_REV_MERKLE_HASH_LEN, output, *output_len, &off);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    ret = cbor_put_bool(proof->has_anchor, output, *output_len, &off);
+    ret = cbor_put_bool(proof->tree_empty, output, *output_len, &off);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    if (proof->has_anchor)
+    ret = cbor_put_type_value(
+        0, (uint64_t)proof->sibling_count, output, *output_len, &off);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    ret = cbor_put_type_value(
+        4, (uint64_t)proof->sibling_count, output, *output_len, &off);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    for (size_t i = 0; i < proof->sibling_count; i++)
     {
-        ret = cbor_encode_member_proof_inner(
-            &proof->anchor_proof, output, *output_len, &off);
+        ret = cbor_put_bytes(proof->sibling_hashes[i], SM2_REV_MERKLE_HASH_LEN,
+            output, *output_len, &off);
         if (ret != SM2_IC_SUCCESS)
             return ret;
     }
-    else
-    {
-        ret = cbor_put_null(output, *output_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-    }
+
+    ret = cbor_put_bytes(proof->sibling_on_left, proof->sibling_count, output,
+        *output_len, &off);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
 
     *output_len = off;
     return SM2_IC_SUCCESS;
@@ -499,7 +431,7 @@ sm2_ic_error_t sm2_rev_absence_proof_decode(
     uint64_t arr_len = 0;
     sm2_ic_error_t ret
         = cbor_get_type_value(input, input_len, &off, &major, &arr_len);
-    if (ret != SM2_IC_SUCCESS || major != 4 || arr_len != 4)
+    if (ret != SM2_IC_SUCCESS || major != 4 || arr_len != 6)
         return SM2_IC_ERR_CBOR;
 
     uint64_t target = 0;
@@ -508,29 +440,44 @@ sm2_ic_error_t sm2_rev_absence_proof_decode(
         return SM2_IC_ERR_CBOR;
     proof->target_serial = target;
 
-    uint64_t leaf_count = 0;
-    ret = cbor_get_type_value(input, input_len, &off, &major, &leaf_count);
-    if (ret != SM2_IC_SUCCESS || major != 0 || leaf_count > SIZE_MAX)
+    size_t key_len = 0;
+    ret = cbor_get_bytes(input, input_len, &off, proof->target_key,
+        SM2_REV_MERKLE_HASH_LEN, &key_len);
+    if (ret != SM2_IC_SUCCESS || key_len != SM2_REV_MERKLE_HASH_LEN)
         return SM2_IC_ERR_CBOR;
-    proof->leaf_count = (size_t)leaf_count;
 
-    ret = cbor_get_bool(input, input_len, &off, &proof->has_anchor);
+    ret = cbor_get_bool(input, input_len, &off, &proof->tree_empty);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    if (proof->has_anchor)
+    uint64_t sibling_count = 0;
+    ret = cbor_get_type_value(input, input_len, &off, &major, &sibling_count);
+    if (ret != SM2_IC_SUCCESS || major != 0
+        || sibling_count > SM2_REV_MERKLE_MAX_DEPTH)
     {
-        ret = cbor_decode_member_proof_inner(
-            &proof->anchor_proof, input, input_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
+        return SM2_IC_ERR_CBOR;
     }
-    else
+    proof->sibling_count = (size_t)sibling_count;
+
+    uint64_t hash_arr_len = 0;
+    ret = cbor_get_type_value(input, input_len, &off, &major, &hash_arr_len);
+    if (ret != SM2_IC_SUCCESS || major != 4 || hash_arr_len != sibling_count)
+        return SM2_IC_ERR_CBOR;
+
+    for (size_t i = 0; i < proof->sibling_count; i++)
     {
-        ret = cbor_get_null(input, input_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
+        size_t hash_len = 0;
+        ret = cbor_get_bytes(input, input_len, &off, proof->sibling_hashes[i],
+            SM2_REV_MERKLE_HASH_LEN, &hash_len);
+        if (ret != SM2_IC_SUCCESS || hash_len != SM2_REV_MERKLE_HASH_LEN)
+            return SM2_IC_ERR_CBOR;
     }
+
+    size_t path_len = 0;
+    ret = cbor_get_bytes(input, input_len, &off, proof->sibling_on_left,
+        SM2_REV_MERKLE_MAX_DEPTH, &path_len);
+    if (ret != SM2_IC_SUCCESS || path_len != proof->sibling_count)
+        return SM2_IC_ERR_CBOR;
 
     if (off != input_len)
         return SM2_IC_ERR_CBOR;
@@ -677,7 +624,6 @@ static void epoch_dir_decode_reset(sm2_rev_epoch_dir_t *directory)
     if (!directory)
         return;
 
-    free(directory->cached_hashes);
     free(directory->patch_items);
     memset(directory, 0, sizeof(*directory));
 }
@@ -808,12 +754,7 @@ sm2_ic_error_t multiproof_expand_member(const sm2_rev_multi_proof_t *proof,
 
     memset(member, 0, sizeof(*member));
     member->serial_number = item->serial_number;
-    member->leaf_index = item->leaf_index;
-    member->leaf_count = item->leaf_count;
-    member->has_prev = item->has_prev;
-    member->prev_serial = item->prev_serial;
-    member->has_next = item->has_next;
-    member->next_serial = item->next_serial;
+    memcpy(member->key, item->key, SM2_REV_MERKLE_HASH_LEN);
     member->sibling_count = item->sibling_count;
 
     for (size_t i = 0; i < item->sibling_count; i++)
@@ -836,7 +777,7 @@ sm2_ic_error_t sm2_rev_multi_proof_build(const sm2_rev_tree_t *tree,
 {
     if (!tree || !proof || !serial_numbers || serial_count == 0)
         return SM2_IC_ERR_PARAM;
-    if (!tree->node_hashes || tree->level_count == 0 || tree->leaf_count == 0)
+    if (sm2_rev_tree_leaf_count(tree) == 0)
         return SM2_IC_ERR_PARAM;
     if (serial_count > SM2_REV_MERKLE_MULTI_MAX_QUERIES)
         return SM2_IC_ERR_PARAM;
@@ -856,12 +797,12 @@ sm2_ic_error_t sm2_rev_multi_proof_build(const sm2_rev_tree_t *tree,
         return SM2_IC_ERR_MEMORY;
 
     size_t hash_capacity = 0;
-    if (tree->level_count > (SIZE_MAX / serial_count))
+    if (SM2_REV_MERKLE_MAX_DEPTH > (SIZE_MAX / serial_count))
     {
         multiproof_reset(state);
         return SM2_IC_ERR_MEMORY;
     }
-    size_t hard_limit = serial_count * tree->level_count;
+    size_t hard_limit = serial_count * SM2_REV_MERKLE_MAX_DEPTH;
     if (hard_limit == 0)
     {
         multiproof_reset(state);
@@ -897,12 +838,7 @@ sm2_ic_error_t sm2_rev_multi_proof_build(const sm2_rev_tree_t *tree,
 
         sm2_rev_multi_item_t *item = &state->items[i];
         item->serial_number = member.serial_number;
-        item->leaf_index = member.leaf_index;
-        item->leaf_count = member.leaf_count;
-        item->has_prev = member.has_prev;
-        item->prev_serial = member.prev_serial;
-        item->has_next = member.has_next;
-        item->next_serial = member.next_serial;
+        memcpy(item->key, member.key, SM2_REV_MERKLE_HASH_LEN);
         item->sibling_count = member.sibling_count;
 
         for (size_t j = 0; j < member.sibling_count; j++)
@@ -1004,7 +940,7 @@ sm2_ic_error_t sm2_rev_multi_proof_encode(
         if (item->sibling_count > SM2_REV_MERKLE_MAX_DEPTH)
             return SM2_IC_ERR_PARAM;
 
-        ret = cbor_put_type_value(4, 10, output, *output_len, &off);
+        ret = cbor_put_type_value(4, 5, output, *output_len, &off);
         if (ret != SM2_IC_SUCCESS)
             return ret;
 
@@ -1013,31 +949,8 @@ sm2_ic_error_t sm2_rev_multi_proof_encode(
         if (ret != SM2_IC_SUCCESS)
             return ret;
 
-        ret = cbor_put_type_value(
-            0, (uint64_t)item->leaf_index, output, *output_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-
-        ret = cbor_put_type_value(
-            0, (uint64_t)item->leaf_count, output, *output_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-
-        ret = cbor_put_bool(item->has_prev, output, *output_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-
-        ret = cbor_put_optional_u64(
-            item->has_prev, item->prev_serial, output, *output_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-
-        ret = cbor_put_bool(item->has_next, output, *output_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-
-        ret = cbor_put_optional_u64(
-            item->has_next, item->next_serial, output, *output_len, &off);
+        ret = cbor_put_bytes(
+            item->key, SM2_REV_MERKLE_HASH_LEN, output, *output_len, &off);
         if (ret != SM2_IC_SUCCESS)
             return ret;
 
@@ -1153,7 +1066,7 @@ sm2_ic_error_t sm2_rev_multi_proof_decode(
         uint64_t item_arr_len = 0;
         ret = cbor_get_type_value(
             input, input_len, &off, &major, &item_arr_len);
-        if (ret != SM2_IC_SUCCESS || major != 4 || item_arr_len != 10)
+        if (ret != SM2_IC_SUCCESS || major != 4 || item_arr_len != 5)
         {
             multiproof_reset(state);
             return SM2_IC_ERR_CBOR;
@@ -1167,59 +1080,14 @@ sm2_ic_error_t sm2_rev_multi_proof_decode(
             return SM2_IC_ERR_CBOR;
         }
 
-        uint64_t leaf_idx = 0;
-        ret = cbor_get_type_value(input, input_len, &off, &major, &leaf_idx);
-        if (ret != SM2_IC_SUCCESS || major != 0)
+        uint8_t key[SM2_REV_MERKLE_HASH_LEN];
+        size_t key_len = 0;
+        ret = cbor_get_bytes(
+            input, input_len, &off, key, sizeof(key), &key_len);
+        if (ret != SM2_IC_SUCCESS || key_len != SM2_REV_MERKLE_HASH_LEN)
         {
             multiproof_reset(state);
             return SM2_IC_ERR_CBOR;
-        }
-
-        uint64_t leaf_count = 0;
-        ret = cbor_get_type_value(input, input_len, &off, &major, &leaf_count);
-        if (ret != SM2_IC_SUCCESS || major != 0)
-        {
-            multiproof_reset(state);
-            return SM2_IC_ERR_CBOR;
-        }
-        if (leaf_idx > SIZE_MAX || leaf_count > SIZE_MAX)
-        {
-            multiproof_reset(state);
-            return SM2_IC_ERR_CBOR;
-        }
-
-        bool has_prev = false;
-        ret = cbor_get_bool(input, input_len, &off, &has_prev);
-        if (ret != SM2_IC_SUCCESS)
-        {
-            multiproof_reset(state);
-            return ret;
-        }
-
-        uint64_t prev_serial = 0;
-        ret = cbor_get_optional_u64(
-            input, input_len, &off, has_prev, &prev_serial);
-        if (ret != SM2_IC_SUCCESS)
-        {
-            multiproof_reset(state);
-            return ret;
-        }
-
-        bool has_next = false;
-        ret = cbor_get_bool(input, input_len, &off, &has_next);
-        if (ret != SM2_IC_SUCCESS)
-        {
-            multiproof_reset(state);
-            return ret;
-        }
-
-        uint64_t next_serial = 0;
-        ret = cbor_get_optional_u64(
-            input, input_len, &off, has_next, &next_serial);
-        if (ret != SM2_IC_SUCCESS)
-        {
-            multiproof_reset(state);
-            return ret;
         }
 
         uint64_t sibling_count = 0;
@@ -1242,12 +1110,7 @@ sm2_ic_error_t sm2_rev_multi_proof_decode(
 
         sm2_rev_multi_item_t *item = &state->items[i];
         item->serial_number = serial;
-        item->leaf_index = (size_t)leaf_idx;
-        item->leaf_count = (size_t)leaf_count;
-        item->has_prev = has_prev;
-        item->prev_serial = prev_serial;
-        item->has_next = has_next;
-        item->next_serial = next_serial;
+        memcpy(item->key, key, SM2_REV_MERKLE_HASH_LEN);
         item->sibling_count = (size_t)sibling_count;
 
         for (size_t j = 0; j < item->sibling_count; j++)
@@ -1323,72 +1186,10 @@ sm2_ic_error_t cbor_get_bytes_alloc(const uint8_t *in, size_t in_len,
     return SM2_IC_SUCCESS;
 }
 
-sm2_ic_error_t sm2_rev_cached_member_proof_encode(
-    const sm2_rev_cached_member_proof_t *proof, uint8_t *output,
-    size_t *output_len)
-{
-    if (!proof || !output || !output_len)
-        return SM2_IC_ERR_PARAM;
-
-    size_t off = 0;
-    sm2_ic_error_t ret = cbor_put_type_value(4, 2, output, *output_len, &off);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    ret = cbor_put_type_value(
-        0, (uint64_t)proof->omitted_top_levels, output, *output_len, &off);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    ret = cbor_encode_member_proof_inner(
-        &proof->proof, output, *output_len, &off);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    *output_len = off;
-    return SM2_IC_SUCCESS;
-}
-
-sm2_ic_error_t sm2_rev_cached_member_proof_decode(
-    sm2_rev_cached_member_proof_t *proof, const uint8_t *input,
-    size_t input_len)
-{
-    if (!proof || !input)
-        return SM2_IC_ERR_PARAM;
-
-    memset(proof, 0, sizeof(*proof));
-
-    size_t off = 0;
-    uint8_t major = 0;
-    uint64_t arr_len = 0;
-    sm2_ic_error_t ret
-        = cbor_get_type_value(input, input_len, &off, &major, &arr_len);
-    if (ret != SM2_IC_SUCCESS || major != 4 || arr_len != 2)
-        return SM2_IC_ERR_CBOR;
-
-    uint64_t omitted = 0;
-    ret = cbor_get_type_value(input, input_len, &off, &major, &omitted);
-    if (ret != SM2_IC_SUCCESS || major != 0
-        || omitted > SM2_REV_MERKLE_MAX_DEPTH)
-        return SM2_IC_ERR_CBOR;
-
-    ret = cbor_decode_member_proof_inner(&proof->proof, input, input_len, &off);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    if (off != input_len)
-        return SM2_IC_ERR_CBOR;
-
-    proof->omitted_top_levels = (size_t)omitted;
-    return SM2_IC_SUCCESS;
-}
-
 sm2_ic_error_t sm2_rev_epoch_dir_encode(
     const sm2_rev_epoch_dir_t *directory, uint8_t *output, size_t *output_len)
 {
     if (!directory || !output || !output_len)
-        return SM2_IC_ERR_PARAM;
-    if (!directory->cached_hashes || directory->cache_level_count == 0)
         return SM2_IC_ERR_PARAM;
     if (directory->directory_signature_len == 0
         || directory->directory_signature_len
@@ -1405,7 +1206,7 @@ sm2_ic_error_t sm2_rev_epoch_dir_encode(
         return ret;
 
     size_t off = 0;
-    ret = cbor_put_type_value(4, 8, output, *output_len, &off);
+    ret = cbor_put_type_value(4, 6, output, *output_len, &off);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -1422,37 +1223,6 @@ sm2_ic_error_t sm2_rev_epoch_dir_encode(
         0, (uint64_t)directory->tree_level_count, output, *output_len, &off);
     if (ret != SM2_IC_SUCCESS)
         return ret;
-
-    ret = cbor_put_type_value(
-        0, (uint64_t)directory->cache_level_count, output, *output_len, &off);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    ret = cbor_put_type_value(
-        4, (uint64_t)directory->cache_level_count, output, *output_len, &off);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
-    for (size_t i = 0; i < directory->cache_level_count; i++)
-    {
-        ret = cbor_put_type_value(4, 2, output, *output_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-
-        ret = cbor_put_type_value(0,
-            (uint64_t)directory->cached_level_indices[i], output, *output_len,
-            &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-
-        size_t level_size = directory->cached_level_sizes[i];
-        size_t level_off = directory->cached_level_offsets[i];
-        ret = cbor_put_bytes(
-            (const uint8_t *)(directory->cached_hashes + level_off),
-            level_size * SM2_REV_MERKLE_HASH_LEN, output, *output_len, &off);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-    }
 
     ret = cbor_put_type_value(
         0, directory->patch_version, output, *output_len, &off);
@@ -1506,7 +1276,7 @@ sm2_ic_error_t sm2_rev_epoch_dir_decode(
     uint8_t major = 0;
     uint64_t arr_len = 0;
     ret = cbor_get_type_value(input, input_len, &off, &major, &arr_len);
-    if (ret != SM2_IC_SUCCESS || major != 4 || arr_len != 8)
+    if (ret != SM2_IC_SUCCESS || major != 4 || arr_len != 6)
         return SM2_IC_ERR_CBOR;
 
     ret = cbor_get_type_value(input, input_len, &off, &major, &state->epoch_id);
@@ -1526,91 +1296,12 @@ sm2_ic_error_t sm2_rev_epoch_dir_decode(
 
     uint64_t tree_levels = 0;
     ret = cbor_get_type_value(input, input_len, &off, &major, &tree_levels);
-    if (ret != SM2_IC_SUCCESS || major != 0 || tree_levels <= 1
-        || tree_levels > SM2_REV_MERKLE_MAX_DEPTH)
+    if (ret != SM2_IC_SUCCESS || major != 0
+        || tree_levels != SM2_REV_MERKLE_MAX_DEPTH + 1U)
     {
         return SM2_IC_ERR_CBOR;
     }
     state->tree_level_count = (size_t)tree_levels;
-
-    uint64_t cache_levels = 0;
-    ret = cbor_get_type_value(input, input_len, &off, &major, &cache_levels);
-    if (ret != SM2_IC_SUCCESS || major != 0 || cache_levels == 0
-        || cache_levels > SM2_REV_MERKLE_EPOCH_MAX_CACHE_LEVELS
-        || cache_levels >= tree_levels)
-    {
-        return SM2_IC_ERR_CBOR;
-    }
-    state->cache_level_count = (size_t)cache_levels;
-
-    uint64_t level_arr_len = 0;
-    ret = cbor_get_type_value(input, input_len, &off, &major, &level_arr_len);
-    if (ret != SM2_IC_SUCCESS || major != 4 || level_arr_len != cache_levels)
-        return SM2_IC_ERR_CBOR;
-
-    uint8_t *level_blobs[SM2_REV_MERKLE_MAX_DEPTH];
-    size_t level_blob_lens[SM2_REV_MERKLE_MAX_DEPTH];
-    memset(level_blobs, 0, sizeof(level_blobs));
-    memset(level_blob_lens, 0, sizeof(level_blob_lens));
-
-    size_t total_hashes = 0;
-    for (size_t i = 0; i < state->cache_level_count; i++)
-    {
-        uint64_t entry_len = 0;
-        ret = cbor_get_type_value(input, input_len, &off, &major, &entry_len);
-        if (ret != SM2_IC_SUCCESS || major != 4 || entry_len != 2)
-            goto decode_fail;
-
-        uint64_t level_idx = 0;
-        ret = cbor_get_type_value(input, input_len, &off, &major, &level_idx);
-        if (ret != SM2_IC_SUCCESS || major != 0 || level_idx >= tree_levels)
-            goto decode_fail;
-
-        uint8_t *blob = NULL;
-        size_t blob_len = 0;
-        ret = cbor_get_bytes_alloc(input, input_len, &off, &blob, &blob_len);
-        if (ret != SM2_IC_SUCCESS)
-            goto decode_fail;
-        if (blob_len == 0 || (blob_len % SM2_REV_MERKLE_HASH_LEN) != 0)
-        {
-            free(blob);
-            ret = SM2_IC_ERR_CBOR;
-            goto decode_fail;
-        }
-
-        size_t level_size = blob_len / SM2_REV_MERKLE_HASH_LEN;
-        if (total_hashes > SIZE_MAX - level_size)
-        {
-            free(blob);
-            ret = SM2_IC_ERR_CBOR;
-            goto decode_fail;
-        }
-
-        state->cached_level_indices[i] = (size_t)level_idx;
-        state->cached_level_sizes[i] = level_size;
-        state->cached_level_offsets[i] = total_hashes;
-        total_hashes += level_size;
-
-        level_blobs[i] = blob;
-        level_blob_lens[i] = blob_len;
-    }
-
-    state->cached_hash_count = total_hashes;
-    state->cached_hashes = calloc(total_hashes, sizeof(*state->cached_hashes));
-    if (!state->cached_hashes)
-    {
-        ret = SM2_IC_ERR_MEMORY;
-        goto decode_fail;
-    }
-
-    for (size_t i = 0; i < state->cache_level_count; i++)
-    {
-        size_t level_off = state->cached_level_offsets[i];
-        memcpy(state->cached_hashes + level_off, level_blobs[i],
-            level_blob_lens[i]);
-        free(level_blobs[i]);
-        level_blobs[i] = NULL;
-    }
 
     ret = cbor_get_type_value(
         input, input_len, &off, &major, &state->patch_version);
@@ -1674,8 +1365,6 @@ sm2_ic_error_t sm2_rev_epoch_dir_decode(
     return SM2_IC_SUCCESS;
 
 decode_fail:
-    for (size_t i = 0; i < SM2_REV_MERKLE_MAX_DEPTH; i++)
-        free(level_blobs[i]);
     epoch_dir_decode_reset(state);
     return ret;
 }

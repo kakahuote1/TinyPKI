@@ -46,7 +46,7 @@ static void test_merkle_hot_patch_stale_version_rejected(void)
     merkle_ca_sig_ctx_t ctx = { &g_ca_priv, &g_ca_pub };
     sm2_rev_epoch_dir_t *dir = NULL;
     TEST_ASSERT(sm2_rev_epoch_dir_build(
-                    tree, 1, 4, 1000, 9000, merkle_ca_sign_cb, &ctx, &dir)
+                    tree, 1, 1000, 9000, merkle_ca_sign_cb, &ctx, &dir)
             == SM2_IC_SUCCESS,
         "Build epoch dir");
 
@@ -98,7 +98,7 @@ static void test_merkle_multiproof_over_limit_rejected(void)
     TEST_PASS();
 }
 
-static void test_merkle_member_leaf_index_path_bound(void)
+static void test_merkle_member_sparse_key_path_bound(void)
 {
     uint64_t revoked[] = { 10, 20, 30, 40, 50, 60, 70, 80 };
     sm2_rev_tree_t *tree = NULL;
@@ -112,19 +112,20 @@ static void test_merkle_member_leaf_index_path_bound(void)
     sm2_rev_member_proof_t proof;
     TEST_ASSERT(sm2_rev_tree_prove_member(tree, 40, &proof) == SM2_IC_SUCCESS,
         "Build member proof");
-    TEST_ASSERT(proof.leaf_index == 3, "Expected source leaf index");
+    TEST_ASSERT(proof.sibling_count == SM2_REV_MERKLE_MAX_DEPTH,
+        "Sparse proof has fixed depth");
 
     sm2_rev_member_proof_t tampered = proof;
-    tampered.leaf_index = 4;
+    tampered.key[0] ^= 0x01U;
     TEST_ASSERT(
         sm2_rev_tree_verify_member(root_hash, &tampered) == SM2_IC_ERR_VERIFY,
-        "Tampered leaf index must be path-bound");
+        "Tampered sparse key must be path-bound");
 
     sm2_rev_tree_cleanup(&tree);
     TEST_PASS();
 }
 
-static void test_merkle_absence_anchor_neighbor_commitment(void)
+static void test_merkle_absence_sparse_path_commitment(void)
 {
     uint64_t revoked[] = { 2, 5, 9 };
     sm2_rev_tree_t *tree = NULL;
@@ -138,20 +139,18 @@ static void test_merkle_absence_anchor_neighbor_commitment(void)
     sm2_rev_absence_proof_t proof;
     TEST_ASSERT(sm2_rev_tree_prove_absence(tree, 3, &proof) == SM2_IC_SUCCESS,
         "Build absence proof");
-    TEST_ASSERT(proof.has_anchor, "Absence proof has anchor");
-    TEST_ASSERT(proof.anchor_proof.serial_number == 2, "Anchor is left item");
-    TEST_ASSERT(
-        proof.anchor_proof.has_next && proof.anchor_proof.next_serial == 5,
-        "Anchor commits right neighbor");
+    TEST_ASSERT(!proof.tree_empty, "Absence proof is non-empty sparse path");
+    TEST_ASSERT(proof.sibling_count == SM2_REV_MERKLE_MAX_DEPTH,
+        "Absence proof has fixed sparse depth");
     TEST_ASSERT(
         sm2_rev_tree_verify_absence(root_hash, &proof) == SM2_IC_SUCCESS,
         "Verify absence proof");
 
     sm2_rev_absence_proof_t tampered = proof;
-    tampered.anchor_proof.next_serial = 9;
+    tampered.sibling_hashes[0][0] ^= 0x01U;
     TEST_ASSERT(
         sm2_rev_tree_verify_absence(root_hash, &tampered) == SM2_IC_ERR_VERIFY,
-        "Tampered neighbor commitment must fail");
+        "Tampered sparse path must fail");
 
     sm2_rev_tree_cleanup(&tree);
     TEST_PASS();

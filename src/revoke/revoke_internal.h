@@ -15,6 +15,7 @@ struct sm2_rev_ctx_st
     uint64_t *revoked_serials;
     size_t revoked_count;
     size_t revoked_capacity;
+    sm2_rev_tree_t *rev_tree;
 
     sm2_rev_lookup_fn merkle_query_fn;
     void *merkle_query_user_ctx;

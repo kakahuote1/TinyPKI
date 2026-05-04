@@ -385,13 +385,26 @@ struct sm2_pki_issuance_tree_st
     uint64_t root_version;
     size_t leaf_count;
     uint8_t (*commitments)[SM2_PKI_ISSUANCE_COMMITMENT_LEN];
-    size_t level_count;
-    size_t level_offsets[SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH];
-    size_t level_sizes[SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH];
-    uint8_t *node_hashes;
-    size_t node_hashes_len;
+    size_t commitment_capacity;
+    struct sm2_pki_issuance_node_st *nodes;
+    size_t node_count;
+    size_t node_capacity;
+    size_t peaks[SM2_PKI_ISSUANCE_MAX_PEAKS];
+    size_t peak_count;
     uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN];
 };
+
+typedef struct sm2_pki_issuance_node_st
+{
+    uint8_t hash[SM2_REV_MERKLE_HASH_LEN];
+    size_t left;
+    size_t right;
+    size_t parent;
+    size_t leaf_index;
+    size_t leaf_count;
+    size_t height;
+    bool is_leaf;
+} sm2_pki_issuance_node_t;
 
 static void pki_issuance_u64_to_be(uint64_t v, uint8_t out[8])
 {
@@ -404,7 +417,7 @@ static void pki_issuance_tree_reset(sm2_pki_issuance_tree_t *tree)
     if (!tree)
         return;
     free(tree->commitments);
-    free(tree->node_hashes);
+    free(tree->nodes);
     memset(tree, 0, sizeof(*tree));
 }
 
@@ -451,36 +464,36 @@ static sm2_ic_error_t pki_issuance_hash_parent(
     return sm2_ic_sm3_hash(buf, sizeof(buf), out_hash);
 }
 
-static sm2_ic_error_t pki_issuance_calc_layout(
-    sm2_pki_issuance_tree_t *tree, size_t leaf_count, size_t *out_total_nodes)
+static sm2_ic_error_t pki_issuance_hash_root(size_t leaf_count,
+    size_t peak_count,
+    const uint8_t peak_hashes[SM2_PKI_ISSUANCE_MAX_PEAKS]
+                             [SM2_REV_MERKLE_HASH_LEN],
+    uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN])
 {
-    size_t level = 0;
-    size_t n = leaf_count;
-    size_t total_nodes = 0;
+    static const uint8_t tag[] = "SM2PKI_ISSUANCE_MMR_ROOT_V1";
+    uint8_t buf[(sizeof(tag) - 1U) + 16U
+        + SM2_PKI_ISSUANCE_MAX_PEAKS * SM2_REV_MERKLE_HASH_LEN];
 
-    if (!tree || !out_total_nodes || leaf_count == 0)
+    if (!out_hash || peak_count > SM2_PKI_ISSUANCE_MAX_PEAKS)
+        return SM2_IC_ERR_PARAM;
+    if (leaf_count == 0)
+        return pki_issuance_hash_empty(out_hash);
+    if (!peak_hashes || peak_count == 0)
         return SM2_IC_ERR_PARAM;
 
-    while (true)
+    size_t off = 0;
+    memcpy(buf + off, tag, sizeof(tag) - 1U);
+    off += sizeof(tag) - 1U;
+    pki_issuance_u64_to_be((uint64_t)leaf_count, buf + off);
+    off += 8U;
+    pki_issuance_u64_to_be((uint64_t)peak_count, buf + off);
+    off += 8U;
+    for (size_t i = 0; i < peak_count; i++)
     {
-        if (level >= SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH)
-            return SM2_IC_ERR_PARAM;
-
-        tree->level_sizes[level] = n;
-        tree->level_offsets[level] = total_nodes;
-        if (total_nodes > SIZE_MAX - n)
-            return SM2_IC_ERR_MEMORY;
-        total_nodes += n;
-
-        level++;
-        if (n == 1)
-            break;
-        n = (n + 1U) / 2U;
+        memcpy(buf + off, peak_hashes[i], SM2_REV_MERKLE_HASH_LEN);
+        off += SM2_REV_MERKLE_HASH_LEN;
     }
-
-    tree->level_count = level;
-    *out_total_nodes = total_nodes;
-    return SM2_IC_SUCCESS;
+    return sm2_ic_sm3_hash(buf, off, out_hash);
 }
 
 sm2_ic_error_t sm2_pki_issuance_tree_build(sm2_pki_issuance_tree_t **tree,
@@ -500,65 +513,14 @@ sm2_ic_error_t sm2_pki_issuance_tree_build(sm2_pki_issuance_tree_t **tree,
 
     sm2_pki_issuance_tree_t *state = *tree;
     pki_issuance_tree_reset(state);
-    state->root_version = root_version;
-
-    if (commitment_count == 0)
-    {
-        state->leaf_count = 0;
-        state->level_count = 1;
-        state->level_sizes[0] = 1;
-        state->level_offsets[0] = 0;
-        state->node_hashes_len = SM2_REV_MERKLE_HASH_LEN;
-        state->node_hashes = (uint8_t *)calloc(1, state->node_hashes_len);
-        if (!state->node_hashes)
-            return SM2_IC_ERR_MEMORY;
-        sm2_ic_error_t ret = pki_issuance_hash_empty(state->node_hashes);
-        if (ret != SM2_IC_SUCCESS)
-        {
-            pki_issuance_tree_reset(state);
-            return ret;
-        }
-        memcpy(state->root_hash, state->node_hashes, SM2_REV_MERKLE_HASH_LEN);
-        return SM2_IC_SUCCESS;
-    }
-
-    if (commitment_count > SIZE_MAX / sizeof(*state->commitments))
-        return SM2_IC_ERR_MEMORY;
-    size_t commitments_size = commitment_count * sizeof(*state->commitments);
-    state->commitments = malloc(commitments_size);
-    if (!state->commitments)
-        return SM2_IC_ERR_MEMORY;
-    memcpy(state->commitments, commitments, commitments_size);
-    state->leaf_count = commitment_count;
-
-    size_t total_nodes = 0;
-    sm2_ic_error_t ret
-        = pki_issuance_calc_layout(state, commitment_count, &total_nodes);
+    state->root_version = 0;
+    sm2_ic_error_t ret = pki_issuance_hash_empty(state->root_hash);
     if (ret != SM2_IC_SUCCESS)
-    {
-        pki_issuance_tree_reset(state);
         return ret;
-    }
-    if (total_nodes > SIZE_MAX / SM2_REV_MERKLE_HASH_LEN)
-    {
-        pki_issuance_tree_reset(state);
-        return SM2_IC_ERR_MEMORY;
-    }
 
-    state->node_hashes_len = total_nodes * SM2_REV_MERKLE_HASH_LEN;
-    state->node_hashes = (uint8_t *)calloc(1, state->node_hashes_len);
-    if (!state->node_hashes)
+    for (size_t i = 0; i < commitment_count; i++)
     {
-        pki_issuance_tree_reset(state);
-        return SM2_IC_ERR_MEMORY;
-    }
-
-    size_t leaf_off = state->level_offsets[0];
-    for (size_t i = 0; i < state->leaf_count; i++)
-    {
-        uint8_t *dst
-            = state->node_hashes + (leaf_off + i) * SM2_REV_MERKLE_HASH_LEN;
-        ret = pki_issuance_hash_leaf(state->commitments[i], i, dst);
+        ret = sm2_pki_issuance_tree_append(tree, commitments[i], i + 1U);
         if (ret != SM2_IC_SUCCESS)
         {
             pki_issuance_tree_reset(state);
@@ -566,48 +528,170 @@ sm2_ic_error_t sm2_pki_issuance_tree_build(sm2_pki_issuance_tree_t **tree,
         }
     }
 
-    for (size_t level = 0; level + 1 < state->level_count; level++)
+    state->root_version = root_version;
+    return SM2_IC_SUCCESS;
+}
+
+static sm2_ic_error_t pki_issuance_ensure_commitment_capacity(
+    sm2_pki_issuance_tree_t *tree, size_t required)
+{
+    if (!tree)
+        return SM2_IC_ERR_PARAM;
+    if (required <= tree->commitment_capacity)
+        return SM2_IC_SUCCESS;
+
+    size_t new_capacity
+        = tree->commitment_capacity == 0 ? 16U : tree->commitment_capacity;
+    while (new_capacity < required)
     {
-        size_t curr_count = state->level_sizes[level];
-        size_t next_count = state->level_sizes[level + 1];
-        size_t curr_off = state->level_offsets[level];
-        size_t next_off = state->level_offsets[level + 1];
+        if (new_capacity > SIZE_MAX / 2U)
+            return SM2_IC_ERR_MEMORY;
+        new_capacity *= 2U;
+    }
+    if (new_capacity > SIZE_MAX / sizeof(*tree->commitments))
+        return SM2_IC_ERR_MEMORY;
 
-        for (size_t i = 0; i < next_count; i++)
-        {
-            size_t left_idx = i * 2U;
-            size_t right_idx = left_idx + 1U;
-            if (right_idx >= curr_count)
-                right_idx = left_idx;
+    void *new_mem
+        = realloc(tree->commitments, new_capacity * sizeof(*tree->commitments));
+    if (!new_mem)
+        return SM2_IC_ERR_MEMORY;
+    tree->commitments = new_mem;
+    tree->commitment_capacity = new_capacity;
+    return SM2_IC_SUCCESS;
+}
 
-            const uint8_t *left = state->node_hashes
-                + (curr_off + left_idx) * SM2_REV_MERKLE_HASH_LEN;
-            const uint8_t *right = state->node_hashes
-                + (curr_off + right_idx) * SM2_REV_MERKLE_HASH_LEN;
-            uint8_t *dst
-                = state->node_hashes + (next_off + i) * SM2_REV_MERKLE_HASH_LEN;
+static sm2_ic_error_t pki_issuance_ensure_node_capacity(
+    sm2_pki_issuance_tree_t *tree, size_t required)
+{
+    if (!tree)
+        return SM2_IC_ERR_PARAM;
+    if (required <= tree->node_capacity)
+        return SM2_IC_SUCCESS;
 
-            ret = pki_issuance_hash_parent(left, right, dst);
-            if (ret != SM2_IC_SUCCESS)
-            {
-                pki_issuance_tree_reset(state);
-                return ret;
-            }
-        }
+    size_t new_capacity = tree->node_capacity == 0 ? 32U : tree->node_capacity;
+    while (new_capacity < required)
+    {
+        if (new_capacity > SIZE_MAX / 2U)
+            return SM2_IC_ERR_MEMORY;
+        new_capacity *= 2U;
+    }
+    if (new_capacity > SIZE_MAX / sizeof(*tree->nodes))
+        return SM2_IC_ERR_MEMORY;
+
+    void *new_mem = realloc(tree->nodes, new_capacity * sizeof(*tree->nodes));
+    if (!new_mem)
+        return SM2_IC_ERR_MEMORY;
+    tree->nodes = new_mem;
+    tree->node_capacity = new_capacity;
+    return SM2_IC_SUCCESS;
+}
+
+static sm2_ic_error_t pki_issuance_refresh_root(sm2_pki_issuance_tree_t *tree)
+{
+    uint8_t peak_hashes[SM2_PKI_ISSUANCE_MAX_PEAKS][SM2_REV_MERKLE_HASH_LEN];
+    if (!tree)
+        return SM2_IC_ERR_PARAM;
+    for (size_t i = 0; i < tree->peak_count; i++)
+    {
+        if (tree->peaks[i] >= tree->node_count)
+            return SM2_IC_ERR_VERIFY;
+        memcpy(peak_hashes[i], tree->nodes[tree->peaks[i]].hash,
+            SM2_REV_MERKLE_HASH_LEN);
+    }
+    return pki_issuance_hash_root(
+        tree->leaf_count, tree->peak_count, peak_hashes, tree->root_hash);
+}
+
+sm2_ic_error_t sm2_pki_issuance_tree_append(sm2_pki_issuance_tree_t **tree,
+    const uint8_t commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN],
+    uint64_t root_version)
+{
+    if (!tree || !commitment)
+        return SM2_IC_ERR_PARAM;
+    if (!*tree)
+    {
+        *tree = (sm2_pki_issuance_tree_t *)calloc(1, sizeof(**tree));
+        if (!*tree)
+            return SM2_IC_ERR_MEMORY;
+        sm2_ic_error_t ret = pki_issuance_hash_empty((*tree)->root_hash);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
     }
 
-    size_t root_off = state->level_offsets[state->level_count - 1];
-    memcpy(state->root_hash,
-        state->node_hashes + root_off * SM2_REV_MERKLE_HASH_LEN,
-        SM2_REV_MERKLE_HASH_LEN);
-    return SM2_IC_SUCCESS;
+    sm2_pki_issuance_tree_t *state = *tree;
+    if (state->leaf_count >= SIZE_MAX - 1U)
+        return SM2_IC_ERR_MEMORY;
+    if (state->peak_count >= SM2_PKI_ISSUANCE_MAX_PEAKS)
+        return SM2_IC_ERR_PARAM;
+
+    sm2_ic_error_t ret = pki_issuance_ensure_commitment_capacity(
+        state, state->leaf_count + 1U);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+    ret = pki_issuance_ensure_node_capacity(state, state->node_count + 1U);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    size_t leaf_index = state->leaf_count;
+    size_t node_index = state->node_count++;
+    sm2_pki_issuance_node_t *node = &state->nodes[node_index];
+    memset(node, 0, sizeof(*node));
+    node->left = SIZE_MAX;
+    node->right = SIZE_MAX;
+    node->parent = SIZE_MAX;
+    node->leaf_index = leaf_index;
+    node->leaf_count = 1U;
+    node->height = 0;
+    node->is_leaf = true;
+    ret = pki_issuance_hash_leaf(commitment, leaf_index, node->hash);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    memcpy(state->commitments[leaf_index], commitment,
+        SM2_PKI_ISSUANCE_COMMITMENT_LEN);
+    state->leaf_count++;
+    state->peaks[state->peak_count++] = node_index;
+
+    while (state->peak_count >= 2U)
+    {
+        size_t right_peak = state->peaks[state->peak_count - 1U];
+        size_t left_peak = state->peaks[state->peak_count - 2U];
+        if (state->nodes[left_peak].height != state->nodes[right_peak].height)
+            break;
+
+        ret = pki_issuance_ensure_node_capacity(state, state->node_count + 1U);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
+        size_t parent_index = state->node_count++;
+        sm2_pki_issuance_node_t *parent = &state->nodes[parent_index];
+        memset(parent, 0, sizeof(*parent));
+        parent->left = left_peak;
+        parent->right = right_peak;
+        parent->parent = SIZE_MAX;
+        parent->leaf_index = state->nodes[left_peak].leaf_index;
+        parent->leaf_count = state->nodes[left_peak].leaf_count
+            + state->nodes[right_peak].leaf_count;
+        parent->height = state->nodes[left_peak].height + 1U;
+        parent->is_leaf = false;
+        ret = pki_issuance_hash_parent(state->nodes[left_peak].hash,
+            state->nodes[right_peak].hash, parent->hash);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
+        state->nodes[left_peak].parent = parent_index;
+        state->nodes[right_peak].parent = parent_index;
+        state->peaks[state->peak_count - 2U] = parent_index;
+        state->peak_count--;
+    }
+
+    state->root_version = root_version;
+    return pki_issuance_refresh_root(state);
 }
 
 sm2_ic_error_t sm2_pki_issuance_tree_get_root_hash(
     const sm2_pki_issuance_tree_t *tree,
     uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN])
 {
-    if (!tree || !root_hash || !tree->node_hashes)
+    if (!tree || !root_hash)
         return SM2_IC_ERR_PARAM;
     memcpy(root_hash, tree->root_hash, SM2_REV_MERKLE_HASH_LEN);
     return SM2_IC_SUCCESS;
@@ -618,11 +702,8 @@ sm2_ic_error_t sm2_pki_issuance_tree_prove_member(
     const uint8_t commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN],
     sm2_pki_issuance_member_proof_t *proof)
 {
-    if (!tree || !commitment || !proof || !tree->node_hashes
-        || tree->level_count == 0)
-    {
+    if (!tree || !commitment || !proof)
         return SM2_IC_ERR_PARAM;
-    }
     if (tree->leaf_count == 0)
         return SM2_IC_ERR_VERIFY;
 
@@ -644,23 +725,93 @@ sm2_ic_error_t sm2_pki_issuance_tree_prove_member(
     memcpy(proof->cert_commitment, commitment, SM2_PKI_ISSUANCE_COMMITMENT_LEN);
     proof->leaf_index = index;
     proof->leaf_count = tree->leaf_count;
-    proof->sibling_count = tree->level_count - 1;
 
-    size_t cur = index;
-    for (size_t level = 0; level + 1 < tree->level_count; level++)
+    size_t node_index = SIZE_MAX;
+    for (size_t i = 0; i < tree->node_count; i++)
     {
-        size_t level_count = tree->level_sizes[level];
-        size_t level_off = tree->level_offsets[level];
-        size_t sibling = (cur % 2U == 0) ? (cur + 1U) : (cur - 1U);
-        if (sibling >= level_count)
-            sibling = cur;
-
-        const uint8_t *src = tree->node_hashes
-            + (level_off + sibling) * SM2_REV_MERKLE_HASH_LEN;
-        memcpy(proof->sibling_hashes[level], src, SM2_REV_MERKLE_HASH_LEN);
-        proof->sibling_on_left[level] = sibling < cur ? 1U : 0U;
-        cur /= 2U;
+        if (tree->nodes[i].is_leaf && tree->nodes[i].leaf_index == index)
+        {
+            node_index = i;
+            break;
+        }
     }
+    if (node_index == SIZE_MAX)
+        return SM2_IC_ERR_VERIFY;
+
+    while (tree->nodes[node_index].parent != SIZE_MAX)
+    {
+        if (proof->sibling_count >= SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH)
+            return SM2_IC_ERR_PARAM;
+
+        size_t parent = tree->nodes[node_index].parent;
+        size_t sibling = tree->nodes[parent].left == node_index
+            ? tree->nodes[parent].right
+            : tree->nodes[parent].left;
+        if (sibling >= tree->node_count)
+            return SM2_IC_ERR_VERIFY;
+
+        memcpy(proof->sibling_hashes[proof->sibling_count],
+            tree->nodes[sibling].hash, SM2_REV_MERKLE_HASH_LEN);
+        proof->sibling_on_left[proof->sibling_count]
+            = tree->nodes[parent].left == sibling ? 1U : 0U;
+        proof->sibling_count++;
+        node_index = parent;
+    }
+
+    proof->peak_index = SIZE_MAX;
+    for (size_t i = 0; i < tree->peak_count; i++)
+    {
+        if (tree->peaks[i] == node_index)
+            proof->peak_index = i;
+        memcpy(proof->peak_hashes[i], tree->nodes[tree->peaks[i]].hash,
+            SM2_REV_MERKLE_HASH_LEN);
+    }
+    if (proof->peak_index == SIZE_MAX)
+        return SM2_IC_ERR_VERIFY;
+    proof->peak_count = tree->peak_count;
+    return SM2_IC_SUCCESS;
+}
+
+static size_t pki_issuance_floor_log2_size(size_t v)
+{
+    size_t bit = 0;
+    while (v > 1U)
+    {
+        v >>= 1U;
+        bit++;
+    }
+    return bit;
+}
+
+static sm2_ic_error_t pki_issuance_expected_peak(size_t leaf_count,
+    size_t leaf_index, size_t *peak_index, size_t *peak_count,
+    size_t *peak_height)
+{
+    if (!peak_index || !peak_count || !peak_height || leaf_count == 0
+        || leaf_index >= leaf_count)
+    {
+        return SM2_IC_ERR_VERIFY;
+    }
+
+    size_t start = 0;
+    size_t remaining = leaf_count;
+    size_t idx = 0;
+    while (remaining > 0)
+    {
+        size_t height = pki_issuance_floor_log2_size(remaining);
+        size_t count = ((size_t)1U) << height;
+        if (leaf_index >= start && leaf_index < start + count)
+        {
+            *peak_index = idx;
+            *peak_height = height;
+        }
+        start += count;
+        remaining -= count;
+        idx++;
+        if (idx > SM2_PKI_ISSUANCE_MAX_PEAKS)
+            return SM2_IC_ERR_VERIFY;
+    }
+    *peak_count = idx;
     return SM2_IC_SUCCESS;
 }
 
@@ -672,20 +823,29 @@ static sm2_ic_error_t pki_issuance_validate_member_shape(
     {
         return SM2_IC_ERR_VERIFY;
     }
-    if (proof->sibling_count >= SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH)
-        return SM2_IC_ERR_VERIFY;
-
-    size_t expected = 0;
-    size_t n = proof->leaf_count;
-    while (n > 1)
+    if (proof->sibling_count > SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH
+        || proof->peak_count == 0
+        || proof->peak_count > SM2_PKI_ISSUANCE_MAX_PEAKS
+        || proof->peak_index >= proof->peak_count)
     {
-        if (expected >= SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH)
-            return SM2_IC_ERR_VERIFY;
-        expected++;
-        n = (n + 1U) / 2U;
+        return SM2_IC_ERR_VERIFY;
     }
-    return proof->sibling_count == expected ? SM2_IC_SUCCESS
-                                            : SM2_IC_ERR_VERIFY;
+
+    size_t expected_peak = 0;
+    size_t expected_peak_count = 0;
+    size_t expected_height = 0;
+    sm2_ic_error_t ret
+        = pki_issuance_expected_peak(proof->leaf_count, proof->leaf_index,
+            &expected_peak, &expected_peak_count, &expected_height);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+    if (proof->peak_index != expected_peak
+        || proof->peak_count != expected_peak_count
+        || proof->sibling_count != expected_height)
+    {
+        return SM2_IC_ERR_VERIFY;
+    }
+    return SM2_IC_SUCCESS;
 }
 
 sm2_ic_error_t sm2_pki_issuance_tree_verify_member(
@@ -705,18 +865,8 @@ sm2_ic_error_t sm2_pki_issuance_tree_verify_member(
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    size_t path_index = proof->leaf_index;
-    size_t level_count = proof->leaf_count;
     for (size_t i = 0; i < proof->sibling_count; i++)
     {
-        size_t sibling
-            = (path_index % 2U == 0) ? (path_index + 1U) : (path_index - 1U);
-        if (sibling >= level_count)
-            sibling = path_index;
-        uint8_t expected_on_left = sibling < path_index ? 1U : 0U;
-        if ((proof->sibling_on_left[i] ? 1U : 0U) != expected_on_left)
-            return SM2_IC_ERR_VERIFY;
-
         if (proof->sibling_on_left[i])
             ret = pki_issuance_hash_parent(proof->sibling_hashes[i], cur, next);
         else
@@ -724,11 +874,22 @@ sm2_ic_error_t sm2_pki_issuance_tree_verify_member(
         if (ret != SM2_IC_SUCCESS)
             return ret;
         memcpy(cur, next, SM2_REV_MERKLE_HASH_LEN);
-        path_index /= 2U;
-        level_count = (level_count + 1U) / 2U;
     }
 
-    return memcmp(cur, root_hash, SM2_REV_MERKLE_HASH_LEN) == 0
+    if (memcmp(
+            cur, proof->peak_hashes[proof->peak_index], SM2_REV_MERKLE_HASH_LEN)
+        != 0)
+    {
+        return SM2_IC_ERR_VERIFY;
+    }
+
+    uint8_t expected_root[SM2_REV_MERKLE_HASH_LEN];
+    ret = pki_issuance_hash_root(proof->leaf_count, proof->peak_count,
+        proof->peak_hashes, expected_root);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    return memcmp(expected_root, root_hash, SM2_REV_MERKLE_HASH_LEN) == 0
         ? SM2_IC_SUCCESS
         : SM2_IC_ERR_VERIFY;
 }

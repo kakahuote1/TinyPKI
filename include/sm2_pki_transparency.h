@@ -22,7 +22,8 @@ extern "C"
 #define SM2_PKI_TRANSPARENCY_MAX_WITNESSES 8
 #define SM2_PKI_TRANSPARENCY_WITNESS_ID_MAX_LEN 32
 #define SM2_PKI_ISSUANCE_COMMITMENT_LEN SM2_REV_MERKLE_HASH_LEN
-#define SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH SM2_REV_MERKLE_MAX_DEPTH
+#define SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH 64
+#define SM2_PKI_ISSUANCE_MAX_PEAKS 64
 #define SM2_PKI_EPOCH_ROOT_DIGEST_LEN SM2_REV_MERKLE_HASH_LEN
 
     typedef uint8_t
@@ -74,6 +75,10 @@ extern "C"
         uint8_t sibling_hashes[SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH]
                               [SM2_REV_MERKLE_HASH_LEN];
         uint8_t sibling_on_left[SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH];
+        size_t peak_index;
+        size_t peak_count;
+        uint8_t peak_hashes[SM2_PKI_ISSUANCE_MAX_PEAKS]
+                           [SM2_REV_MERKLE_HASH_LEN];
     } sm2_pki_issuance_member_proof_t;
 
     typedef struct

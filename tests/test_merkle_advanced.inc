@@ -16,7 +16,7 @@
     merkle_ca_sig_ctx_t sig_ctx = { &g_ca_priv, &g_ca_pub };
     sm2_rev_epoch_dir_t *dir = NULL;
     TEST_ASSERT(sm2_rev_epoch_dir_build(
-                    tree, 42, 8, 1000, 2000, merkle_ca_sign_cb, &sig_ctx, &dir)
+                    tree, 42, 1000, 2000, merkle_ca_sign_cb, &sig_ctx, &dir)
             == SM2_IC_SUCCESS,
         "Build Epoch Directory");
 
@@ -42,39 +42,37 @@
         sm2_rev_tree_prove_member(tree, target, &full) == SM2_IC_SUCCESS,
         "Full Member Proof");
 
-    sm2_rev_cached_member_proof_t cached;
-    TEST_ASSERT(sm2_rev_epoch_prove_member_cached(tree, target, 8, &cached)
+    sm2_rev_member_proof_t epoch_proof;
+    TEST_ASSERT(sm2_rev_epoch_prove_member(tree, target, &epoch_proof)
             == SM2_IC_SUCCESS,
-        "Cached Member Proof");
+        "Epoch Member Proof");
 
-    uint8_t full_buf[8192];
+    uint8_t full_buf[16384];
     size_t full_len = sizeof(full_buf);
     TEST_ASSERT(sm2_rev_member_proof_encode(&full, full_buf, &full_len)
             == SM2_IC_SUCCESS,
         "Full Proof Encode");
 
-    uint8_t cached_buf[8192];
-    size_t cached_len = sizeof(cached_buf);
+    uint8_t epoch_buf[16384];
+    size_t epoch_len = sizeof(epoch_buf);
     TEST_ASSERT(
-        sm2_rev_cached_member_proof_encode(&cached, cached_buf, &cached_len)
+        sm2_rev_member_proof_encode(&epoch_proof, epoch_buf, &epoch_len)
             == SM2_IC_SUCCESS,
-        "Cached Proof Encode");
+        "Epoch Proof Encode");
 
-    sm2_rev_cached_member_proof_t cached_dec;
+    sm2_rev_member_proof_t epoch_dec;
     TEST_ASSERT(
-        sm2_rev_cached_member_proof_decode(&cached_dec, cached_buf, cached_len)
+        sm2_rev_member_proof_decode(&epoch_dec, epoch_buf, epoch_len)
             == SM2_IC_SUCCESS,
-        "Cached Proof Decode");
+        "Epoch Proof Decode");
 
-    TEST_ASSERT(sm2_rev_epoch_verify_member_cached(
-                    dir_dec, 1500, &cached_dec, merkle_ca_verify_cb, &sig_ctx)
+    TEST_ASSERT(sm2_rev_epoch_verify_member(
+                    dir_dec, 1500, &epoch_dec, merkle_ca_verify_cb, &sig_ctx)
             == SM2_IC_SUCCESS,
-        "Cached Proof Verify");
+        "Epoch Proof Verify");
 
-    double reduction = 1.0 - ((double)cached_len / (double)full_len);
-    printf("   [EPOCH-CACHE] full=%zu, cached=%zu, reduction=%.2f%%\n",
-        full_len, cached_len, reduction * 100.0);
-    TEST_ASSERT(reduction >= 0.40, "Epoch Cache Reduction < 40%");
+    TEST_ASSERT(epoch_len == full_len, "Epoch proof should be one sparse proof");
+    printf("   [EPOCH-SPARSE] full=%zu, epoch=%zu\n", full_len, epoch_len);
 
     sm2_rev_epoch_dir_cleanup(&dir_dec);
     sm2_rev_epoch_dir_cleanup(&dir);
@@ -98,7 +96,7 @@ static void test_rev_epoch_patch_priority()
     merkle_ca_sig_ctx_t sig_ctx = { &g_ca_priv, &g_ca_pub };
     sm2_rev_epoch_dir_t *dir = NULL;
     TEST_ASSERT(sm2_rev_epoch_dir_build(
-                    tree, 50, 6, 1000, 2000, merkle_ca_sign_cb, &sig_ctx, &dir)
+                    tree, 50, 1000, 2000, merkle_ca_sign_cb, &sig_ctx, &dir)
             == SM2_IC_SUCCESS,
         "Build Epoch Directory");
 
@@ -163,11 +161,11 @@ static void test_rev_epoch_switch_monotonic()
     sm2_rev_epoch_dir_t *local = NULL;
 
     TEST_ASSERT(sm2_rev_epoch_dir_build(
-                    t1, 60, 4, 1000, 3000, merkle_ca_sign_cb, &sig_ctx, &d1)
+                    t1, 60, 1000, 3000, merkle_ca_sign_cb, &sig_ctx, &d1)
             == SM2_IC_SUCCESS,
         "Build D1");
     TEST_ASSERT(sm2_rev_epoch_dir_build(
-                    t2, 61, 4, 1000, 3000, merkle_ca_sign_cb, &sig_ctx, &d2)
+                    t2, 61, 1000, 3000, merkle_ca_sign_cb, &sig_ctx, &d2)
             == SM2_IC_SUCCESS,
         "Build D2");
 
@@ -256,7 +254,7 @@ static void test_rev_phase8_metric_bundle()
         sm2_rev_multi_proof_build(tree, queries, k, &mp) == SM2_IC_SUCCESS,
         "Build Metric MultiProof");
 
-    uint8_t mp_buf[262144];
+    uint8_t mp_buf[1048576];
     size_t mp_len = sizeof(mp_buf);
     TEST_ASSERT(
         sm2_rev_multi_proof_encode(mp, mp_buf, &mp_len) == SM2_IC_SUCCESS,
@@ -267,7 +265,7 @@ static void test_rev_phase8_metric_bundle()
     for (size_t i = 0; i < k; i++)
     {
         sm2_rev_member_proof_t member;
-        uint8_t single_buf[8192];
+        uint8_t single_buf[16384];
         size_t single_len = sizeof(single_buf);
 
         TEST_ASSERT(sm2_rev_tree_prove_member(tree, queries[i], &member)
@@ -295,28 +293,27 @@ static void test_rev_phase8_metric_bundle()
     merkle_ca_sig_ctx_t sig_ctx = { &g_ca_priv, &g_ca_pub };
     sm2_rev_epoch_dir_t *dir = NULL;
     TEST_ASSERT(sm2_rev_epoch_dir_build(
-                    tree, 66, 8, 1000, 3000, merkle_ca_sign_cb, &sig_ctx, &dir)
+                    tree, 66, 1000, 3000, merkle_ca_sign_cb, &sig_ctx, &dir)
             == SM2_IC_SUCCESS,
         "Build Metric Epoch Directory");
 
     sm2_rev_member_proof_t full;
-    sm2_rev_cached_member_proof_t cached;
+    sm2_rev_member_proof_t epoch_proof;
     TEST_ASSERT(
         sm2_rev_tree_prove_member(tree, queries[0], &full) == SM2_IC_SUCCESS,
-        "Build Full Proof For Cache");
-    TEST_ASSERT(sm2_rev_epoch_prove_member_cached(tree, queries[0], 8, &cached)
+        "Build Full Proof For Epoch");
+    TEST_ASSERT(sm2_rev_epoch_prove_member(tree, queries[0], &epoch_proof)
             == SM2_IC_SUCCESS,
-        "Build Cached Proof For Cache");
+        "Build Epoch Proof");
 
     TEST_ASSERT(full.sibling_count > 0, "Full Sibling Count Zero");
-    double cache_hit_rate
-        = (double)cached.omitted_top_levels / (double)full.sibling_count;
 
-    printf("   [P8-METRIC] reuse=%.2f%%, cache_hit=%.2f%%, bandwidth=%.2f%%\n",
-        reuse_rate * 100.0, cache_hit_rate * 100.0, bandwidth_gain * 100.0);
+    printf("   [P8-METRIC] reuse=%.2f%%, bandwidth=%.2f%%\n",
+        reuse_rate * 100.0, bandwidth_gain * 100.0);
 
     TEST_ASSERT(reuse_rate >= 0.30, "Reuse Rate < 30%");
-    TEST_ASSERT(cache_hit_rate >= 0.40, "Cache Hit < 40%");
+    TEST_ASSERT(epoch_proof.sibling_count == full.sibling_count,
+        "Epoch proof should preserve sparse membership path");
     TEST_ASSERT(bandwidth_gain >= 0.60, "Bandwidth Gain < 60%");
 
     sm2_rev_epoch_dir_cleanup(&dir);

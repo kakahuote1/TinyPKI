@@ -60,9 +60,8 @@ extern "C"
 #define SM2_REV_SYNC_DIGEST_LEN 32
 #define SM2_REV_SYNC_MAX_SIG_LEN 128
 #define SM2_REV_MERKLE_HASH_LEN 32
-#define SM2_REV_MERKLE_MAX_DEPTH 64
+#define SM2_REV_MERKLE_MAX_DEPTH 256
 #define SM2_REV_MERKLE_MULTI_MAX_QUERIES 64
-#define SM2_REV_MERKLE_EPOCH_MAX_CACHE_LEVELS 16
 #define SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN 64
 #define SM2_REV_REDIRECT_MAX_CANDIDATES 64
 #define SM2_REV_QUORUM_MAX_VOTES 256
@@ -236,12 +235,7 @@ extern "C"
     typedef struct
     {
         uint64_t serial_number;
-        size_t leaf_index;
-        size_t leaf_count;
-        bool has_prev;
-        uint64_t prev_serial;
-        bool has_next;
-        uint64_t next_serial;
+        uint8_t key[SM2_REV_MERKLE_HASH_LEN];
         size_t sibling_count;
         uint8_t sibling_hashes[SM2_REV_MERKLE_MAX_DEPTH]
                               [SM2_REV_MERKLE_HASH_LEN];
@@ -251,9 +245,12 @@ extern "C"
     typedef struct
     {
         uint64_t target_serial;
-        size_t leaf_count;
-        bool has_anchor;
-        sm2_rev_member_proof_t anchor_proof;
+        uint8_t target_key[SM2_REV_MERKLE_HASH_LEN];
+        bool tree_empty;
+        size_t sibling_count;
+        uint8_t sibling_hashes[SM2_REV_MERKLE_MAX_DEPTH]
+                              [SM2_REV_MERKLE_HASH_LEN];
+        uint8_t sibling_on_left[SM2_REV_MERKLE_MAX_DEPTH];
     } sm2_rev_absence_proof_t;
 
     typedef struct
@@ -271,24 +268,13 @@ extern "C"
     typedef struct
     {
         uint64_t serial_number;
-        size_t leaf_index;
-        size_t leaf_count;
-        bool has_prev;
-        uint64_t prev_serial;
-        bool has_next;
-        uint64_t next_serial;
+        uint8_t key[SM2_REV_MERKLE_HASH_LEN];
         size_t sibling_count;
         uint16_t sibling_ref[SM2_REV_MERKLE_MAX_DEPTH];
         uint8_t sibling_on_left[SM2_REV_MERKLE_MAX_DEPTH];
     } sm2_rev_multi_item_t;
 
     typedef struct sm2_rev_multi_proof_st sm2_rev_multi_proof_t;
-
-    typedef struct
-    {
-        sm2_rev_member_proof_t proof;
-        size_t omitted_top_levels;
-    } sm2_rev_cached_member_proof_t;
 
     typedef struct sm2_rev_epoch_dir_st sm2_rev_epoch_dir_t;
 
@@ -580,12 +566,11 @@ extern "C"
     sm2_ic_error_t sm2_rev_epoch_dir_build_with_authority(
         const sm2_rev_tree_t *tree, uint64_t epoch_id,
         const uint8_t *authority_id, size_t authority_id_len,
-        size_t cache_top_levels, uint64_t valid_from, uint64_t valid_until,
-        sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
-        sm2_rev_epoch_dir_t **directory);
+        uint64_t valid_from, uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn,
+        void *sign_user_ctx, sm2_rev_epoch_dir_t **directory);
     sm2_ic_error_t sm2_rev_epoch_dir_build(const sm2_rev_tree_t *tree,
-        uint64_t epoch_id, size_t cache_top_levels, uint64_t valid_from,
-        uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
+        uint64_t epoch_id, uint64_t valid_from, uint64_t valid_until,
+        sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
         sm2_rev_epoch_dir_t **directory);
     sm2_ic_error_t sm2_rev_epoch_dir_verify(
         const sm2_rev_epoch_dir_t *directory, uint64_t now_ts,
@@ -594,13 +579,12 @@ extern "C"
         uint64_t patch_version, const sm2_crl_delta_item_t *items,
         size_t item_count, sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx);
 
-    sm2_ic_error_t sm2_rev_epoch_prove_member_cached(const sm2_rev_tree_t *tree,
-        uint64_t serial_number, size_t cache_top_levels,
-        sm2_rev_cached_member_proof_t *proof);
-    sm2_ic_error_t sm2_rev_epoch_verify_member_cached(
+    sm2_ic_error_t sm2_rev_epoch_prove_member(const sm2_rev_tree_t *tree,
+        uint64_t serial_number, sm2_rev_member_proof_t *proof);
+    sm2_ic_error_t sm2_rev_epoch_verify_member(
         const sm2_rev_epoch_dir_t *directory, uint64_t now_ts,
-        const sm2_rev_cached_member_proof_t *proof,
-        sm2_rev_sync_verify_fn verify_fn, void *verify_user_ctx);
+        const sm2_rev_member_proof_t *proof, sm2_rev_sync_verify_fn verify_fn,
+        void *verify_user_ctx);
 
     sm2_ic_error_t sm2_rev_epoch_lookup(const sm2_rev_epoch_dir_t *directory,
         uint64_t now_ts, uint64_t serial_number,
@@ -621,20 +605,12 @@ extern "C"
         const uint8_t *input, size_t input_len);
     size_t sm2_rev_epoch_dir_tree_level_count(
         const sm2_rev_epoch_dir_t *directory);
-    size_t sm2_rev_epoch_dir_cache_level_count(
-        const sm2_rev_epoch_dir_t *directory);
     uint64_t sm2_rev_epoch_dir_patch_version(
         const sm2_rev_epoch_dir_t *directory);
     sm2_ic_error_t sm2_rev_epoch_dir_get_root_record(
         const sm2_rev_epoch_dir_t *directory,
         sm2_rev_root_record_t *root_record);
 
-    sm2_ic_error_t sm2_rev_cached_member_proof_encode(
-        const sm2_rev_cached_member_proof_t *proof, uint8_t *output,
-        size_t *output_len);
-    sm2_ic_error_t sm2_rev_cached_member_proof_decode(
-        sm2_rev_cached_member_proof_t *proof, const uint8_t *input,
-        size_t input_len);
 #ifdef __cplusplus
 }
 #endif

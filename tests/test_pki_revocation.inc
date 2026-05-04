@@ -300,6 +300,80 @@ static void test_phase93_crypto_direct_api_min_coverage()
     TEST_PASS();
 }
 
+static void test_phase8_prune_expired_revocation_removes_sparse_leaf()
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P8_PRUNE_CA";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 32, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+
+    const uint8_t identity[] = "P8_PRUNE_NODE";
+    TEST_ASSERT(sm2_pki_identity_register(service, identity,
+                    sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Identity Register");
+
+    sm2_ic_cert_request_t req;
+    sm2_private_key_t temp_priv;
+    sm2_ic_cert_result_t cert_res;
+    TEST_ASSERT(
+        pki_create_and_authorize_request(service, identity,
+            sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE, &req, &temp_priv),
+        "Cert Request");
+    TEST_ASSERT(
+        test_pki_issue_cert(service, &req, &cert_res) == SM2_PKI_SUCCESS,
+        "Cert Issue");
+
+    uint64_t auth_now = test_cert_now(&cert_res.cert);
+    TEST_ASSERT(sm2_pki_service_revoke(
+                    service, cert_res.cert.serial_number, auth_now + 10U)
+            == SM2_PKI_SUCCESS,
+        "Revoke Serial");
+
+    sm2_rev_status_t status = SM2_REV_STATUS_UNKNOWN;
+    sm2_rev_source_t source = SM2_REV_SOURCE_NONE;
+    TEST_ASSERT(sm2_pki_service_check_revocation(service,
+                    cert_res.cert.serial_number, auth_now + 20U, &status,
+                    &source)
+            == SM2_PKI_SUCCESS,
+        "Check Revoked");
+    TEST_ASSERT(status == SM2_REV_STATUS_REVOKED, "Status Revoked");
+
+    size_t pruned = 99;
+    TEST_ASSERT(sm2_pki_service_prune_expired_revocations(
+                    service, auth_now + 20U, 10U, &pruned)
+            == SM2_PKI_SUCCESS,
+        "Early Prune");
+    TEST_ASSERT(pruned == 0, "Early Prune Count");
+
+    uint64_t cert_valid_until = cert_res.cert.valid_duration
+            <= UINT64_MAX - cert_res.cert.valid_from
+        ? cert_res.cert.valid_from + cert_res.cert.valid_duration
+        : UINT64_MAX - 11U;
+    uint64_t prune_now = cert_valid_until + 11U;
+    TEST_ASSERT(sm2_pki_service_prune_expired_revocations(
+                    service, prune_now, 10U, &pruned)
+            == SM2_PKI_SUCCESS,
+        "Expired Prune");
+    TEST_ASSERT(pruned == 1, "Expired Prune Count");
+
+    TEST_ASSERT(sm2_pki_service_check_revocation(service,
+                    cert_res.cert.serial_number, prune_now, &status, &source)
+            == SM2_PKI_SUCCESS,
+        "Check Pruned");
+    TEST_ASSERT(status == SM2_REV_STATUS_GOOD, "Pruned Leaf Removed");
+    TEST_ASSERT(sm2_pki_service_revoke(
+                    service, cert_res.cert.serial_number, prune_now + 1U)
+            == SM2_PKI_ERR_NOT_FOUND,
+        "Pruned Cert Metadata Removed");
+
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
 static void test_phase11_merkle_freshness_e2e_gate()
 {
     sm2_pki_service_ctx_t *service = NULL;

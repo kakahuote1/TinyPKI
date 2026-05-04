@@ -55,7 +55,7 @@ static void test_rev_tree_codec_roundtrip()
     TEST_ASSERT(sm2_rev_tree_prove_member(tree, 55, &mp) == SM2_IC_SUCCESS,
         "Member Proof");
 
-    uint8_t member_buf[4096];
+    uint8_t member_buf[16384];
     size_t member_len = sizeof(member_buf);
     TEST_ASSERT(sm2_rev_member_proof_encode(&mp, member_buf, &member_len)
             == SM2_IC_SUCCESS,
@@ -73,7 +73,7 @@ static void test_rev_tree_codec_roundtrip()
     TEST_ASSERT(sm2_rev_tree_prove_absence(tree, 56, &nmp) == SM2_IC_SUCCESS,
         "NonMember Proof");
 
-    uint8_t non_buf[8192];
+    uint8_t non_buf[16384];
     size_t non_len = sizeof(non_buf);
     TEST_ASSERT(
         sm2_rev_absence_proof_encode(&nmp, non_buf, &non_len) == SM2_IC_SUCCESS,
@@ -274,7 +274,7 @@ static void test_rev_multi_proof_bandwidth_gain()
             sm2_rev_multi_proof_build(tree, queries, k, &mp) == SM2_IC_SUCCESS,
             "Build MultiProof K");
 
-        uint8_t multi_buf[262144];
+        uint8_t multi_buf[1048576];
         size_t multi_len = sizeof(multi_buf);
         TEST_ASSERT(sm2_rev_multi_proof_encode(mp, multi_buf, &multi_len)
                 == SM2_IC_SUCCESS,
@@ -288,7 +288,7 @@ static void test_rev_multi_proof_bandwidth_gain()
                     == SM2_IC_SUCCESS,
                 "Single Proof Build");
 
-            uint8_t single_buf[8192];
+            uint8_t single_buf[16384];
             size_t single_len = sizeof(single_buf);
             TEST_ASSERT(
                 sm2_rev_member_proof_encode(&member, single_buf, &single_len)
@@ -316,4 +316,4 @@ static void test_rev_multi_proof_bandwidth_gain()
     sm2_rev_tree_cleanup(&tree);
     TEST_PASS();
 }
-static void test_rev_epoch_dir_cached_proof()
+static void test_rev_epoch_dir_sparse_proof()

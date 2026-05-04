@@ -274,6 +274,7 @@ void run_test_pki_suite(void)
     RUN_TEST(test_phase4_revocation_ocsp_and_cross_domain);
     RUN_TEST(test_phase4_pki_controls_and_param_defense);
     RUN_TEST(test_phase8_merkle_hook_and_service_binding);
+    RUN_TEST(test_phase8_prune_expired_revocation_removes_sparse_leaf);
     RUN_TEST(test_phase9_epoch_lookup_unknown_query_override_behavior);
     RUN_TEST(test_phase11_merkle_freshness_e2e_gate);
     RUN_TEST(test_phase13_service_query_cannot_self_refresh_root);
