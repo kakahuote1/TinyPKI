@@ -435,7 +435,7 @@ sm2_ic_error_t sm2_rev_epoch_verify_member(const sm2_rev_epoch_dir_t *directory,
         return patch_revoked ? SM2_IC_SUCCESS : SM2_IC_ERR_VERIFY;
     }
 
-    if (proof->sibling_count != SM2_REV_MERKLE_MAX_DEPTH)
+    if (proof->sibling_count > SM2_REV_MERKLE_MAX_DEPTH)
         return SM2_IC_ERR_VERIFY;
     return sm2_rev_tree_verify_member(directory->root_record.root_hash, proof);
 }

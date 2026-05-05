@@ -133,13 +133,13 @@ cmake --build build --target sm2_bench_capability_suite -j 4
 ./build/sm2_bench_capability_suite.exe
 ```
 
-**输出结构化能力实验结果（含 revoke publish / client refresh 中位时延摘要）：**
+**输出结构化能力实验结果（含 CRL/OCSP/CRLite 对比与同名 Markdown 报告）：**
 ```bash
 ./build/sm2_bench_capability_suite.exe ./tmp/bench_capability_suite.json
 ```
 
 > `bench_capability_suite` 目前同时输出三类结果：
-> TinyPKI 主链路实测、基于 OpenSSL 本地生成并校验的 `CRL/OCSP` 对照基线、以及参考 CRLite 论文参数的 workload/CRLite 建模对比。
+> TinyPKI 主链路实测、基于 OpenSSL 本地生成并校验的 `CRL/OCSP` 对照基线、以及本地级联 Bloom filter 的 CRLite 风格建模对比。
 > 当指定 JSON 输出路径时，还会自动生成同名 `.md` 表格报告，便于直接查看和写材料。
 
 > 为方便审计与排查，完整测试已按领域拆分。当前可单独执行：

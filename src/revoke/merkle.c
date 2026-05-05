@@ -21,6 +21,8 @@ typedef struct sm2_rev_sparse_node_st
     uint64_t serial_number;
     struct sm2_rev_sparse_node_st *left;
     struct sm2_rev_sparse_node_st *right;
+    uint8_t hash[SM2_REV_MERKLE_HASH_LEN];
+    bool hash_valid;
 } sm2_rev_sparse_node_t;
 
 static uint8_t g_empty_hashes[SM2_REV_MERKLE_MAX_DEPTH + 1]
@@ -183,7 +185,7 @@ static sm2_ic_error_t sparse_fold_hash_up(uint8_t hash[SM2_REV_MERKLE_HASH_LEN],
     return SM2_IC_SUCCESS;
 }
 
-static sm2_ic_error_t sparse_node_hash_at(const sm2_rev_sparse_node_t *node,
+static sm2_ic_error_t sparse_cached_hash_at(const sm2_rev_sparse_node_t *node,
     size_t depth, uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN])
 {
     if (!out_hash || depth > SM2_REV_MERKLE_MAX_DEPTH)
@@ -192,41 +194,63 @@ static sm2_ic_error_t sparse_node_hash_at(const sm2_rev_sparse_node_t *node,
     if (!node)
         return merkle_empty_hash_at_depth(depth, out_hash);
 
+    if (!node->hash_valid || node->depth < depth)
+        return SM2_IC_ERR_VERIFY;
+
+    memcpy(out_hash, node->hash, SM2_REV_MERKLE_HASH_LEN);
+    return sparse_fold_hash_up(out_hash, node->key, node->depth, depth);
+}
+
+static sm2_ic_error_t sparse_node_refresh_hash(sm2_rev_sparse_node_t *node)
+{
+    if (!node)
+        return SM2_IC_SUCCESS;
+
     if (node->type == SM2_REV_SPARSE_LEAF)
     {
         sm2_ic_error_t ret
-            = merkle_hash_leaf(node->serial_number, node->key, out_hash);
+            = merkle_hash_leaf(node->serial_number, node->key, node->hash);
         if (ret != SM2_IC_SUCCESS)
             return ret;
-        return sparse_fold_hash_up(
-            out_hash, node->key, SM2_REV_MERKLE_MAX_DEPTH, depth);
+        node->hash_valid = true;
+        return SM2_IC_SUCCESS;
     }
 
-    if (node->depth < depth || node->depth >= SM2_REV_MERKLE_MAX_DEPTH)
+    if (node->depth >= SM2_REV_MERKLE_MAX_DEPTH)
         return SM2_IC_ERR_VERIFY;
+
+    sm2_ic_error_t ret = sparse_node_refresh_hash(node->left);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+    ret = sparse_node_refresh_hash(node->right);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
 
     uint8_t left_hash[SM2_REV_MERKLE_HASH_LEN];
     uint8_t right_hash[SM2_REV_MERKLE_HASH_LEN];
-    sm2_ic_error_t ret
-        = sparse_node_hash_at(node->left, (size_t)node->depth + 1U, left_hash);
+    ret = sparse_cached_hash_at(
+        node->left, (size_t)node->depth + 1U, left_hash);
     if (ret != SM2_IC_SUCCESS)
         return ret;
-    ret = sparse_node_hash_at(
+    ret = sparse_cached_hash_at(
         node->right, (size_t)node->depth + 1U, right_hash);
     if (ret != SM2_IC_SUCCESS)
         return ret;
-    ret = merkle_hash_parent(left_hash, right_hash, out_hash);
+    ret = merkle_hash_parent(left_hash, right_hash, node->hash);
     if (ret != SM2_IC_SUCCESS)
         return ret;
-
-    return sparse_fold_hash_up(out_hash, node->key, node->depth, depth);
+    node->hash_valid = true;
+    return SM2_IC_SUCCESS;
 }
 
 static sm2_ic_error_t sparse_tree_refresh_root(sm2_rev_tree_t *tree)
 {
     if (!tree)
         return SM2_IC_ERR_PARAM;
-    return sparse_node_hash_at(tree->root, 0, tree->root_hash);
+    sm2_ic_error_t ret = sparse_node_refresh_hash(tree->root);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+    return sparse_cached_hash_at(tree->root, 0, tree->root_hash);
 }
 
 static sm2_ic_error_t sparse_insert_node(sm2_rev_sparse_node_t **slot,
@@ -367,98 +391,89 @@ static bool sparse_find_node(const sm2_rev_sparse_node_t *node,
 
 static sm2_ic_error_t sparse_collect_siblings(const sm2_rev_sparse_node_t *root,
     const uint8_t key[SM2_REV_MERKLE_HASH_LEN],
+    uint16_t sibling_depths[SM2_REV_MERKLE_MAX_DEPTH],
     uint8_t sibling_hashes[SM2_REV_MERKLE_MAX_DEPTH][SM2_REV_MERKLE_HASH_LEN],
     uint8_t sibling_on_left[SM2_REV_MERKLE_MAX_DEPTH], size_t *sibling_count)
 {
-    if (!key || !sibling_hashes || !sibling_on_left || !sibling_count)
+    if (!key || !sibling_depths || !sibling_hashes || !sibling_on_left
+        || !sibling_count)
         return SM2_IC_ERR_PARAM;
 
     const sm2_rev_sparse_node_t *cur = root;
     bool target_empty = false;
+    size_t count = 0;
     for (size_t depth = 0; depth < SM2_REV_MERKLE_MAX_DEPTH; depth++)
     {
         uint8_t bit = sparse_key_bit(key, depth);
         const sm2_rev_sparse_node_t *sibling_node = NULL;
         size_t sibling_depth = depth + 1U;
+        uint8_t sibling_hash[SM2_REV_MERKLE_HASH_LEN];
+        bool have_sibling = false;
 
         if (target_empty || !cur)
-        {
-            sm2_ic_error_t ret = merkle_empty_hash_at_depth(
-                sibling_depth, sibling_hashes[depth]);
-            if (ret != SM2_IC_SUCCESS)
-                return ret;
-            sibling_on_left[depth] = bit ? 1U : 0U;
-            target_empty = true;
             continue;
-        }
 
         if (cur->type == SM2_REV_SPARSE_LEAF)
         {
             if (sparse_key_equal(cur->key, key))
-            {
-                sm2_ic_error_t ret = merkle_empty_hash_at_depth(
-                    sibling_depth, sibling_hashes[depth]);
-                if (ret != SM2_IC_SUCCESS)
-                    return ret;
-                sibling_on_left[depth] = bit ? 1U : 0U;
                 continue;
-            }
 
             uint8_t leaf_bit = sparse_key_bit(cur->key, depth);
-            if (leaf_bit == bit)
+            if (leaf_bit != bit)
             {
-                sm2_ic_error_t ret = merkle_empty_hash_at_depth(
-                    sibling_depth, sibling_hashes[depth]);
+                sm2_ic_error_t ret
+                    = sparse_cached_hash_at(cur, sibling_depth, sibling_hash);
                 if (ret != SM2_IC_SUCCESS)
                     return ret;
-            }
-            else
-            {
-                sm2_ic_error_t ret = sparse_node_hash_at(
-                    cur, sibling_depth, sibling_hashes[depth]);
-                if (ret != SM2_IC_SUCCESS)
-                    return ret;
+                have_sibling = true;
                 target_empty = true;
             }
-            sibling_on_left[depth] = bit ? 1U : 0U;
-            continue;
         }
-
-        if (depth < cur->depth)
+        else if (depth < cur->depth)
         {
             uint8_t branch_bit = sparse_key_bit(cur->key, depth);
-            if (branch_bit == bit)
+            if (branch_bit != bit)
             {
-                sm2_ic_error_t ret = merkle_empty_hash_at_depth(
-                    sibling_depth, sibling_hashes[depth]);
+                sm2_ic_error_t ret
+                    = sparse_cached_hash_at(cur, sibling_depth, sibling_hash);
                 if (ret != SM2_IC_SUCCESS)
                     return ret;
-            }
-            else
-            {
-                sm2_ic_error_t ret = sparse_node_hash_at(
-                    cur, sibling_depth, sibling_hashes[depth]);
-                if (ret != SM2_IC_SUCCESS)
-                    return ret;
+                have_sibling = true;
                 target_empty = true;
             }
-            sibling_on_left[depth] = bit ? 1U : 0U;
-            continue;
+        }
+        else
+        {
+            if (depth != cur->depth)
+                return SM2_IC_ERR_VERIFY;
+
+            sibling_node = bit == 0 ? cur->right : cur->left;
+            sm2_ic_error_t ret = sparse_cached_hash_at(
+                sibling_node, sibling_depth, sibling_hash);
+            if (ret != SM2_IC_SUCCESS)
+                return ret;
+
+            uint8_t empty_hash[SM2_REV_MERKLE_HASH_LEN];
+            ret = merkle_empty_hash_at_depth(sibling_depth, empty_hash);
+            if (ret != SM2_IC_SUCCESS)
+                return ret;
+            have_sibling
+                = memcmp(sibling_hash, empty_hash, SM2_REV_MERKLE_HASH_LEN)
+                != 0;
+            cur = bit == 0 ? cur->left : cur->right;
         }
 
-        if (depth != cur->depth)
+        if (!have_sibling)
+            continue;
+        if (count >= SM2_REV_MERKLE_MAX_DEPTH)
             return SM2_IC_ERR_VERIFY;
-
-        sibling_node = bit == 0 ? cur->right : cur->left;
-        sm2_ic_error_t ret = sparse_node_hash_at(
-            sibling_node, sibling_depth, sibling_hashes[depth]);
-        if (ret != SM2_IC_SUCCESS)
-            return ret;
-        sibling_on_left[depth] = bit ? 1U : 0U;
-        cur = bit == 0 ? cur->left : cur->right;
+        sibling_depths[count] = (uint16_t)depth;
+        memcpy(sibling_hashes[count], sibling_hash, SM2_REV_MERKLE_HASH_LEN);
+        sibling_on_left[count] = bit ? 1U : 0U;
+        count++;
     }
 
-    *sibling_count = SM2_REV_MERKLE_MAX_DEPTH;
+    *sibling_count = count;
     return SM2_IC_SUCCESS;
 }
 
@@ -466,38 +481,68 @@ static sm2_ic_error_t sparse_verify_path(
     const uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN],
     const uint8_t key[SM2_REV_MERKLE_HASH_LEN],
     const uint8_t leaf_hash[SM2_REV_MERKLE_HASH_LEN], size_t sibling_count,
+    const uint16_t sibling_depths[SM2_REV_MERKLE_MAX_DEPTH],
     const uint8_t sibling_hashes[SM2_REV_MERKLE_MAX_DEPTH]
                                 [SM2_REV_MERKLE_HASH_LEN],
     const uint8_t sibling_on_left[SM2_REV_MERKLE_MAX_DEPTH])
 {
-    if (!root_hash || !key || !leaf_hash || !sibling_hashes || !sibling_on_left)
+    if (!root_hash || !key || !leaf_hash || !sibling_depths || !sibling_hashes
+        || !sibling_on_left)
     {
         return SM2_IC_ERR_PARAM;
     }
-    if (sibling_count != SM2_REV_MERKLE_MAX_DEPTH)
+    if (sibling_count > SM2_REV_MERKLE_MAX_DEPTH)
         return SM2_IC_ERR_VERIFY;
+
+    for (size_t i = 0; i < sibling_count; i++)
+    {
+        if (sibling_depths[i] >= SM2_REV_MERKLE_MAX_DEPTH)
+            return SM2_IC_ERR_VERIFY;
+        if (i > 0 && sibling_depths[i] <= sibling_depths[i - 1U])
+            return SM2_IC_ERR_VERIFY;
+        uint8_t expected_on_left
+            = sparse_key_bit(key, sibling_depths[i]) ? 1U : 0U;
+        if ((sibling_on_left[i] ? 1U : 0U) != expected_on_left)
+            return SM2_IC_ERR_VERIFY;
+    }
 
     uint8_t cur[SM2_REV_MERKLE_HASH_LEN];
     uint8_t next[SM2_REV_MERKLE_HASH_LEN];
     memcpy(cur, leaf_hash, SM2_REV_MERKLE_HASH_LEN);
 
-    for (size_t i = 0; i < sibling_count; i++)
+    size_t entry = sibling_count;
+    for (size_t i = 0; i < SM2_REV_MERKLE_MAX_DEPTH; i++)
     {
-        size_t depth = sibling_count - 1U - i;
-        uint8_t expected_on_left = sparse_key_bit(key, depth) ? 1U : 0U;
-        if ((sibling_on_left[depth] ? 1U : 0U) != expected_on_left)
-            return SM2_IC_ERR_VERIFY;
-
+        size_t depth = SM2_REV_MERKLE_MAX_DEPTH - 1U - i;
+        uint8_t sibling_hash[SM2_REV_MERKLE_HASH_LEN];
+        uint8_t sibling_left = sparse_key_bit(key, depth) ? 1U : 0U;
         sm2_ic_error_t ret;
-        if (sibling_on_left[depth])
-            ret = merkle_hash_parent(sibling_hashes[depth], cur, next);
+
+        if (entry > 0 && sibling_depths[entry - 1U] == depth)
+        {
+            entry--;
+            memcpy(
+                sibling_hash, sibling_hashes[entry], SM2_REV_MERKLE_HASH_LEN);
+            sibling_left = sibling_on_left[entry] ? 1U : 0U;
+        }
         else
-            ret = merkle_hash_parent(cur, sibling_hashes[depth], next);
+        {
+            ret = merkle_empty_hash_at_depth(depth + 1U, sibling_hash);
+            if (ret != SM2_IC_SUCCESS)
+                return ret;
+        }
+
+        if (sibling_left)
+            ret = merkle_hash_parent(sibling_hash, cur, next);
+        else
+            ret = merkle_hash_parent(cur, sibling_hash, next);
         if (ret != SM2_IC_SUCCESS)
             return ret;
         memcpy(cur, next, SM2_REV_MERKLE_HASH_LEN);
     }
 
+    if (entry != 0)
+        return SM2_IC_ERR_VERIFY;
     return memcmp(cur, root_hash, SM2_REV_MERKLE_HASH_LEN) == 0
         ? SM2_IC_SUCCESS
         : SM2_IC_ERR_VERIFY;
@@ -753,8 +798,8 @@ sm2_ic_error_t sm2_rev_tree_prove_member(const sm2_rev_tree_t *tree,
     memset(proof, 0, sizeof(*proof));
     proof->serial_number = serial_number;
     memcpy(proof->key, key, SM2_REV_MERKLE_HASH_LEN);
-    ret = sparse_collect_siblings(tree->root, key, proof->sibling_hashes,
-        proof->sibling_on_left, &proof->sibling_count);
+    ret = sparse_collect_siblings(tree->root, key, proof->sibling_depths,
+        proof->sibling_hashes, proof->sibling_on_left, &proof->sibling_count);
     if (ret != SM2_IC_SUCCESS)
         memset(proof, 0, sizeof(*proof));
     return ret;
@@ -779,7 +824,8 @@ sm2_ic_error_t sm2_rev_tree_verify_member(
     if (ret != SM2_IC_SUCCESS)
         return ret;
     return sparse_verify_path(root_hash, proof->key, leaf_hash,
-        proof->sibling_count, proof->sibling_hashes, proof->sibling_on_left);
+        proof->sibling_count, proof->sibling_depths, proof->sibling_hashes,
+        proof->sibling_on_left);
 }
 
 sm2_ic_error_t sm2_rev_tree_prove_absence(const sm2_rev_tree_t *tree,
@@ -802,8 +848,8 @@ sm2_ic_error_t sm2_rev_tree_prove_absence(const sm2_rev_tree_t *tree,
     if (proof->tree_empty)
         return SM2_IC_SUCCESS;
 
-    ret = sparse_collect_siblings(tree->root, key, proof->sibling_hashes,
-        proof->sibling_on_left, &proof->sibling_count);
+    ret = sparse_collect_siblings(tree->root, key, proof->sibling_depths,
+        proof->sibling_hashes, proof->sibling_on_left, &proof->sibling_count);
     if (ret != SM2_IC_SUCCESS)
         memset(proof, 0, sizeof(*proof));
     return ret;
@@ -842,7 +888,8 @@ sm2_ic_error_t sm2_rev_tree_verify_absence(
     }
 
     return sparse_verify_path(root_hash, proof->target_key, empty_leaf,
-        proof->sibling_count, proof->sibling_hashes, proof->sibling_on_left);
+        proof->sibling_count, proof->sibling_depths, proof->sibling_hashes,
+        proof->sibling_on_left);
 }
 
 sm2_ic_error_t merkle_serialize_root_for_auth(

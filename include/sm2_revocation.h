@@ -237,6 +237,7 @@ extern "C"
         uint64_t serial_number;
         uint8_t key[SM2_REV_MERKLE_HASH_LEN];
         size_t sibling_count;
+        uint16_t sibling_depths[SM2_REV_MERKLE_MAX_DEPTH];
         uint8_t sibling_hashes[SM2_REV_MERKLE_MAX_DEPTH]
                               [SM2_REV_MERKLE_HASH_LEN];
         uint8_t sibling_on_left[SM2_REV_MERKLE_MAX_DEPTH];
@@ -248,6 +249,7 @@ extern "C"
         uint8_t target_key[SM2_REV_MERKLE_HASH_LEN];
         bool tree_empty;
         size_t sibling_count;
+        uint16_t sibling_depths[SM2_REV_MERKLE_MAX_DEPTH];
         uint8_t sibling_hashes[SM2_REV_MERKLE_MAX_DEPTH]
                               [SM2_REV_MERKLE_HASH_LEN];
         uint8_t sibling_on_left[SM2_REV_MERKLE_MAX_DEPTH];
@@ -270,6 +272,7 @@ extern "C"
         uint64_t serial_number;
         uint8_t key[SM2_REV_MERKLE_HASH_LEN];
         size_t sibling_count;
+        uint16_t sibling_depths[SM2_REV_MERKLE_MAX_DEPTH];
         uint16_t sibling_ref[SM2_REV_MERKLE_MAX_DEPTH];
         uint8_t sibling_on_left[SM2_REV_MERKLE_MAX_DEPTH];
     } sm2_rev_multi_item_t;

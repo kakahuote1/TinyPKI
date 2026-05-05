@@ -112,8 +112,9 @@ static void test_merkle_member_sparse_key_path_bound(void)
     sm2_rev_member_proof_t proof;
     TEST_ASSERT(sm2_rev_tree_prove_member(tree, 40, &proof) == SM2_IC_SUCCESS,
         "Build member proof");
-    TEST_ASSERT(proof.sibling_count == SM2_REV_MERKLE_MAX_DEPTH,
-        "Sparse proof has fixed depth");
+    TEST_ASSERT(proof.sibling_count > 0
+            && proof.sibling_count < SM2_REV_MERKLE_MAX_DEPTH,
+        "Sparse proof is compressed");
 
     sm2_rev_member_proof_t tampered = proof;
     tampered.key[0] ^= 0x01U;
@@ -140,14 +141,15 @@ static void test_merkle_absence_sparse_path_commitment(void)
     TEST_ASSERT(sm2_rev_tree_prove_absence(tree, 3, &proof) == SM2_IC_SUCCESS,
         "Build absence proof");
     TEST_ASSERT(!proof.tree_empty, "Absence proof is non-empty sparse path");
-    TEST_ASSERT(proof.sibling_count == SM2_REV_MERKLE_MAX_DEPTH,
-        "Absence proof has fixed sparse depth");
+    TEST_ASSERT(proof.sibling_count > 0
+            && proof.sibling_count < SM2_REV_MERKLE_MAX_DEPTH,
+        "Absence proof is compressed");
     TEST_ASSERT(
         sm2_rev_tree_verify_absence(root_hash, &proof) == SM2_IC_SUCCESS,
         "Verify absence proof");
 
     sm2_rev_absence_proof_t tampered = proof;
-    tampered.sibling_hashes[0][0] ^= 0x01U;
+    tampered.sibling_hashes[tampered.sibling_count - 1U][0] ^= 0x01U;
     TEST_ASSERT(
         sm2_rev_tree_verify_absence(root_hash, &tampered) == SM2_IC_ERR_VERIFY,
         "Tampered sparse path must fail");

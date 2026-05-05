@@ -230,7 +230,7 @@ sm2_ic_error_t cbor_encode_member_proof_inner(
     if (proof->sibling_count > SM2_REV_MERKLE_MAX_DEPTH)
         return SM2_IC_ERR_PARAM;
 
-    sm2_ic_error_t ret = cbor_put_type_value(4, 5, output, output_cap, offset);
+    sm2_ic_error_t ret = cbor_put_type_value(4, 6, output, output_cap, offset);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -248,6 +248,19 @@ sm2_ic_error_t cbor_encode_member_proof_inner(
         0, (uint64_t)proof->sibling_count, output, output_cap, offset);
     if (ret != SM2_IC_SUCCESS)
         return ret;
+
+    ret = cbor_put_type_value(
+        4, (uint64_t)proof->sibling_count, output, output_cap, offset);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    for (size_t i = 0; i < proof->sibling_count; i++)
+    {
+        ret = cbor_put_type_value(
+            0, proof->sibling_depths[i], output, output_cap, offset);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
+    }
 
     ret = cbor_put_type_value(
         4, (uint64_t)proof->sibling_count, output, output_cap, offset);
@@ -282,7 +295,7 @@ sm2_ic_error_t cbor_decode_member_proof_inner(sm2_rev_member_proof_t *proof,
         = cbor_get_type_value(input, input_len, offset, &major, &arr_len);
     if (ret != SM2_IC_SUCCESS)
         return ret;
-    if (major != 4 || arr_len != 5)
+    if (major != 4 || arr_len != 6)
         return SM2_IC_ERR_CBOR;
 
     uint64_t serial = 0;
@@ -303,15 +316,32 @@ sm2_ic_error_t cbor_decode_member_proof_inner(sm2_rev_member_proof_t *proof,
     if (sibling_count > SM2_REV_MERKLE_MAX_DEPTH)
         return SM2_IC_ERR_CBOR;
 
-    uint64_t hash_arr_len = 0;
-    ret = cbor_get_type_value(input, input_len, offset, &major, &hash_arr_len);
-    if (ret != SM2_IC_SUCCESS || major != 4 || hash_arr_len != sibling_count)
+    uint64_t depth_arr_len = 0;
+    ret = cbor_get_type_value(input, input_len, offset, &major, &depth_arr_len);
+    if (ret != SM2_IC_SUCCESS || major != 4 || depth_arr_len != sibling_count)
         return SM2_IC_ERR_CBOR;
 
     memset(proof, 0, sizeof(*proof));
     proof->serial_number = serial;
     memcpy(proof->key, key, SM2_REV_MERKLE_HASH_LEN);
     proof->sibling_count = (size_t)sibling_count;
+
+    for (size_t i = 0; i < proof->sibling_count; i++)
+    {
+        uint64_t depth = 0;
+        ret = cbor_get_type_value(input, input_len, offset, &major, &depth);
+        if (ret != SM2_IC_SUCCESS || major != 0
+            || depth >= SM2_REV_MERKLE_MAX_DEPTH)
+        {
+            return SM2_IC_ERR_CBOR;
+        }
+        proof->sibling_depths[i] = (uint16_t)depth;
+    }
+
+    uint64_t hash_arr_len = 0;
+    ret = cbor_get_type_value(input, input_len, offset, &major, &hash_arr_len);
+    if (ret != SM2_IC_SUCCESS || major != 4 || hash_arr_len != sibling_count)
+        return SM2_IC_ERR_CBOR;
 
     for (size_t i = 0; i < proof->sibling_count; i++)
     {
@@ -373,7 +403,7 @@ sm2_ic_error_t sm2_rev_absence_proof_encode(
     if (proof->sibling_count > SM2_REV_MERKLE_MAX_DEPTH)
         return SM2_IC_ERR_PARAM;
 
-    sm2_ic_error_t ret = cbor_put_type_value(4, 6, output, *output_len, &off);
+    sm2_ic_error_t ret = cbor_put_type_value(4, 7, output, *output_len, &off);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -395,6 +425,19 @@ sm2_ic_error_t sm2_rev_absence_proof_encode(
         0, (uint64_t)proof->sibling_count, output, *output_len, &off);
     if (ret != SM2_IC_SUCCESS)
         return ret;
+
+    ret = cbor_put_type_value(
+        4, (uint64_t)proof->sibling_count, output, *output_len, &off);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    for (size_t i = 0; i < proof->sibling_count; i++)
+    {
+        ret = cbor_put_type_value(
+            0, proof->sibling_depths[i], output, *output_len, &off);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
+    }
 
     ret = cbor_put_type_value(
         4, (uint64_t)proof->sibling_count, output, *output_len, &off);
@@ -431,7 +474,7 @@ sm2_ic_error_t sm2_rev_absence_proof_decode(
     uint64_t arr_len = 0;
     sm2_ic_error_t ret
         = cbor_get_type_value(input, input_len, &off, &major, &arr_len);
-    if (ret != SM2_IC_SUCCESS || major != 4 || arr_len != 6)
+    if (ret != SM2_IC_SUCCESS || major != 4 || arr_len != 7)
         return SM2_IC_ERR_CBOR;
 
     uint64_t target = 0;
@@ -458,6 +501,23 @@ sm2_ic_error_t sm2_rev_absence_proof_decode(
         return SM2_IC_ERR_CBOR;
     }
     proof->sibling_count = (size_t)sibling_count;
+
+    uint64_t depth_arr_len = 0;
+    ret = cbor_get_type_value(input, input_len, &off, &major, &depth_arr_len);
+    if (ret != SM2_IC_SUCCESS || major != 4 || depth_arr_len != sibling_count)
+        return SM2_IC_ERR_CBOR;
+
+    for (size_t i = 0; i < proof->sibling_count; i++)
+    {
+        uint64_t depth = 0;
+        ret = cbor_get_type_value(input, input_len, &off, &major, &depth);
+        if (ret != SM2_IC_SUCCESS || major != 0
+            || depth >= SM2_REV_MERKLE_MAX_DEPTH)
+        {
+            return SM2_IC_ERR_CBOR;
+        }
+        proof->sibling_depths[i] = (uint16_t)depth;
+    }
 
     uint64_t hash_arr_len = 0;
     ret = cbor_get_type_value(input, input_len, &off, &major, &hash_arr_len);
@@ -763,6 +823,7 @@ sm2_ic_error_t multiproof_expand_member(const sm2_rev_multi_proof_t *proof,
         if ((size_t)ref >= proof->unique_hash_count)
             return SM2_IC_ERR_VERIFY;
 
+        member->sibling_depths[i] = item->sibling_depths[i];
         memcpy(member->sibling_hashes[i], proof->unique_hashes[ref],
             SM2_REV_MERKLE_HASH_LEN);
         member->sibling_on_left[i] = item->sibling_on_left[i] ? 1U : 0U;
@@ -844,6 +905,7 @@ sm2_ic_error_t sm2_rev_multi_proof_build(const sm2_rev_tree_t *tree,
         for (size_t j = 0; j < member.sibling_count; j++)
         {
             uint16_t ref = 0;
+            item->sibling_depths[j] = member.sibling_depths[j];
             ret = multiproof_find_or_add_hash(state, member.sibling_hashes[j],
                 &hash_capacity, hard_limit, &ref);
             if (ret != SM2_IC_SUCCESS)
@@ -940,7 +1002,7 @@ sm2_ic_error_t sm2_rev_multi_proof_encode(
         if (item->sibling_count > SM2_REV_MERKLE_MAX_DEPTH)
             return SM2_IC_ERR_PARAM;
 
-        ret = cbor_put_type_value(4, 5, output, *output_len, &off);
+        ret = cbor_put_type_value(4, 6, output, *output_len, &off);
         if (ret != SM2_IC_SUCCESS)
             return ret;
 
@@ -958,6 +1020,19 @@ sm2_ic_error_t sm2_rev_multi_proof_encode(
             0, (uint64_t)item->sibling_count, output, *output_len, &off);
         if (ret != SM2_IC_SUCCESS)
             return ret;
+
+        ret = cbor_put_type_value(
+            4, (uint64_t)item->sibling_count, output, *output_len, &off);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
+
+        for (size_t j = 0; j < item->sibling_count; j++)
+        {
+            ret = cbor_put_type_value(
+                0, item->sibling_depths[j], output, *output_len, &off);
+            if (ret != SM2_IC_SUCCESS)
+                return ret;
+        }
 
         ret = cbor_put_type_value(
             4, (uint64_t)item->sibling_count, output, *output_len, &off);
@@ -1066,7 +1141,7 @@ sm2_ic_error_t sm2_rev_multi_proof_decode(
         uint64_t item_arr_len = 0;
         ret = cbor_get_type_value(
             input, input_len, &off, &major, &item_arr_len);
-        if (ret != SM2_IC_SUCCESS || major != 4 || item_arr_len != 5)
+        if (ret != SM2_IC_SUCCESS || major != 4 || item_arr_len != 6)
         {
             multiproof_reset(state);
             return SM2_IC_ERR_CBOR;
@@ -1100,6 +1175,34 @@ sm2_ic_error_t sm2_rev_multi_proof_decode(
             return SM2_IC_ERR_CBOR;
         }
 
+        sm2_rev_multi_item_t *item = &state->items[i];
+        item->serial_number = serial;
+        memcpy(item->key, key, SM2_REV_MERKLE_HASH_LEN);
+        item->sibling_count = (size_t)sibling_count;
+
+        uint64_t depth_arr_len = 0;
+        ret = cbor_get_type_value(
+            input, input_len, &off, &major, &depth_arr_len);
+        if (ret != SM2_IC_SUCCESS || major != 4
+            || depth_arr_len != sibling_count)
+        {
+            multiproof_reset(state);
+            return SM2_IC_ERR_CBOR;
+        }
+
+        for (size_t j = 0; j < item->sibling_count; j++)
+        {
+            uint64_t depth = 0;
+            ret = cbor_get_type_value(input, input_len, &off, &major, &depth);
+            if (ret != SM2_IC_SUCCESS || major != 0
+                || depth >= SM2_REV_MERKLE_MAX_DEPTH)
+            {
+                multiproof_reset(state);
+                return SM2_IC_ERR_CBOR;
+            }
+            item->sibling_depths[j] = (uint16_t)depth;
+        }
+
         uint64_t ref_arr_len = 0;
         ret = cbor_get_type_value(input, input_len, &off, &major, &ref_arr_len);
         if (ret != SM2_IC_SUCCESS || major != 4 || ref_arr_len != sibling_count)
@@ -1107,11 +1210,6 @@ sm2_ic_error_t sm2_rev_multi_proof_decode(
             multiproof_reset(state);
             return SM2_IC_ERR_CBOR;
         }
-
-        sm2_rev_multi_item_t *item = &state->items[i];
-        item->serial_number = serial;
-        memcpy(item->key, key, SM2_REV_MERKLE_HASH_LEN);
-        item->sibling_count = (size_t)sibling_count;
 
         for (size_t j = 0; j < item->sibling_count; j++)
         {
