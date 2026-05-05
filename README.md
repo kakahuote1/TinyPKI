@@ -33,7 +33,7 @@ TinyPKI 是一个面向 IoT 资源受限、弱网与边缘节点场景的轻量 
   CA 签名的 `epoch root` 将当前 revocation sparse root 与 issuance MMR root 绑定成一个检查点；验证端使用 `sm2_pki_evidence_bundle_t` 一次性验证非吊销证明、发证成员证明和 `t-of-n` witness 签名。witness 签名前会检查 issuance log 的 append-only 演进，边缘节点之间也可对 epoch root 投票以发现 CA 分叉。
 * 🛡️ **面向断网与多节点同步的撤销状态维护**
 
-  在边缘与弱连接场景中，撤销状态往往需要跨节点同步而不是依赖单点在线查询。本项目提供 delta/heartbeat、重定向候选、quorum/BFT 检查以及 epoch/cached proof 相关能力，用于在断网、时钟漂移和部分节点异常时维持撤销状态的一致性与可用性。
+  在边缘与弱连接场景中，撤销状态往往需要跨节点同步而不是依赖单点在线查询。本项目提供 CRL 风格的 `nextUpdate` 发布计划、短周期 delta、heartbeat 续期、低频 full checkpoint、重定向候选、quorum/BFT 检查以及 epoch/cached proof 相关能力，用于在断网、时钟漂移和部分节点异常时维持撤销状态的一致性与可用性。
 * ⚡ **开箱即用的“认证即加密”全链路保护**
   
   项目同时提供静态与临时密钥握手路径。设备可以在双向身份核验、吊销证据校验和用途检查通过后，基于 canonical handshake binding 协商会话密钥，并直接接入 SM4-GCM/CCM 的 AEAD 会话保护。
@@ -86,7 +86,7 @@ cmake --build build --target sm2_test_merkle_flow -j 4
 
 ## 🧪 测试验证 (Testing)
 
-当前仓库测试主链路由 `ctest` 与 `test_all` 两个入口组成。按当前基线，`ctest` 拆分为 6 个 suite，`test_all` 聚合执行 89 个用例。
+当前仓库测试主链路由 `ctest` 与 `test_all` 两个入口组成。按当前基线，`ctest` 拆分为 6 个 suite，`test_all` 聚合执行 90 个用例。
 
 **运行与 CI 相同的格式检查（固定 clang-format 18）：**
 ```bash
@@ -179,9 +179,12 @@ cmake --build build --target sm2_bench_capability_suite -j 4
 - **Measured Footprint Snapshot**: the in-repo capability benchmark reports the final epoch-bundle authentication payload, including ECQV certificate, signature, CA-signed epoch root, sparse revocation proof, issuance MMR proof, and witness signatures.
 - **CA-Signed Epoch Evidence and Carried Proofs** supporting exact offline non-revocation checks via path-compressed sparse absence proofs bound to the same checkpoint as issuance transparency.
 - **Mandatory Issuance Transparency and Unified Epoch Evidence** using 32-byte certificate commitments, an append-only MMR issuance log, a CA-signed epoch root that binds issuance and revocation roots, and client-level `t-of-n` edge witness policies.
-- **Revocation State Sync Tooling** including delta/heartbeat refresh, redirect hints, quorum/BFT helpers, multiproof compression, and epoch/cached proof support.
+- **Revocation State Sync Tooling** including CRL-style `nextUpdate`
+  publication planning, delta/heartbeat refresh, low-frequency full
+  checkpoints, redirect hints, quorum/BFT helpers, multiproof compression, and
+  epoch/cached proof support.
 - **Mutual Authentication and Secure Sessions** spanning static or ephemeral key agreement, canonical handshake binding, key-usage enforcement, and SM4-GCM/CCM AEAD protection.
-- **Misuse-Resistant High-Level APIs** built around opaque handles, secure defaults, unified error mapping, and a current automated test baseline of 89 cases across `ctest` and `test_all`.
+- **Misuse-Resistant High-Level APIs** built around opaque handles, secure defaults, unified error mapping, and a current automated test baseline of 90 cases across `ctest` and `test_all`.
 
 ## 📄 开源许可证 (License)
 

@@ -639,6 +639,81 @@ sm2_ic_error_t sm2_rev_check_freshness(const sm2_rev_ctx_t *ctx,
     return SM2_IC_SUCCESS;
 }
 
+static uint64_t rev_sync_sat_add(uint64_t lhs, uint64_t rhs)
+{
+    if (rhs > UINT64_MAX - lhs)
+        return UINT64_MAX;
+    return lhs + rhs;
+}
+
+static uint64_t rev_sync_elapsed(uint64_t now_ts, uint64_t then_ts)
+{
+    return now_ts > then_ts ? now_ts - then_ts : 0;
+}
+
+static uint64_t rev_sync_limit_wait_to_expiry(
+    uint64_t now_ts, uint64_t valid_until, uint64_t wait_sec)
+{
+    if (valid_until <= now_ts)
+        return 0;
+    uint64_t wait_to_expiry = valid_until - now_ts;
+    return wait_sec < wait_to_expiry ? wait_sec : wait_to_expiry;
+}
+
+static sm2_ic_error_t rev_sync_validate_policy(
+    const sm2_rev_sync_policy_t *policy)
+{
+    if (!policy)
+        return SM2_IC_ERR_PARAM;
+    if (policy->t_base_sec == 0 || policy->fast_poll_sec == 0
+        || policy->fast_poll_sec > policy->t_base_sec
+        || policy->max_backoff_sec < policy->t_base_sec
+        || policy->full_checkpoint_interval_sec < policy->t_base_sec
+        || policy->max_delta_chain_len == 0)
+    {
+        return SM2_IC_ERR_PARAM;
+    }
+    return SM2_IC_SUCCESS;
+}
+
+static void rev_sync_set_publication_plan(sm2_rev_publication_plan_t *plan,
+    sm2_rev_publication_action_t action, uint64_t now_ts,
+    uint64_t publish_after_sec, const sm2_rev_sync_policy_t *policy,
+    uint64_t staleness_upper_bound_sec, uint64_t current_root_valid_until)
+{
+    memset(plan, 0, sizeof(*plan));
+    plan->action = action;
+    plan->publish_after_sec = publish_after_sec;
+    plan->publish_now
+        = action != SM2_REV_PUBLICATION_NONE && publish_after_sec == 0;
+    plan->staleness_upper_bound_sec = staleness_upper_bound_sec;
+
+    if (action == SM2_REV_PUBLICATION_NONE)
+    {
+        plan->object_type = SM2_REV_SYNC_OBJECT_HEARTBEAT_PATCH;
+        plan->valid_until = current_root_valid_until;
+        plan->next_update_ts = rev_sync_sat_add(now_ts, publish_after_sec);
+        return;
+    }
+
+    plan->issued_at = rev_sync_sat_add(now_ts, publish_after_sec);
+    plan->valid_until = rev_sync_sat_add(plan->issued_at, policy->t_base_sec);
+    plan->next_update_ts = plan->valid_until;
+
+    if (action == SM2_REV_PUBLICATION_DELTA_PATCH)
+    {
+        plan->object_type = SM2_REV_SYNC_OBJECT_DELTA_PATCH;
+        return;
+    }
+    if (action == SM2_REV_PUBLICATION_HEARTBEAT_PATCH)
+    {
+        plan->object_type = SM2_REV_SYNC_OBJECT_HEARTBEAT_PATCH;
+        plan->heartbeat_refresh_only = true;
+        return;
+    }
+    plan->object_type = SM2_REV_SYNC_OBJECT_ROOT_RECORD;
+}
+
 sm2_ic_error_t sm2_rev_sync_policy_init(sm2_rev_sync_policy_t *policy)
 {
     if (!policy)
@@ -648,6 +723,11 @@ sm2_ic_error_t sm2_rev_sync_policy_init(sm2_rev_sync_policy_t *policy)
     policy->fast_poll_sec = SM2_REV_SYNC_DEFAULT_FAST_POLL_SEC;
     policy->max_backoff_sec = SM2_REV_SYNC_DEFAULT_MAX_BACKOFF_SEC;
     policy->propagation_delay_sec = SM2_REV_SYNC_DEFAULT_PROPAGATION_DELAY_SEC;
+    policy->full_checkpoint_interval_sec
+        = SM2_REV_SYNC_DEFAULT_FULL_CHECKPOINT_SEC;
+    policy->max_delta_chain_len = SM2_REV_SYNC_DEFAULT_MAX_DELTA_CHAIN_LEN;
+    policy->urgent_delta_grace_sec
+        = SM2_REV_SYNC_DEFAULT_URGENT_DELTA_GRACE_SEC;
     return SM2_IC_SUCCESS;
 }
 
@@ -656,12 +736,9 @@ sm2_ic_error_t sm2_rev_sync_staleness_bound(const sm2_rev_sync_policy_t *policy,
 {
     if (!policy || !upper_bound_sec)
         return SM2_IC_ERR_PARAM;
-    if (policy->t_base_sec == 0 || policy->fast_poll_sec == 0
-        || policy->fast_poll_sec > policy->t_base_sec
-        || policy->max_backoff_sec < policy->t_base_sec)
-    {
-        return SM2_IC_ERR_PARAM;
-    }
+    sm2_ic_error_t ret = rev_sync_validate_policy(policy);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
 
     uint64_t upper = policy->t_base_sec;
     if (upper <= UINT64_MAX - policy->propagation_delay_sec)
@@ -675,6 +752,77 @@ sm2_ic_error_t sm2_rev_sync_staleness_bound(const sm2_rev_sync_policy_t *policy,
         upper = UINT64_MAX;
 
     *upper_bound_sec = upper;
+    return SM2_IC_SUCCESS;
+}
+
+sm2_ic_error_t sm2_rev_sync_plan_publication(
+    const sm2_rev_sync_policy_t *policy, uint64_t now_ts,
+    const sm2_rev_publication_input_t *input, sm2_rev_publication_plan_t *plan)
+{
+    if (!policy || !input || !plan)
+        return SM2_IC_ERR_PARAM;
+
+    uint64_t upper_bound = 0;
+    sm2_ic_error_t ret = sm2_rev_sync_staleness_bound(policy, 0, &upper_bound);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    bool has_pending_delta
+        = input->has_pending_delta || input->pending_delta_count > 0;
+    uint64_t elapsed_since_publish
+        = rev_sync_elapsed(now_ts, input->last_publish_ts);
+    uint64_t elapsed_since_full
+        = rev_sync_elapsed(now_ts, input->last_full_checkpoint_ts);
+
+    if (input->delta_chain_len >= policy->max_delta_chain_len
+        || elapsed_since_full >= policy->full_checkpoint_interval_sec)
+    {
+        rev_sync_set_publication_plan(plan, SM2_REV_PUBLICATION_FULL_CHECKPOINT,
+            now_ts, 0, policy, upper_bound, input->current_root_valid_until);
+        return SM2_IC_SUCCESS;
+    }
+
+    if (has_pending_delta && input->urgent_delta)
+    {
+        uint64_t wait_sec = 0;
+        if (elapsed_since_publish < policy->urgent_delta_grace_sec)
+            wait_sec = policy->urgent_delta_grace_sec - elapsed_since_publish;
+        wait_sec = rev_sync_limit_wait_to_expiry(
+            now_ts, input->current_root_valid_until, wait_sec);
+        rev_sync_set_publication_plan(plan, SM2_REV_PUBLICATION_DELTA_PATCH,
+            now_ts, wait_sec, policy, upper_bound,
+            input->current_root_valid_until);
+        return SM2_IC_SUCCESS;
+    }
+
+    if (has_pending_delta)
+    {
+        uint64_t wait_sec = 0;
+        if (elapsed_since_publish < policy->fast_poll_sec)
+            wait_sec = policy->fast_poll_sec - elapsed_since_publish;
+        wait_sec = rev_sync_limit_wait_to_expiry(
+            now_ts, input->current_root_valid_until, wait_sec);
+        rev_sync_set_publication_plan(plan, SM2_REV_PUBLICATION_DELTA_PATCH,
+            now_ts, wait_sec, policy, upper_bound,
+            input->current_root_valid_until);
+        return SM2_IC_SUCCESS;
+    }
+
+    if (input->current_root_valid_until <= now_ts
+        || elapsed_since_publish >= policy->t_base_sec)
+    {
+        rev_sync_set_publication_plan(plan, SM2_REV_PUBLICATION_HEARTBEAT_PATCH,
+            now_ts, 0, policy, upper_bound, input->current_root_valid_until);
+        return SM2_IC_SUCCESS;
+    }
+
+    uint64_t wait_for_heartbeat = policy->t_base_sec - elapsed_since_publish;
+    uint64_t wait_for_expire = input->current_root_valid_until - now_ts;
+    uint64_t wait_sec = wait_for_heartbeat < wait_for_expire
+        ? wait_for_heartbeat
+        : wait_for_expire;
+    rev_sync_set_publication_plan(plan, SM2_REV_PUBLICATION_NONE, now_ts,
+        wait_sec, policy, upper_bound, input->current_root_valid_until);
     return SM2_IC_SUCCESS;
 }
 

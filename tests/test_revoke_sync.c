@@ -559,6 +559,115 @@ static void test_revocation_phase11_policy_heartbeat_and_upper_bound(void)
     TEST_PASS();
 }
 
+static void test_revocation_phase11_crl_style_publication_plan(void)
+{
+    sm2_rev_sync_policy_t policy;
+    TEST_ASSERT(sm2_rev_sync_policy_init(&policy) == SM2_IC_SUCCESS,
+        "Init Sync Policy");
+    TEST_ASSERT(
+        policy.full_checkpoint_interval_sec == 3600, "Full Checkpoint Default");
+    TEST_ASSERT(policy.max_delta_chain_len == 64, "Delta Chain Limit Default");
+    TEST_ASSERT(policy.urgent_delta_grace_sec == 0, "Urgent Delta Default");
+
+    sm2_rev_publication_input_t input;
+    memset(&input, 0, sizeof(input));
+    input.last_publish_ts = 110;
+    input.last_full_checkpoint_ts = 100;
+    input.current_root_valid_until = 170;
+
+    sm2_rev_publication_plan_t plan;
+    TEST_ASSERT(sm2_rev_sync_plan_publication(&policy, 120, &input, &plan)
+            == SM2_IC_SUCCESS,
+        "Plan No-Change Publication");
+    TEST_ASSERT(plan.action == SM2_REV_PUBLICATION_NONE, "No Publication");
+    TEST_ASSERT(!plan.publish_now, "No Publish Now");
+    TEST_ASSERT(plan.publish_after_sec == 50, "Wait Until NextUpdate");
+    TEST_ASSERT(plan.next_update_ts == 170, "No-Change NextUpdate");
+    TEST_ASSERT(plan.valid_until == 170, "No-Change ValidUntil");
+
+    input.current_root_valid_until = 119;
+    TEST_ASSERT(sm2_rev_sync_plan_publication(&policy, 120, &input, &plan)
+            == SM2_IC_SUCCESS,
+        "Plan Expired Heartbeat");
+    TEST_ASSERT(
+        plan.action == SM2_REV_PUBLICATION_HEARTBEAT_PATCH, "Heartbeat Action");
+    TEST_ASSERT(plan.object_type == SM2_REV_SYNC_OBJECT_HEARTBEAT_PATCH,
+        "Heartbeat Object");
+    TEST_ASSERT(plan.publish_now, "Heartbeat Publish Now");
+    TEST_ASSERT(plan.heartbeat_refresh_only, "Heartbeat Refresh Only");
+    TEST_ASSERT(plan.next_update_ts == 180, "Heartbeat NextUpdate");
+
+    input.current_root_valid_until = 170;
+    input.has_pending_delta = true;
+    TEST_ASSERT(sm2_rev_sync_plan_publication(&policy, 120, &input, &plan)
+            == SM2_IC_SUCCESS,
+        "Plan Batched Delta");
+    TEST_ASSERT(plan.action == SM2_REV_PUBLICATION_DELTA_PATCH, "Delta Action");
+    TEST_ASSERT(
+        plan.object_type == SM2_REV_SYNC_OBJECT_DELTA_PATCH, "Delta Object");
+    TEST_ASSERT(!plan.publish_now, "Delta Waits For Fast Window");
+    TEST_ASSERT(plan.publish_after_sec == 5, "Delta Batch Window");
+    TEST_ASSERT(plan.issued_at == 125, "Delta IssuedAt");
+    TEST_ASSERT(plan.next_update_ts == 185, "Delta NextUpdate");
+
+    input.current_root_valid_until = 122;
+    TEST_ASSERT(sm2_rev_sync_plan_publication(&policy, 120, &input, &plan)
+            == SM2_IC_SUCCESS,
+        "Plan Delta Before Root Expiry");
+    TEST_ASSERT(
+        plan.action == SM2_REV_PUBLICATION_DELTA_PATCH, "Expiry Delta Action");
+    TEST_ASSERT(plan.publish_after_sec == 2, "Delta Wait Clamped By Expiry");
+
+    input.current_root_valid_until = 119;
+    TEST_ASSERT(sm2_rev_sync_plan_publication(&policy, 120, &input, &plan)
+            == SM2_IC_SUCCESS,
+        "Plan Delta On Expired Root");
+    TEST_ASSERT(plan.publish_now, "Expired Root Delta Publishes Now");
+
+    input.current_root_valid_until = 170;
+    TEST_ASSERT(sm2_rev_sync_plan_publication(&policy, 125, &input, &plan)
+            == SM2_IC_SUCCESS,
+        "Plan Ready Delta");
+    TEST_ASSERT(plan.publish_now, "Delta Publish Now");
+
+    input.urgent_delta = true;
+    input.last_publish_ts = 124;
+    TEST_ASSERT(sm2_rev_sync_plan_publication(&policy, 125, &input, &plan)
+            == SM2_IC_SUCCESS,
+        "Plan Urgent Delta");
+    TEST_ASSERT(
+        plan.action == SM2_REV_PUBLICATION_DELTA_PATCH, "Urgent Delta Action");
+    TEST_ASSERT(plan.publish_now, "Urgent Delta Publish Now");
+
+    input.urgent_delta = false;
+    input.delta_chain_len = policy.max_delta_chain_len;
+    TEST_ASSERT(sm2_rev_sync_plan_publication(&policy, 125, &input, &plan)
+            == SM2_IC_SUCCESS,
+        "Plan Full Checkpoint For Chain Limit");
+    TEST_ASSERT(plan.action == SM2_REV_PUBLICATION_FULL_CHECKPOINT,
+        "Chain Limit Full Checkpoint");
+    TEST_ASSERT(plan.object_type == SM2_REV_SYNC_OBJECT_ROOT_RECORD,
+        "Full Checkpoint Object");
+    TEST_ASSERT(plan.publish_now, "Full Checkpoint Publish Now");
+
+    input.delta_chain_len = 0;
+    input.has_pending_delta = false;
+    input.last_full_checkpoint_ts = 0;
+    TEST_ASSERT(sm2_rev_sync_plan_publication(&policy, 3600, &input, &plan)
+            == SM2_IC_SUCCESS,
+        "Plan Periodic Full Checkpoint");
+    TEST_ASSERT(plan.action == SM2_REV_PUBLICATION_FULL_CHECKPOINT,
+        "Periodic Full Checkpoint");
+
+    sm2_rev_sync_policy_t invalid = policy;
+    invalid.max_delta_chain_len = 0;
+    TEST_ASSERT(sm2_rev_sync_plan_publication(&invalid, 125, &input, &plan)
+            == SM2_IC_ERR_PARAM,
+        "Reject Invalid Publication Policy");
+
+    TEST_PASS();
+}
+
 static void test_revocation_phase11_network_partition_and_reconnect(void)
 {
     sm2_rev_ctx_t *ctx = NULL;
@@ -714,6 +823,7 @@ void run_test_revoke_sync_suite(void)
     RUN_TEST(test_revocation_phase11_auto_switch_and_feedback);
     RUN_TEST(test_revocation_phase11_redirect_metadata_integrity);
     RUN_TEST(test_revocation_phase11_policy_heartbeat_and_upper_bound);
+    RUN_TEST(test_revocation_phase11_crl_style_publication_plan);
     RUN_TEST(test_revocation_phase11_network_partition_and_reconnect);
     RUN_TEST(test_revocation_phase12_redirect_candidate_count_bounds);
 }

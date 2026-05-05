@@ -69,6 +69,9 @@ extern "C"
 #define SM2_REV_SYNC_DEFAULT_FAST_POLL_SEC 15
 #define SM2_REV_SYNC_DEFAULT_MAX_BACKOFF_SEC 300
 #define SM2_REV_SYNC_DEFAULT_PROPAGATION_DELAY_SEC 30
+#define SM2_REV_SYNC_DEFAULT_FULL_CHECKPOINT_SEC 3600
+#define SM2_REV_SYNC_DEFAULT_MAX_DELTA_CHAIN_LEN 64
+#define SM2_REV_SYNC_DEFAULT_URGENT_DELTA_GRACE_SEC 0
 
     typedef enum
     {
@@ -138,6 +141,9 @@ extern "C"
         uint64_t fast_poll_sec;
         uint64_t max_backoff_sec;
         uint64_t propagation_delay_sec;
+        uint64_t full_checkpoint_interval_sec;
+        size_t max_delta_chain_len;
+        uint64_t urgent_delta_grace_sec;
     } sm2_rev_sync_policy_t;
 
     typedef struct
@@ -147,6 +153,38 @@ extern "C"
         bool accelerated_mode;
         bool heartbeat_refresh_only;
     } sm2_rev_sync_schedule_t;
+
+    typedef enum
+    {
+        SM2_REV_PUBLICATION_NONE = 0,
+        SM2_REV_PUBLICATION_DELTA_PATCH = 1,
+        SM2_REV_PUBLICATION_HEARTBEAT_PATCH = 2,
+        SM2_REV_PUBLICATION_FULL_CHECKPOINT = 3
+    } sm2_rev_publication_action_t;
+
+    typedef struct
+    {
+        bool has_pending_delta;
+        bool urgent_delta;
+        size_t pending_delta_count;
+        size_t delta_chain_len;
+        uint64_t last_publish_ts;
+        uint64_t last_full_checkpoint_ts;
+        uint64_t current_root_valid_until;
+    } sm2_rev_publication_input_t;
+
+    typedef struct
+    {
+        sm2_rev_publication_action_t action;
+        sm2_rev_sync_object_type_t object_type;
+        bool publish_now;
+        bool heartbeat_refresh_only;
+        uint64_t publish_after_sec;
+        uint64_t issued_at;
+        uint64_t valid_until;
+        uint64_t next_update_ts;
+        uint64_t staleness_upper_bound_sec;
+    } sm2_rev_publication_plan_t;
 
     typedef struct
     {
@@ -401,6 +439,11 @@ extern "C"
     sm2_ic_error_t sm2_rev_sync_staleness_bound(
         const sm2_rev_sync_policy_t *policy, uint64_t clock_skew_sec,
         uint64_t *upper_bound_sec);
+
+    sm2_ic_error_t sm2_rev_sync_plan_publication(
+        const sm2_rev_sync_policy_t *policy, uint64_t now_ts,
+        const sm2_rev_publication_input_t *input,
+        sm2_rev_publication_plan_t *plan);
 
     sm2_ic_error_t sm2_rev_sync_plan_schedule(const sm2_rev_ctx_t *ctx,
         const sm2_rev_sync_policy_t *policy, uint64_t known_latest_version,
