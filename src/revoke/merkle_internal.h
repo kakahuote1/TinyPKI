@@ -59,17 +59,6 @@ extern "C"
         const uint8_t key[SM2_REV_MERKLE_HASH_LEN],
         uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN]);
 
-    sm2_ic_error_t merkle_hash_parent(
-        const uint8_t left[SM2_REV_MERKLE_HASH_LEN],
-        const uint8_t right[SM2_REV_MERKLE_HASH_LEN],
-        uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN]);
-
-    sm2_ic_error_t merkle_hash_empty_leaf(
-        uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN]);
-
-    sm2_ic_error_t merkle_empty_hash_at_depth(
-        size_t depth, uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN]);
-
     sm2_ic_error_t merkle_tree_update_serial(
         sm2_rev_tree_t *tree, uint64_t serial, bool revoked);
     void merkle_tree_set_root_version(sm2_rev_tree_t *tree, uint64_t version);

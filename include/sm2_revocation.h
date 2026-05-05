@@ -248,6 +248,9 @@ extern "C"
         uint64_t target_serial;
         uint8_t target_key[SM2_REV_MERKLE_HASH_LEN];
         bool tree_empty;
+        uint16_t terminal_depth;
+        uint8_t terminal_key[SM2_REV_MERKLE_HASH_LEN];
+        uint8_t terminal_hash[SM2_REV_MERKLE_HASH_LEN];
         size_t sibling_count;
         uint16_t sibling_depths[SM2_REV_MERKLE_MAX_DEPTH];
         uint8_t sibling_hashes[SM2_REV_MERKLE_MAX_DEPTH]

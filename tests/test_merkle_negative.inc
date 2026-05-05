@@ -154,6 +154,18 @@ static void test_merkle_absence_sparse_path_commitment(void)
         sm2_rev_tree_verify_absence(root_hash, &tampered) == SM2_IC_ERR_VERIFY,
         "Tampered sparse path must fail");
 
+    tampered = proof;
+    tampered.terminal_hash[0] ^= 0x01U;
+    TEST_ASSERT(
+        sm2_rev_tree_verify_absence(root_hash, &tampered) == SM2_IC_ERR_VERIFY,
+        "Tampered absence terminal hash must fail");
+
+    tampered = proof;
+    tampered.terminal_key[0] ^= 0x01U;
+    TEST_ASSERT(
+        sm2_rev_tree_verify_absence(root_hash, &tampered) == SM2_IC_ERR_VERIFY,
+        "Tampered absence terminal key must fail");
+
     sm2_rev_tree_cleanup(&tree);
     TEST_PASS();
 }

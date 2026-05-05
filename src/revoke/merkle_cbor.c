@@ -403,7 +403,7 @@ sm2_ic_error_t sm2_rev_absence_proof_encode(
     if (proof->sibling_count > SM2_REV_MERKLE_MAX_DEPTH)
         return SM2_IC_ERR_PARAM;
 
-    sm2_ic_error_t ret = cbor_put_type_value(4, 7, output, *output_len, &off);
+    sm2_ic_error_t ret = cbor_put_type_value(4, 9, output, *output_len, &off);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -412,12 +412,22 @@ sm2_ic_error_t sm2_rev_absence_proof_encode(
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    ret = cbor_put_bytes(
-        proof->target_key, SM2_REV_MERKLE_HASH_LEN, output, *output_len, &off);
+    ret = cbor_put_bool(proof->tree_empty, output, *output_len, &off);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    ret = cbor_put_bool(proof->tree_empty, output, *output_len, &off);
+    ret = cbor_put_type_value(
+        0, proof->terminal_depth, output, *output_len, &off);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    ret = cbor_put_bytes(proof->terminal_key, SM2_REV_MERKLE_HASH_LEN, output,
+        *output_len, &off);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    ret = cbor_put_bytes(proof->terminal_hash, SM2_REV_MERKLE_HASH_LEN, output,
+        *output_len, &off);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -474,7 +484,7 @@ sm2_ic_error_t sm2_rev_absence_proof_decode(
     uint64_t arr_len = 0;
     sm2_ic_error_t ret
         = cbor_get_type_value(input, input_len, &off, &major, &arr_len);
-    if (ret != SM2_IC_SUCCESS || major != 4 || arr_len != 7)
+    if (ret != SM2_IC_SUCCESS || major != 4 || arr_len != 9)
         return SM2_IC_ERR_CBOR;
 
     uint64_t target = 0;
@@ -482,16 +492,38 @@ sm2_ic_error_t sm2_rev_absence_proof_decode(
     if (ret != SM2_IC_SUCCESS || major != 0)
         return SM2_IC_ERR_CBOR;
     proof->target_serial = target;
-
-    size_t key_len = 0;
-    ret = cbor_get_bytes(input, input_len, &off, proof->target_key,
-        SM2_REV_MERKLE_HASH_LEN, &key_len);
-    if (ret != SM2_IC_SUCCESS || key_len != SM2_REV_MERKLE_HASH_LEN)
+    ret = merkle_serial_key(target, proof->target_key);
+    if (ret != SM2_IC_SUCCESS)
         return SM2_IC_ERR_CBOR;
 
     ret = cbor_get_bool(input, input_len, &off, &proof->tree_empty);
     if (ret != SM2_IC_SUCCESS)
         return ret;
+
+    uint64_t terminal_depth = 0;
+    ret = cbor_get_type_value(input, input_len, &off, &major, &terminal_depth);
+    if (ret != SM2_IC_SUCCESS || major != 0
+        || terminal_depth > SM2_REV_MERKLE_MAX_DEPTH)
+    {
+        return SM2_IC_ERR_CBOR;
+    }
+    proof->terminal_depth = (uint16_t)terminal_depth;
+
+    size_t terminal_key_len = 0;
+    ret = cbor_get_bytes(input, input_len, &off, proof->terminal_key,
+        SM2_REV_MERKLE_HASH_LEN, &terminal_key_len);
+    if (ret != SM2_IC_SUCCESS || terminal_key_len != SM2_REV_MERKLE_HASH_LEN)
+    {
+        return SM2_IC_ERR_CBOR;
+    }
+
+    size_t terminal_hash_len = 0;
+    ret = cbor_get_bytes(input, input_len, &off, proof->terminal_hash,
+        SM2_REV_MERKLE_HASH_LEN, &terminal_hash_len);
+    if (ret != SM2_IC_SUCCESS || terminal_hash_len != SM2_REV_MERKLE_HASH_LEN)
+    {
+        return SM2_IC_ERR_CBOR;
+    }
 
     uint64_t sibling_count = 0;
     ret = cbor_get_type_value(input, input_len, &off, &major, &sibling_count);
