@@ -9,7 +9,7 @@
 
 TinyPKI 是一个面向 IoT 资源受限、弱网与边缘节点场景的轻量 PKI C11 核心库，覆盖证书签发、吊销证明、认证与会话保护等主链路能力。
 
-本项目基于 OpenSSL EVP 架构与国密算法族（SM2/SM3/SM4）实现，围绕 ECQV 隐式证书构建，并原生提供 CA 签名的统一 epoch 证据包、携带式非吊销证明、强制发证透明证明、撤销状态同步以及面向 service/client 的高层 PKI API。
+本项目基于 OpenSSL EVP 架构与国密算法族（SM2/SM3/SM4）实现，围绕 ECQV 隐式证书构建，并原生提供 CA 签名的统一 epoch 证据包、基于 sparse Merkle 的携带式非吊销证明、基于 MMR 的强制发证透明与边缘 witness 门限、撤销状态同步以及面向 service/client 的高层 PKI API。
 
 无论是微控制器、智能网关，还是需要本地化吊销校验与安全会话建立的边缘服务组件，TinyPKI 都能提供较低集成成本且接口清晰的实现基础。
 
@@ -24,13 +24,13 @@ TinyPKI 是一个面向 IoT 资源受限、弱网与边缘节点场景的轻量 
   传统数字证书动辄上千字节，在 NB-IoT、LoRa 等窄带网络中传输成本很高。本项目采用基于国密算法的隐式证书（ECQV）技术，提供请求生成、CA 签发、终端侧公私钥重构与证书一致性验证的完整链路，显著降低证书载荷与设备侧处理负担。当前仓库内 benchmark 快照下，ECQV 隐式证书编码为 `79 bytes`，对照本机生成的 X.509 DER 基线 `691 bytes`，约为其 `11.43%`。
 * 🌳 **极速且保护隐私的证书吊销校验**
 
-  传统的 OCSP 或 CRL 往往带来额外在线查询和隐私暴露。本项目采用“CA 签名 epoch root + Merkle member/absence proof”机制，由证书持有方在认证时直接携带精确的非吊销证明，对端结合同一个 epoch checkpoint 即可完成离线校验。
+  传统的 OCSP 或 CRL 往往带来额外在线查询和隐私暴露。本项目采用动态 sparse Merkle revocation accumulator，由 CA 签名的 epoch root 承诺当前撤销状态；证书持有方在认证时携带精确 absence proof，对端结合同一个 epoch checkpoint 即可离线确认“未被撤销”。已撤销条目使用 member proof，过期撤销条目可从 sparse tree 中移除，不会挤动其他叶子。
 * 🔎 **强制发证透明与边缘见证门限**
 
-  高层 `sm2_pki_verify()` 默认要求每个对端携带统一 epoch evidence bundle。CA 侧维护按签发顺序追加的 32-byte 证书承诺 Merkle log，验证端检查成员证明、CA 签名 epoch root，并可通过客户端级 `t-of-n` witness policy 要求多个边缘节点对 epoch root 见证签名。
+  高层 `sm2_pki_verify()` 要求每个对端携带统一 epoch evidence bundle。CA 侧维护按签发顺序追加的 32-byte 证书承诺 MMR log，验证端检查 issuance member proof、CA 签名 epoch root，并必须使用客户端级 `t-of-n` witness policy 验证多个边缘节点对 epoch root 的见证签名。
 * 📌 **统一 PKI epoch 证据包**
 
-  新增 CA 签名的 `epoch root`，将当前吊销 Merkle root 与发证透明 root 绑定成一个检查点；验证端可使用 `sm2_pki_evidence_bundle_t` 一次性验证非吊销证明、发证成员证明和 `t-of-n` witness 签名，witness 签名前会检查 issuance log 的 append-only 演进。
+  CA 签名的 `epoch root` 将当前 revocation sparse root 与 issuance MMR root 绑定成一个检查点；验证端使用 `sm2_pki_evidence_bundle_t` 一次性验证非吊销证明、发证成员证明和 `t-of-n` witness 签名。witness 签名前会检查 issuance log 的 append-only 演进，边缘节点之间也可对 epoch root 投票以发现 CA 分叉。
 * 🛡️ **面向断网与多节点同步的撤销状态维护**
 
   在边缘与弱连接场景中，撤销状态往往需要跨节点同步而不是依赖单点在线查询。本项目提供 delta/heartbeat、重定向候选、quorum/BFT 检查以及 epoch/cached proof 相关能力，用于在断网、时钟漂移和部分节点异常时维持撤销状态的一致性与可用性。
@@ -77,7 +77,7 @@ cmake --build build --target sm2_test_cert_flow -j 4
 ./build/sm2_test_cert_flow.exe
 ```
 
-**2. Merkle Root Hash、member/absence proof 与 multiproof 压缩演示**
+**2. Sparse Merkle revocation root、member/absence proof 与 multiproof 压缩演示**
 ```bash
 cmake --build build --target sm2_test_merkle_flow -j 4
 ./build/sm2_test_merkle_flow.exe
@@ -86,7 +86,7 @@ cmake --build build --target sm2_test_merkle_flow -j 4
 
 ## 🧪 测试验证 (Testing)
 
-当前仓库测试主链路由 `ctest` 与 `test_all` 两个入口组成。按当前基线，`ctest` 拆分为 6 个 suite，`test_all` 聚合执行 88 个用例。
+当前仓库测试主链路由 `ctest` 与 `test_all` 两个入口组成。按当前基线，`ctest` 拆分为 6 个 suite，`test_all` 聚合执行 89 个用例。
 
 **运行与 CI 相同的格式检查（固定 clang-format 18）：**
 ```bash
@@ -139,7 +139,7 @@ cmake --build build --target sm2_bench_capability_suite -j 4
 ```
 
 > `bench_capability_suite` 目前同时输出三类结果：
-> TinyPKI 主链路实测、基于 OpenSSL 本地生成并校验的真实 `CRL/OCSP` 基线、以及参考 CRLite 论文参数的 workload/CRLite 建模对比。
+> TinyPKI 主链路实测、基于 OpenSSL 本地生成并校验的 `CRL/OCSP` 对照基线、以及参考 CRLite 论文参数的 workload/CRLite 建模对比。
 > 当指定 JSON 输出路径时，还会自动生成同名 `.md` 表格报告，便于直接查看和写材料。
 
 > 为方便审计与排查，完整测试已按领域拆分。当前可单独执行：
@@ -162,26 +162,26 @@ cmake --build build --target sm2_bench_capability_suite -j 4
 公开安全接口采用清晰一致的命名空间。接入时，可按能力维度包含对应头文件：
 
 * `include/sm2_implicit_cert.h`: ECQV 请求生成、CA 签发、证书验证与终端侧密钥重构
-* `include/sm2_revocation.h`: Merkle 根记录、member/absence proof、multiproof、epoch 缓存与撤销同步/BFT 辅助能力
-* `include/sm2_pki_transparency.h`: 发证透明 proof、统一 epoch root、witness 签名与 `t-of-n` 见证策略类型
+* `include/sm2_revocation.h`: sparse Merkle 撤销累加器、member/absence proof、multiproof、epoch 缓存与撤销同步/BFT 辅助能力
+* `include/sm2_pki_transparency.h`: issuance MMR proof、统一 epoch root、witness 签名、append-only 见证状态与 `t-of-n` 见证策略类型
 * `include/sm2_auth.h`: 认证请求校验、revocation policy、握手绑定、双向握手与 AEAD 会话保护
 * `include/sm2_crypto.h`: 底层签名、验签、随机数、哈希、AEAD 以及统一 PKI 错误映射
-* `include/sm2_pki_service.h` / `sm2_pki_client.h`: 面向内存态 CA/RA 服务端与设备侧客户端的高层流程 API（Opaque Handle 隔离）
+* `include/sm2_pki_service.h` / `sm2_pki_client.h`: 面向内存态 CA/RA 服务端与设备侧客户端的高层流程 API（Opaque Handle 隔离），验证路径强制使用 epoch evidence 与客户端级 witness policy
 
 
 ---
 
 ## 🌍 English Summary
 
-**TinyPKI** is a lightweight C11 PKI core for constrained IoT, weakly connected, and edge deployment scenarios. Built on top of OpenSSL EVP with SM2/SM3/SM4, it provides end-to-end flows for ECQV implicit certificates, CA-signed epoch evidence bundles, mandatory issuance transparency, proof-carrying non-revocation checks, and high-level PKI/auth/session APIs.
+**TinyPKI** is a lightweight C11 PKI core for constrained IoT, weakly connected, and edge deployment scenarios. Built on top of OpenSSL EVP with SM2/SM3/SM4, it provides end-to-end flows for ECQV implicit certificates, CA-signed epoch evidence bundles, sparse Merkle non-revocation proofs, MMR-based mandatory issuance transparency, edge witness thresholds, and high-level PKI/auth/session APIs.
 
 - **ECQV Implicit Certificate Flows** covering request generation, CA issuance, endpoint key reconstruction, and certificate verification with substantially smaller payloads than conventional X.509.
-- **Measured Footprint Snapshot**: the in-repo capability benchmark reports the final epoch-bundle authentication payload, including ECQV certificate, signature, CA-signed epoch root, revocation proof, issuance proof, and witness signatures.
-- **CA-Signed Epoch Evidence and Carried Proofs** supporting exact offline non-revocation checks via member/absence proofs bound to the same checkpoint as issuance transparency.
-- **Mandatory Issuance Transparency and Unified Epoch Evidence** using 32-byte certificate commitments, a CA-signed epoch root that binds issuance and revocation roots, and client-level `t-of-n` edge witness policies.
+- **Measured Footprint Snapshot**: the in-repo capability benchmark reports the final epoch-bundle authentication payload, including ECQV certificate, signature, CA-signed epoch root, sparse revocation proof, issuance MMR proof, and witness signatures.
+- **CA-Signed Epoch Evidence and Carried Proofs** supporting exact offline non-revocation checks via sparse absence proofs bound to the same checkpoint as issuance transparency.
+- **Mandatory Issuance Transparency and Unified Epoch Evidence** using 32-byte certificate commitments, an append-only MMR issuance log, a CA-signed epoch root that binds issuance and revocation roots, and client-level `t-of-n` edge witness policies.
 - **Revocation State Sync Tooling** including delta/heartbeat refresh, redirect hints, quorum/BFT helpers, multiproof compression, and epoch/cached proof support.
 - **Mutual Authentication and Secure Sessions** spanning static or ephemeral key agreement, canonical handshake binding, key-usage enforcement, and SM4-GCM/CCM AEAD protection.
-- **Misuse-Resistant High-Level APIs** built around opaque handles, secure defaults, unified error mapping, and a current automated test baseline of 88 cases across `ctest` and `test_all`.
+- **Misuse-Resistant High-Level APIs** built around opaque handles, secure defaults, unified error mapping, and a current automated test baseline of 89 cases across `ctest` and `test_all`.
 
 ## 📄 开源许可证 (License)
 
