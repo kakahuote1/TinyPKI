@@ -139,7 +139,6 @@ static int attach_witness(capability_flow_ctx_t *ctx)
         return 0;
     }
     ctx->evidence.witness_signature_count = 1U;
-    ctx->request.transparency_policy = &ctx->policy;
     return 1;
 }
 
@@ -206,6 +205,11 @@ static int build_flow(capability_flow_ctx_t *ctx)
     ctx->policy.witnesses = &ctx->witness;
     ctx->policy.witness_count = 1U;
     ctx->policy.threshold = 1U;
+    if (sm2_pki_client_set_transparency_policy(ctx->verifier, &ctx->policy)
+        != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
 
     ctx->auth_now = ctx->cert_result.cert.valid_from != 0
         ? ctx->cert_result.cert.valid_from

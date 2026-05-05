@@ -70,6 +70,12 @@ sm2_ic_error_t sm2_pki_issuance_tree_verify_member(
 sm2_pki_error_t sm2_pki_service_acquire_revocation_binding(
     sm2_pki_service_ctx_t *ctx, sm2_pki_service_state_t **bound_state);
 void sm2_pki_service_release_revocation_binding(sm2_pki_service_state_t *state);
+bool sm2_pki_service_binding_live(const sm2_pki_service_state_t *state);
+sm2_pki_error_t sm2_pki_service_export_current_epoch_evidence(
+    const sm2_pki_service_ctx_t *ctx, const sm2_implicit_cert_t *cert,
+    sm2_pki_epoch_root_record_t *epoch_root,
+    sm2_rev_absence_proof_t *revocation_proof,
+    sm2_pki_issuance_member_proof_t *issuance_proof);
 
 typedef struct
 {

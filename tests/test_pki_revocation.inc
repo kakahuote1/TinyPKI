@@ -52,6 +52,8 @@ static void test_phase8_merkle_hook_and_service_binding()
     TEST_ASSERT(sm2_pki_client_create(&verifier, &ca_pub, NULL)
             == SM2_PKI_SUCCESS,
         "Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Verifier Witness Policy");
 
     size_t matched = 0;
     TEST_ASSERT(sm2_pki_verify(verifier, &auth_req, auth_now, &matched)
@@ -133,6 +135,8 @@ static void test_phase9_epoch_lookup_unknown_query_override_behavior()
     TEST_ASSERT(sm2_pki_client_create(&verifier, &ca_pub, NULL)
             == SM2_PKI_SUCCESS,
         "Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Verifier Witness Policy");
 
     size_t matched = 0;
     TEST_ASSERT(sm2_pki_verify(verifier, &auth_req, auth_now + 100, &matched)
@@ -428,6 +432,8 @@ static void test_phase11_merkle_freshness_e2e_gate()
     TEST_ASSERT(
         sm2_pki_client_create(&verifier, &ca_pub, NULL) == SM2_PKI_SUCCESS,
         "Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Verifier Witness Policy");
 
     size_t matched = 0;
     TEST_ASSERT(sm2_pki_verify(verifier, &auth_req, auth_now + 100, &matched)

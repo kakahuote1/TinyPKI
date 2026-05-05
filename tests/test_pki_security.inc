@@ -500,6 +500,10 @@ static void test_phase13_secure_pki_session_default_api()
     TEST_ASSERT(
         sm2_pki_client_create(&client_b, &ca_pub, service) == SM2_PKI_SUCCESS,
         "Client B Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(client_a),
+        "Client A Witness Policy");
+    TEST_ASSERT(pki_configure_default_transparency_policy(client_b),
+        "Client B Witness Policy");
     TEST_ASSERT(sm2_pki_client_import_cert(client_a, &cert_a, &temp_a, &ca_pub)
             == SM2_PKI_SUCCESS,
         "Import A");
@@ -579,7 +583,7 @@ static void test_phase13_secure_pki_session_default_api()
     req_a_to_b.message_len = bind_a_len;
     req_a_to_b.signature = &sig_a;
     req_a_to_b.evidence_bundle = &evidence_a;
-    TEST_ASSERT(pki_attach_default_epoch_witness(&evidence_a, &req_a_to_b),
+    TEST_ASSERT(pki_attach_default_epoch_witness(&evidence_a),
         "Attach Witness A");
 
     req_b_to_a.cert = client_b_cert;
@@ -588,7 +592,7 @@ static void test_phase13_secure_pki_session_default_api()
     req_b_to_a.message_len = bind_b_len;
     req_b_to_a.signature = &sig_b;
     req_b_to_a.evidence_bundle = &evidence_b;
-    TEST_ASSERT(pki_attach_default_epoch_witness(&evidence_b, &req_b_to_a),
+    TEST_ASSERT(pki_attach_default_epoch_witness(&evidence_b),
         "Attach Witness B");
 
     uint8_t sk_a[16];
@@ -841,6 +845,8 @@ static void test_phase137_client_epoch_cache_refresh_and_rollback()
     TEST_ASSERT(sm2_pki_client_create(&verifier, &ca_pub, NULL)
             == SM2_PKI_SUCCESS,
         "Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Verifier Witness Policy");
     TEST_ASSERT(
         sm2_pki_client_import_cert(signer, &cert_res, &temp_priv, &ca_pub)
             == SM2_PKI_SUCCESS,
@@ -962,6 +968,8 @@ static void test_phase138_service_binding_tracks_newer_root_versions()
     TEST_ASSERT(
         sm2_pki_client_create(&verifier, &ca_pub, NULL) == SM2_PKI_SUCCESS,
         "Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Verifier Witness Policy");
 
     size_t matched = 0;
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
@@ -1041,6 +1049,8 @@ static void test_phase140_epoch_bundle_requires_matching_checkpoint()
     TEST_ASSERT(sm2_pki_client_create(&verifier, &ca_pub, NULL)
             == SM2_PKI_SUCCESS,
         "Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Verifier Witness Policy");
     TEST_ASSERT(
         sm2_pki_client_import_cert(signer, &cert_signer, &temp_signer, &ca_pub)
             == SM2_PKI_SUCCESS,
@@ -1170,13 +1180,19 @@ static void test_phase141_issuance_transparency_required_and_threshold()
             == SM2_PKI_ERR_VERIFY,
         "Missing Mandatory Epoch Bundle Reject");
 
-    const sm2_pki_transparency_policy_t *default_policy
-        = request.transparency_policy;
-    request.transparency_policy = NULL;
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_ERR_VERIFY,
-        "Missing Mandatory Witness Policy Reject");
-    request.transparency_policy = default_policy;
+        "Missing Verifier Witness Policy Reject");
+    TEST_ASSERT(sm2_pki_client_set_transparency_policy(verifier, NULL)
+            == SM2_PKI_ERR_PARAM,
+        "Null Witness Policy Reject");
+    sm2_pki_transparency_policy_t zero_policy
+        = { &g_pki_default_witness, 1, 0 };
+    TEST_ASSERT(sm2_pki_client_set_transparency_policy(verifier, &zero_policy)
+            == SM2_PKI_ERR_PARAM,
+        "Zero Witness Threshold Reject");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Configure Default Witness Policy");
 
     sm2_pki_evidence_bundle_t no_witness = rev_evidence;
     no_witness.witness_signature_count = 0;
@@ -1467,6 +1483,8 @@ static void test_phase143_epoch_bundle_binds_roots_and_witnesses()
     TEST_ASSERT(
         sm2_pki_client_create(&verifier, &ca_pub, NULL) == SM2_PKI_SUCCESS,
         "Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Verifier Witness Policy");
     TEST_ASSERT(
         sm2_pki_client_import_cert(signer, &signer_cert, &signer_temp, &ca_pub)
             == SM2_PKI_SUCCESS,
@@ -1669,6 +1687,8 @@ static void test_phase139_root_versions_are_scoped_per_authority()
     TEST_ASSERT(
         sm2_pki_client_create(&client, &ca_pub_a, NULL) == SM2_PKI_SUCCESS,
         "Client Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(client),
+        "Client Witness Policy");
     TEST_ASSERT(
         sm2_pki_client_add_trusted_ca(client, &ca_pub_b) == SM2_PKI_SUCCESS,
         "Add CA B");
@@ -1804,6 +1824,8 @@ static void test_phase139_multi_ca_epoch_rejects_spoofed_authority()
     TEST_ASSERT(sm2_pki_client_create(&client, &ca_pub_a, NULL)
             == SM2_PKI_SUCCESS,
         "Client Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(client),
+        "Client Witness Policy");
     TEST_ASSERT(sm2_pki_client_add_trusted_ca(client, &ca_pub_b)
             == SM2_PKI_SUCCESS,
         "Add CA B");

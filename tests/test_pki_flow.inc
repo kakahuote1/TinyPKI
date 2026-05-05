@@ -149,7 +149,7 @@ static void test_phase4_service_client_flow()
     TEST_PASS();
 }
 
-static void test_phase4_revocation_ocsp_and_cross_domain()
+static void test_phase4_revocation_epoch_and_cross_domain()
 {
     sm2_pki_service_ctx_t *svc_a = NULL;
     sm2_pki_service_ctx_t *svc_b = NULL;
@@ -212,6 +212,8 @@ static void test_phase4_revocation_ocsp_and_cross_domain()
     TEST_ASSERT(
         sm2_pki_client_create(&verifier, &ca_a_pub, svc_b) == SM2_PKI_SUCCESS,
         "Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Verifier Witness Policy");
     TEST_ASSERT(
         sm2_pki_client_add_trusted_ca(verifier, &ca_b_pub) == SM2_PKI_SUCCESS,
         "Add Cross Domain CA");

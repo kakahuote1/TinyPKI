@@ -613,6 +613,12 @@ void sm2_pki_service_release_revocation_binding(sm2_pki_service_state_t *state)
         service_finalize_state(state);
 }
 
+bool sm2_pki_service_binding_live(const sm2_pki_service_state_t *state)
+{
+    return state && state->initialized && !state->revocation_binding_retired
+        && state->revocation_state_ready;
+}
+
 sm2_pki_error_t sm2_pki_service_create(sm2_pki_service_ctx_t **ctx,
     const uint8_t *issuer_id, size_t issuer_id_len,
     size_t expected_revoked_items, uint64_t filter_ttl_sec, uint64_t now_ts)
@@ -813,6 +819,61 @@ sm2_pki_error_t sm2_pki_service_export_issuance_proof(
         state->issuance_tree, commitment, proof));
 }
 
+sm2_pki_error_t sm2_pki_service_export_current_epoch_evidence(
+    const sm2_pki_service_ctx_t *ctx, const sm2_implicit_cert_t *cert,
+    sm2_pki_epoch_root_record_t *epoch_root,
+    sm2_rev_absence_proof_t *revocation_proof,
+    sm2_pki_issuance_member_proof_t *issuance_proof)
+{
+    const sm2_pki_service_state_t *state = service_state_const(ctx);
+    if (!ctx || !ctx->initialized || !state || !cert || !epoch_root
+        || !revocation_proof || !issuance_proof || !state->epoch_state_ready
+        || !state->revocation_state_ready || !state->issuance_state_ready)
+    {
+        return SM2_PKI_ERR_PARAM;
+    }
+
+    const sm2_pki_epoch_root_record_t *epoch = &state->epoch_root_record;
+    if (epoch->revocation_root_version != state->rev_root_record.root_version
+        || memcmp(epoch->revocation_root_hash, state->rev_root_record.root_hash,
+               sizeof(epoch->revocation_root_hash))
+            != 0
+        || epoch->issuance_root_version
+            != state->issuance_root_record.root_version
+        || memcmp(epoch->issuance_root_hash,
+               state->issuance_root_record.root_hash,
+               sizeof(epoch->issuance_root_hash))
+            != 0)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+
+    sm2_rev_absence_proof_t rev_proof;
+    sm2_pki_issuance_member_proof_t iss_proof;
+    memset(&rev_proof, 0, sizeof(rev_proof));
+    memset(&iss_proof, 0, sizeof(iss_proof));
+
+    sm2_ic_error_t ic_ret = sm2_rev_tree_prove_absence(
+        state->rev_tree, cert->serial_number, &rev_proof);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+
+    uint8_t commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN];
+    ic_ret = sm2_pki_issuance_cert_commitment(cert, commitment);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+
+    ic_ret = sm2_pki_issuance_tree_prove_member(
+        state->issuance_tree, commitment, &iss_proof);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+
+    *epoch_root = *epoch;
+    *revocation_proof = rev_proof;
+    *issuance_proof = iss_proof;
+    return SM2_PKI_SUCCESS;
+}
+
 sm2_pki_error_t sm2_pki_service_get_issuance_commitment_count(
     const sm2_pki_service_ctx_t *ctx, size_t *commitment_count)
 {
@@ -999,11 +1060,11 @@ sm2_pki_error_t sm2_pki_service_revoke(
     if (!entry)
         return SM2_PKI_ERR_NOT_FOUND;
 
-    sm2_crl_delta_item_t item;
+    sm2_rev_delta_item_t item;
     item.serial_number = serial_number;
     item.revoked = true;
 
-    sm2_crl_delta_t delta;
+    sm2_rev_delta_t delta;
     delta.base_version = sm2_rev_version(state->rev_ctx);
     delta.new_version = delta.base_version + 1;
     delta.items = &item;
@@ -1065,8 +1126,8 @@ sm2_pki_error_t sm2_pki_service_prune_expired_revocations(
     if (candidate_count == 0)
         return SM2_PKI_SUCCESS;
 
-    sm2_crl_delta_item_t *items
-        = (sm2_crl_delta_item_t *)calloc(candidate_count, sizeof(*items));
+    sm2_rev_delta_item_t *items
+        = (sm2_rev_delta_item_t *)calloc(candidate_count, sizeof(*items));
     if (!items)
         return SM2_PKI_ERR_MEMORY;
 
@@ -1080,7 +1141,7 @@ sm2_pki_error_t sm2_pki_service_prune_expired_revocations(
         write++;
     }
 
-    sm2_crl_delta_t delta;
+    sm2_rev_delta_t delta;
     delta.base_version = sm2_rev_version(state->rev_ctx);
     delta.new_version = delta.base_version + 1U;
     delta.items = items;

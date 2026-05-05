@@ -155,7 +155,7 @@ static sm2_ic_error_t rev_ctx_clone_local_state(
     }
 
     return sm2_rev_tree_build(&dst->rev_tree, dst->revoked_serials,
-        dst->revoked_count, dst->crl_version);
+        dst->revoked_count, dst->rev_version);
 }
 
 static uint64_t rev_ctx_compute_valid_until(
@@ -222,12 +222,12 @@ static sm2_ic_error_t rev_ctx_refresh_root_hash(sm2_rev_ctx_t *ctx)
     if (!ctx->rev_tree)
     {
         sm2_ic_error_t ret = sm2_rev_tree_build(&ctx->rev_tree,
-            ctx->revoked_serials, ctx->revoked_count, ctx->crl_version);
+            ctx->revoked_serials, ctx->revoked_count, ctx->rev_version);
         if (ret != SM2_IC_SUCCESS)
             return ret;
     }
 
-    merkle_tree_set_root_version(ctx->rev_tree, ctx->crl_version);
+    merkle_tree_set_root_version(ctx->rev_tree, ctx->rev_version);
     sm2_ic_error_t ret
         = sm2_rev_tree_get_root_hash(ctx->rev_tree, ctx->root_hash);
     if (ret != SM2_IC_SUCCESS)
@@ -329,7 +329,7 @@ sm2_ic_error_t sm2_rev_internal_prepare_root_publication(
         ret = merkle_tree_clone(ctx->rev_tree, tree);
     else
         ret = sm2_rev_tree_build(
-            tree, ctx->revoked_serials, ctx->revoked_count, ctx->crl_version);
+            tree, ctx->revoked_serials, ctx->revoked_count, ctx->rev_version);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -363,7 +363,7 @@ sm2_ic_error_t sm2_pki_rev_sign_existing_root(const sm2_rev_ctx_t *ctx,
         return SM2_IC_ERR_PARAM;
     }
 
-    if (sm2_rev_tree_root_version(tree) != ctx->crl_version)
+    if (sm2_rev_tree_root_version(tree) != ctx->rev_version)
         return SM2_IC_ERR_VERIFY;
     if (sm2_rev_tree_get_root_hash(tree, tree_root_hash) != SM2_IC_SUCCESS)
         return SM2_IC_ERR_VERIFY;
@@ -455,13 +455,13 @@ sm2_ic_error_t sm2_rev_set_lookup(
 }
 
 sm2_ic_error_t sm2_rev_apply_delta(
-    sm2_rev_ctx_t *ctx, const sm2_crl_delta_t *delta, uint64_t now_ts)
+    sm2_rev_ctx_t *ctx, const sm2_rev_delta_t *delta, uint64_t now_ts)
 {
     if (!ctx || !delta)
         return SM2_IC_ERR_PARAM;
     if (delta->item_count > 0 && !delta->items)
         return SM2_IC_ERR_PARAM;
-    if (delta->base_version != ctx->crl_version)
+    if (delta->base_version != ctx->rev_version)
         return SM2_IC_ERR_VERIFY;
     if (delta->new_version <= delta->base_version)
         return SM2_IC_ERR_PARAM;
@@ -473,7 +473,7 @@ sm2_ic_error_t sm2_rev_apply_delta(
 
     for (size_t i = 0; i < delta->item_count; i++)
     {
-        const sm2_crl_delta_item_t *it = &delta->items[i];
+        const sm2_rev_delta_item_t *it = &delta->items[i];
         if (it->revoked)
         {
             ret = local_list_add(&scratch, it->serial_number);
@@ -500,8 +500,8 @@ sm2_ic_error_t sm2_rev_apply_delta(
         }
     }
 
-    scratch.crl_version = delta->new_version;
-    merkle_tree_set_root_version(scratch.rev_tree, scratch.crl_version);
+    scratch.rev_version = delta->new_version;
+    merkle_tree_set_root_version(scratch.rev_tree, scratch.rev_version);
     scratch.root_valid_until = rev_ctx_compute_valid_until(&scratch, now_ts);
     ret = rev_ctx_refresh_root_hash(&scratch);
     if (ret != SM2_IC_SUCCESS)
@@ -517,7 +517,7 @@ sm2_ic_error_t sm2_rev_apply_delta(
     ctx->revoked_count = scratch.revoked_count;
     ctx->revoked_capacity = scratch.revoked_capacity;
     ctx->rev_tree = scratch.rev_tree;
-    ctx->crl_version = scratch.crl_version;
+    ctx->rev_version = scratch.rev_version;
     ctx->root_valid_until = scratch.root_valid_until;
     memcpy(ctx->root_hash, scratch.root_hash, sizeof(ctx->root_hash));
     scratch.revoked_serials = NULL;
@@ -547,7 +547,7 @@ size_t sm2_rev_local_count(const sm2_rev_ctx_t *ctx)
 
 uint64_t sm2_rev_version(const sm2_rev_ctx_t *ctx)
 {
-    return ctx ? ctx->crl_version : 0;
+    return ctx ? ctx->rev_version : 0;
 }
 
 uint64_t sm2_rev_root_valid_until(const sm2_rev_ctx_t *ctx)
@@ -701,7 +701,7 @@ sm2_ic_error_t sm2_rev_sync_plan_schedule(const sm2_rev_ctx_t *ctx,
     schedule->next_pull_after_sec = policy->t_base_sec;
     schedule->staleness_upper_bound_sec = upper_bound;
 
-    if (known_latest_version > ctx->crl_version)
+    if (known_latest_version > ctx->rev_version)
     {
         schedule->accelerated_mode = true;
         schedule->next_pull_after_sec = policy->fast_poll_sec;
@@ -758,7 +758,7 @@ sm2_ic_error_t sm2_rev_sync_build_hello(const sm2_rev_ctx_t *ctx,
         memcpy(hello->node_id, node_id, node_id_len);
 
     hello->node_id_len = node_id_len;
-    hello->root_version = ctx->crl_version;
+    hello->root_version = ctx->rev_version;
     memcpy(hello->root_hash, ctx->root_hash, SM2_REV_SYNC_DIGEST_LEN);
     hello->root_valid_until = ctx->root_valid_until;
     hello->local_now_ts = now_ts;
@@ -832,9 +832,9 @@ sm2_ic_error_t sm2_rev_sync_should_redirect(const sm2_rev_ctx_t *ctx,
         return SM2_IC_SUCCESS;
     }
 
-    if (known_latest_version > ctx->crl_version)
+    if (known_latest_version > ctx->rev_version)
     {
-        uint64_t lag = known_latest_version - ctx->crl_version;
+        uint64_t lag = known_latest_version - ctx->rev_version;
         if (max_version_lag == 0 || lag > max_version_lag)
             *redirect_required = true;
     }
@@ -959,8 +959,8 @@ sm2_ic_error_t sm2_rev_sync_apply_heartbeat(
     {
         return SM2_IC_ERR_PARAM;
     }
-    if (patch->base_version != ctx->crl_version
-        || patch->new_version != ctx->crl_version + 1U)
+    if (patch->base_version != ctx->rev_version
+        || patch->new_version != ctx->rev_version + 1U)
     {
         return SM2_IC_ERR_VERIFY;
     }
@@ -985,7 +985,7 @@ sm2_ic_error_t sm2_rev_sync_apply_heartbeat(
     if (now_ts > valid_until_limit)
         return SM2_IC_ERR_VERIFY;
 
-    ctx->crl_version = patch->new_version;
+    ctx->rev_version = patch->new_version;
     ctx->root_valid_until = patch->valid_until;
     if (patch->valid_until > now_ts)
         ctx->root_valid_ttl_sec = patch->valid_until - now_ts;

@@ -143,7 +143,7 @@ static bool redirect_find_candidate_index(
 }
 
 sm2_ic_error_t sm2_rev_sync_apply_delta(sm2_rev_ctx_t *ctx,
-    const sm2_rev_sync_delta_plan_t *plan, const sm2_crl_delta_t *delta,
+    const sm2_rev_sync_delta_plan_t *plan, const sm2_rev_delta_t *delta,
     uint64_t now_ts, bool *converged)
 {
     if (!ctx || !plan || !converged)
@@ -155,7 +155,7 @@ sm2_ic_error_t sm2_rev_sync_apply_delta(sm2_rev_ctx_t *ctx,
 
     if (plan->direction == SM2_REV_DELTA_DIR_NONE)
     {
-        *converged = ctx->crl_version == plan->to_version;
+        *converged = ctx->rev_version == plan->to_version;
         return SM2_IC_SUCCESS;
     }
 
@@ -163,7 +163,7 @@ sm2_ic_error_t sm2_rev_sync_apply_delta(sm2_rev_ctx_t *ctx,
         return plan->direction == SM2_REV_DELTA_DIR_PUSH ? SM2_IC_ERR_VERIFY
                                                          : SM2_IC_ERR_PARAM;
 
-    if (delta->base_version != ctx->crl_version)
+    if (delta->base_version != ctx->rev_version)
         return SM2_IC_ERR_VERIFY;
     if (delta->new_version > plan->to_version)
         return SM2_IC_ERR_VERIFY;
@@ -172,7 +172,7 @@ sm2_ic_error_t sm2_rev_sync_apply_delta(sm2_rev_ctx_t *ctx,
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    *converged = ctx->crl_version >= plan->to_version;
+    *converged = ctx->rev_version >= plan->to_version;
     return SM2_IC_SUCCESS;
 }
 
@@ -290,7 +290,7 @@ sm2_ic_error_t sm2_rev_route_build_response(const sm2_rev_ctx_t *ctx,
     memset(response, 0, sizeof(*response));
     response->redirect_required = redirect_required;
     response->freshness = freshness;
-    response->local_version = ctx->crl_version;
+    response->local_version = ctx->rev_version;
     response->known_latest_version = known_latest_version;
     response->now_ts = now_ts;
     response->reason = SM2_REV_REDIRECT_REASON_NONE;
@@ -299,7 +299,7 @@ sm2_ic_error_t sm2_rev_route_build_response(const sm2_rev_ctx_t *ctx,
     if (!redirect_required)
         return SM2_IC_SUCCESS;
 
-    uint64_t min_root_version = ctx->crl_version;
+    uint64_t min_root_version = ctx->rev_version;
     if (known_latest_version > min_root_version)
         min_root_version = known_latest_version;
 

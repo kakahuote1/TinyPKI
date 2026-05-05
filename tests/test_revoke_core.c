@@ -1,4 +1,4 @@
-﻿/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 #include "test_revoke_helpers.h"
 
@@ -8,8 +8,8 @@ static void test_rev_lookup_callback_priority(void)
     TEST_ASSERT(
         sm2_rev_init(&ctx, 32, 120, 100) == SM2_IC_SUCCESS, "Revocation Init");
 
-    sm2_crl_delta_item_t items[] = { { 7777, true } };
-    sm2_crl_delta_t delta = { 0, 1, items, 1 };
+    sm2_rev_delta_item_t items[] = { { 7777, true } };
+    sm2_rev_delta_t delta = { 0, 1, items, 1 };
     TEST_ASSERT(
         sm2_rev_apply_delta(ctx, &delta, 110) == SM2_IC_SUCCESS, "Apply Delta");
 

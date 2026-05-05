@@ -1312,7 +1312,7 @@ sm2_ic_error_t sm2_rev_epoch_dir_decode(
     ret = cbor_get_type_value(input, input_len, &off, &major, &patch_arr_len);
     if (ret != SM2_IC_SUCCESS || major != 4)
         goto decode_fail;
-    if (patch_arr_len > SIZE_MAX / sizeof(sm2_crl_delta_item_t))
+    if (patch_arr_len > SIZE_MAX / sizeof(sm2_rev_delta_item_t))
     {
         ret = SM2_IC_ERR_CBOR;
         goto decode_fail;
@@ -1321,8 +1321,8 @@ sm2_ic_error_t sm2_rev_epoch_dir_decode(
     state->patch_item_count = (size_t)patch_arr_len;
     if (state->patch_item_count > 0)
     {
-        state->patch_items = (sm2_crl_delta_item_t *)calloc(
-            state->patch_item_count, sizeof(sm2_crl_delta_item_t));
+        state->patch_items = (sm2_rev_delta_item_t *)calloc(
+            state->patch_item_count, sizeof(sm2_rev_delta_item_t));
         if (!state->patch_items)
         {
             ret = SM2_IC_ERR_MEMORY;

@@ -667,18 +667,6 @@ sm2_ic_error_t sm2_rev_tree_get_root_hash(
     return SM2_IC_SUCCESS;
 }
 
-bool merkle_find_serial(
-    const sm2_rev_tree_t *tree, uint64_t serial, size_t *pos)
-{
-    uint8_t key[SM2_REV_MERKLE_HASH_LEN];
-    if (pos)
-        *pos = 0;
-    if (!tree || serial == 0
-        || merkle_serial_key(serial, key) != SM2_IC_SUCCESS)
-        return false;
-    return sparse_find_node(tree->root, key, 0, NULL);
-}
-
 sm2_ic_error_t merkle_tree_update_serial(
     sm2_rev_tree_t *tree, uint64_t serial, bool revoked)
 {

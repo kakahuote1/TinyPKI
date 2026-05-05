@@ -144,7 +144,6 @@ int main(void)
         goto cleanup;
     evidence.witness_signature_count = 1;
     auth_req.evidence_bundle = &evidence;
-    auth_req.transparency_policy = &transparency_policy;
 
     err = sm2_pki_verify(cli, &auth_req, auth_now, &matched_idx);
     if (!check_pki(err, "Verify Before Revoke"))

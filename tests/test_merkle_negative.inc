@@ -1,4 +1,4 @@
-﻿static void test_merkle_empty_tree_prove_member_fails(void)
+static void test_merkle_empty_tree_prove_member_fails(void)
 {
     sm2_rev_tree_t *tree = NULL;
     TEST_ASSERT(sm2_rev_tree_build(&tree, NULL, 0, 1) == SM2_IC_SUCCESS,
@@ -50,14 +50,14 @@ static void test_merkle_hot_patch_stale_version_rejected(void)
             == SM2_IC_SUCCESS,
         "Build epoch dir");
 
-    sm2_crl_delta_item_t patch1 = { 400, true };
+    sm2_rev_delta_item_t patch1 = { 400, true };
     TEST_ASSERT(
         sm2_rev_epoch_apply_patch(dir, 5, &patch1, 1, merkle_ca_sign_cb, &ctx)
             == SM2_IC_SUCCESS,
         "Hot patch v5");
 
     /* Apply same version again -> should fail */
-    sm2_crl_delta_item_t patch2 = { 500, true };
+    sm2_rev_delta_item_t patch2 = { 500, true };
     sm2_ic_error_t stale_ret = sm2_rev_epoch_apply_patch(
         dir, 5, &patch2, 1, merkle_ca_sign_cb, &ctx);
     TEST_ASSERT(

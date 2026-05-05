@@ -207,10 +207,18 @@ static int pki_default_transparency_policy_init(void)
     return 1;
 }
 
-static int pki_attach_default_epoch_witness(
-    sm2_pki_evidence_bundle_t *evidence, sm2_pki_verify_request_t *request)
+static int pki_configure_default_transparency_policy(
+    sm2_pki_client_ctx_t *client)
 {
-    if (!evidence || !request || !pki_default_transparency_policy_init())
+    return client && pki_default_transparency_policy_init()
+        && sm2_pki_client_set_transparency_policy(
+               client, &g_pki_default_transparency_policy)
+        == SM2_PKI_SUCCESS;
+}
+
+static int pki_attach_default_epoch_witness(sm2_pki_evidence_bundle_t *evidence)
+{
+    if (!evidence || !pki_default_transparency_policy_init())
         return 0;
     if (sm2_pki_epoch_witness_sign(&evidence->epoch_root_record,
             g_pki_default_witness.witness_id,
@@ -221,7 +229,6 @@ static int pki_attach_default_epoch_witness(
         return 0;
     }
     evidence->witness_signature_count = 1;
-    request->transparency_policy = &g_pki_default_transparency_policy;
     return 1;
 }
 
@@ -257,7 +264,8 @@ static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     request->message_len = message_len;
     request->signature = signature;
     request->evidence_bundle = evidence;
-    if (!pki_attach_default_epoch_witness(evidence, request))
+    if (!pki_attach_default_epoch_witness(evidence)
+        || !pki_configure_default_transparency_policy(signer))
         return 0;
     return 1;
 }
@@ -271,7 +279,7 @@ static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
 void run_test_pki_suite(void)
 {
     RUN_TEST(test_phase4_service_client_flow);
-    RUN_TEST(test_phase4_revocation_ocsp_and_cross_domain);
+    RUN_TEST(test_phase4_revocation_epoch_and_cross_domain);
     RUN_TEST(test_phase4_pki_controls_and_param_defense);
     RUN_TEST(test_phase8_merkle_hook_and_service_binding);
     RUN_TEST(test_phase8_prune_expired_revocation_removes_sparse_leaf);

@@ -43,7 +43,7 @@ extern "C"
         sm2_rev_root_record_t root_record;
         size_t tree_level_count;
         uint64_t patch_version;
-        sm2_crl_delta_item_t *patch_items;
+        sm2_rev_delta_item_t *patch_items;
         size_t patch_item_count;
         uint8_t directory_signature[SM2_REV_SYNC_MAX_SIG_LEN];
         size_t directory_signature_len;
@@ -69,10 +69,6 @@ extern "C"
 
     sm2_ic_error_t merkle_empty_hash_at_depth(
         size_t depth, uint8_t out_hash[SM2_REV_MERKLE_HASH_LEN]);
-
-    /* ---- tree layout & search ---- */
-    bool merkle_find_serial(
-        const sm2_rev_tree_t *tree, uint64_t serial, size_t *pos);
 
     sm2_ic_error_t merkle_tree_update_serial(
         sm2_rev_tree_t *tree, uint64_t serial, bool revoked);
@@ -142,7 +138,7 @@ extern "C"
         const sm2_rev_epoch_dir_t *directory, uint8_t *output,
         size_t output_cap, size_t *output_len);
 
-    sm2_ic_error_t merkle_calc_patch_digest(const sm2_crl_delta_item_t *items,
+    sm2_ic_error_t merkle_calc_patch_digest(const sm2_rev_delta_item_t *items,
         size_t item_count, uint8_t out_digest[SM2_REV_MERKLE_HASH_LEN]);
 
     bool merkle_epoch_patch_lookup(

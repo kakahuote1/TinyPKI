@@ -54,7 +54,6 @@ extern "C"
         size_t message_len;
         const sm2_auth_signature_t *signature;
         const sm2_pki_evidence_bundle_t *evidence_bundle;
-        const sm2_pki_transparency_policy_t *transparency_policy;
     } sm2_pki_verify_request_t;
 
     /*
@@ -70,14 +69,7 @@ extern "C"
     sm2_pki_error_t sm2_pki_client_add_trusted_ca(
         sm2_pki_client_ctx_t *ctx, const sm2_ec_point_t *ca_public_key);
 
-    /*
-     * Configures the verifier-side system policy for edge/witness
-     * signatures
-     * over issuance transparency roots. Passing NULL or a
-     * zero threshold clears
-     * the witness threshold while keeping
-     * mandatory issuance-log membership.
-     */
+    /* Sets the verifier-side t-of-n witness policy required for verify. */
     sm2_pki_error_t sm2_pki_client_set_transparency_policy(
         sm2_pki_client_ctx_t *ctx, const sm2_pki_transparency_policy_t *policy);
 
@@ -96,8 +88,7 @@ extern "C"
     sm2_pki_error_t sm2_pki_client_bind_revocation(
         sm2_pki_client_ctx_t *ctx, sm2_pki_service_ctx_t *service);
 
-    // Exports a unified evidence bundle. One CA-signed epoch root binds
-    // revocation and issuance roots; witnesses sign that epoch root.
+    /* Exports one evidence bundle binding revocation and issuance roots. */
     sm2_pki_error_t sm2_pki_client_export_epoch_evidence(
         sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
         sm2_pki_evidence_bundle_t *evidence);
@@ -130,16 +121,7 @@ extern "C"
         const sm2_pki_epoch_root_vote_t *votes, size_t vote_count,
         size_t threshold, sm2_pki_epoch_quorum_result_t *result);
 
-    /*
-     * Reconstructs local identity keys and verifies that the certificate
-     * is
-     * consistent with the supplied issuer public key before importing
-     * it.
-     * Importing a new certificate clears any existing sign pool
-     * because cached
-     * signing state is bound to the previous private
-     * key.
-     */
+    /* Imports a certificate and clears cached signing state for old keys. */
     sm2_pki_error_t sm2_pki_client_import_cert(sm2_pki_client_ctx_t *ctx,
         const sm2_ic_cert_result_t *cert_result,
         const sm2_private_key_t *temp_private_key,
@@ -155,14 +137,7 @@ extern "C"
         const uint8_t *message, size_t message_len,
         sm2_auth_signature_t *signature);
 
-    /*
-     * High-level PKI verification requires a unified epoch evidence
-     * bundle.
-     * The bundle carries the CA-signed checkpoint, revocation
-     * proof, issuance
-     * membership proof, and witness threshold
-     * signatures.
-     */
+    /* Verifies cert, signature, epoch evidence, and witness threshold. */
     sm2_pki_error_t sm2_pki_verify(sm2_pki_client_ctx_t *ctx,
         const sm2_pki_verify_request_t *request, uint64_t now_ts,
         size_t *matched_ca_index);
@@ -174,14 +149,7 @@ extern "C"
         sm2_private_key_t *ephemeral_private_key,
         sm2_ec_point_t *ephemeral_public_key);
 
-    /*
-     * Low-level key agreement primitive. Callers must ensure the peer
-     * identity,
-     * epoch evidence bundle, key usage and handshake binding
-     * have already been
-     * verified through a higher-level flow before
-     * using it.
-     */
+    /* Low-level key agreement; caller must verify peer evidence first. */
     sm2_pki_error_t sm2_pki_key_agreement(sm2_pki_client_ctx_t *ctx,
         const sm2_private_key_t *local_ephemeral_private_key,
         const sm2_ec_point_t *peer_public_key,
@@ -189,14 +157,7 @@ extern "C"
         const uint8_t *transcript, size_t transcript_len, uint8_t *session_key,
         size_t session_key_len);
 
-    /*
-     * High-level secure session establishment entry point. The peer
-     * request must
-     * already carry a signature over the canonical
-     * handshake binding produced by
-     * sm2_auth_build_handshake_binding(),
-     * plus an epoch evidence bundle accepted by sm2_pki_verify().
-     */
+    /* Establishes a session after peer evidence and handshake verification. */
     sm2_pki_error_t sm2_pki_secure_session_establish(sm2_pki_client_ctx_t *ctx,
         const sm2_private_key_t *local_ephemeral_private_key,
         const sm2_ec_point_t *local_ephemeral_public_key,

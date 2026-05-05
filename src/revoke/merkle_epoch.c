@@ -10,8 +10,8 @@
 
 int merkle_cmp_delta_item(const void *a, const void *b)
 {
-    const sm2_crl_delta_item_t *ia = (const sm2_crl_delta_item_t *)a;
-    const sm2_crl_delta_item_t *ib = (const sm2_crl_delta_item_t *)b;
+    const sm2_rev_delta_item_t *ia = (const sm2_rev_delta_item_t *)a;
+    const sm2_rev_delta_item_t *ib = (const sm2_rev_delta_item_t *)b;
     if (ia->serial_number < ib->serial_number)
         return -1;
     if (ia->serial_number > ib->serial_number)
@@ -19,7 +19,7 @@ int merkle_cmp_delta_item(const void *a, const void *b)
     return 0;
 }
 
-sm2_ic_error_t merkle_calc_patch_digest(const sm2_crl_delta_item_t *items,
+sm2_ic_error_t merkle_calc_patch_digest(const sm2_rev_delta_item_t *items,
     size_t item_count, uint8_t out_digest[SM2_REV_MERKLE_HASH_LEN])
 {
     if (!out_digest)
@@ -186,16 +186,16 @@ sm2_ic_error_t merkle_epoch_directory_clone(
 
     if (src->patch_item_count > 0)
     {
-        if (src->patch_item_count > SIZE_MAX / sizeof(sm2_crl_delta_item_t))
+        if (src->patch_item_count > SIZE_MAX / sizeof(sm2_rev_delta_item_t))
             return SM2_IC_ERR_MEMORY;
 
-        tmp.patch_items = (sm2_crl_delta_item_t *)calloc(
-            src->patch_item_count, sizeof(sm2_crl_delta_item_t));
+        tmp.patch_items = (sm2_rev_delta_item_t *)calloc(
+            src->patch_item_count, sizeof(sm2_rev_delta_item_t));
         if (!tmp.patch_items)
             return SM2_IC_ERR_MEMORY;
 
         memcpy(tmp.patch_items, src->patch_items,
-            src->patch_item_count * sizeof(sm2_crl_delta_item_t));
+            src->patch_item_count * sizeof(sm2_rev_delta_item_t));
     }
 
     epoch_dir_reset(dst);
@@ -308,7 +308,7 @@ sm2_ic_error_t sm2_rev_epoch_dir_verify(const sm2_rev_epoch_dir_t *directory,
 }
 
 sm2_ic_error_t sm2_rev_epoch_apply_patch(sm2_rev_epoch_dir_t *directory,
-    uint64_t patch_version, const sm2_crl_delta_item_t *items,
+    uint64_t patch_version, const sm2_rev_delta_item_t *items,
     size_t item_count, sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx)
 {
     if (!directory || !sign_fn)
@@ -318,24 +318,24 @@ sm2_ic_error_t sm2_rev_epoch_apply_patch(sm2_rev_epoch_dir_t *directory,
     if (patch_version <= directory->patch_version)
         return SM2_IC_ERR_VERIFY;
 
-    sm2_crl_delta_item_t *new_items = NULL;
+    sm2_rev_delta_item_t *new_items = NULL;
     size_t new_count = 0;
 
     if (item_count > 0)
     {
-        if (item_count > SIZE_MAX / sizeof(sm2_crl_delta_item_t))
+        if (item_count > SIZE_MAX / sizeof(sm2_rev_delta_item_t))
             return SM2_IC_ERR_MEMORY;
 
-        sm2_crl_delta_item_t *tmp = (sm2_crl_delta_item_t *)calloc(
-            item_count, sizeof(sm2_crl_delta_item_t));
+        sm2_rev_delta_item_t *tmp = (sm2_rev_delta_item_t *)calloc(
+            item_count, sizeof(sm2_rev_delta_item_t));
         if (!tmp)
             return SM2_IC_ERR_MEMORY;
-        memcpy(tmp, items, item_count * sizeof(sm2_crl_delta_item_t));
-        qsort(tmp, item_count, sizeof(sm2_crl_delta_item_t),
+        memcpy(tmp, items, item_count * sizeof(sm2_rev_delta_item_t));
+        qsort(tmp, item_count, sizeof(sm2_rev_delta_item_t),
             merkle_cmp_delta_item);
 
-        new_items = (sm2_crl_delta_item_t *)calloc(
-            item_count, sizeof(sm2_crl_delta_item_t));
+        new_items = (sm2_rev_delta_item_t *)calloc(
+            item_count, sizeof(sm2_rev_delta_item_t));
         if (!new_items)
         {
             free(tmp);
@@ -360,7 +360,7 @@ sm2_ic_error_t sm2_rev_epoch_apply_patch(sm2_rev_epoch_dir_t *directory,
         free(tmp);
     }
 
-    sm2_crl_delta_item_t *old_items = directory->patch_items;
+    sm2_rev_delta_item_t *old_items = directory->patch_items;
     size_t old_count = directory->patch_item_count;
     uint64_t old_version = directory->patch_version;
     uint8_t old_sig[SM2_REV_SYNC_MAX_SIG_LEN];

@@ -1,4 +1,4 @@
-﻿/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 #include "test_revoke_helpers.h"
 
@@ -8,7 +8,7 @@ static void test_revocation_phase11_sync_hello_and_plan(void)
     TEST_ASSERT(
         sm2_rev_init(&ctx, 16, 120, 100) == SM2_IC_SUCCESS, "Revocation Init");
 
-    sm2_crl_delta_t delta = { 0, 2, NULL, 0 };
+    sm2_rev_delta_t delta = { 0, 2, NULL, 0 };
     TEST_ASSERT(
         sm2_rev_apply_delta(ctx, &delta, 110) == SM2_IC_SUCCESS, "Apply Delta");
     TEST_ASSERT(
@@ -67,7 +67,7 @@ static void test_revocation_phase11_patch_link_and_redirect(void)
     TEST_ASSERT(
         sm2_rev_init(&ctx, 8, 60, 100) == SM2_IC_SUCCESS, "Revocation Init");
 
-    sm2_crl_delta_t delta = { 0, 10, NULL, 0 };
+    sm2_rev_delta_t delta = { 0, 10, NULL, 0 };
     TEST_ASSERT(
         sm2_rev_apply_delta(ctx, &delta, 110) == SM2_IC_SUCCESS, "Apply Delta");
 
@@ -141,7 +141,7 @@ static void test_revocation_phase11_sync_apply_and_rank_candidates(void)
     TEST_ASSERT(
         sm2_rev_init(&ctx, 8, 120, 100) == SM2_IC_SUCCESS, "Revocation Init");
 
-    sm2_crl_delta_t bootstrap = { 0, 2, NULL, 0 };
+    sm2_rev_delta_t bootstrap = { 0, 2, NULL, 0 };
     TEST_ASSERT(sm2_rev_apply_delta(ctx, &bootstrap, 110) == SM2_IC_SUCCESS,
         "Bootstrap Delta");
 
@@ -151,8 +151,8 @@ static void test_revocation_phase11_sync_apply_and_rank_candidates(void)
     plan.from_version = 2;
     plan.to_version = 4;
 
-    sm2_crl_delta_item_t items1[] = { { 5001, true } };
-    sm2_crl_delta_t delta1 = { 2, 3, items1, 1 };
+    sm2_rev_delta_item_t items1[] = { { 5001, true } };
+    sm2_rev_delta_t delta1 = { 2, 3, items1, 1 };
     bool converged = false;
     TEST_ASSERT(sm2_rev_sync_apply_delta(ctx, &plan, &delta1, 120, &converged)
             == SM2_IC_SUCCESS,
@@ -160,8 +160,8 @@ static void test_revocation_phase11_sync_apply_and_rank_candidates(void)
     TEST_ASSERT(!converged, "Not Converged After Delta 1");
     TEST_ASSERT(sm2_rev_version(ctx) == 3, "Version After Delta 1");
 
-    sm2_crl_delta_item_t items2[] = { { 5002, true } };
-    sm2_crl_delta_t delta2 = { 3, 4, items2, 1 };
+    sm2_rev_delta_item_t items2[] = { { 5002, true } };
+    sm2_rev_delta_t delta2 = { 3, 4, items2, 1 };
     TEST_ASSERT(sm2_rev_sync_apply_delta(ctx, &plan, &delta2, 130, &converged)
             == SM2_IC_SUCCESS,
         "Apply Planned Delta 2");
@@ -249,7 +249,7 @@ static void test_revocation_phase11_redirect_response(void)
     TEST_ASSERT(
         sm2_rev_init(&ctx, 8, 60, 100) == SM2_IC_SUCCESS, "Revocation Init");
 
-    sm2_crl_delta_t bootstrap = { 0, 4, NULL, 0 };
+    sm2_rev_delta_t bootstrap = { 0, 4, NULL, 0 };
     TEST_ASSERT(sm2_rev_apply_delta(ctx, &bootstrap, 110) == SM2_IC_SUCCESS,
         "Bootstrap Delta");
 
@@ -489,7 +489,7 @@ static void test_revocation_phase11_policy_heartbeat_and_upper_bound(void)
     TEST_ASSERT(sm2_rev_set_clock_skew_tolerance(ctx, 5) == SM2_IC_SUCCESS,
         "Set Clock Skew");
 
-    sm2_crl_delta_t delta = { 0, 10, NULL, 0 };
+    sm2_rev_delta_t delta = { 0, 10, NULL, 0 };
     TEST_ASSERT(
         sm2_rev_apply_delta(ctx, &delta, 110) == SM2_IC_SUCCESS, "Apply Delta");
 
@@ -567,7 +567,7 @@ static void test_revocation_phase11_network_partition_and_reconnect(void)
     TEST_ASSERT(sm2_rev_set_clock_skew_tolerance(ctx, 5) == SM2_IC_SUCCESS,
         "Set Clock Skew");
 
-    sm2_crl_delta_t bootstrap = { 0, 2, NULL, 0 };
+    sm2_rev_delta_t bootstrap = { 0, 2, NULL, 0 };
     TEST_ASSERT(sm2_rev_apply_delta(ctx, &bootstrap, 110) == SM2_IC_SUCCESS,
         "Bootstrap Delta");
 
@@ -616,9 +616,9 @@ static void test_revocation_phase11_network_partition_and_reconnect(void)
 
     bool converged = false;
     size_t rounds = 0;
-    sm2_crl_delta_t d1 = { 2, 3, NULL, 0 };
-    sm2_crl_delta_t d2 = { 3, 4, NULL, 0 };
-    sm2_crl_delta_t d3 = { 4, 5, NULL, 0 };
+    sm2_rev_delta_t d1 = { 2, 3, NULL, 0 };
+    sm2_rev_delta_t d2 = { 3, 4, NULL, 0 };
+    sm2_rev_delta_t d3 = { 4, 5, NULL, 0 };
     TEST_ASSERT(sm2_rev_sync_apply_delta(ctx, &plan, &d1, 132, &converged)
             == SM2_IC_SUCCESS,
         "Apply Delta 1");

@@ -80,10 +80,7 @@ static bool pki_client_authority_id_valid(
 
 static bool pki_client_bound_service_live(const sm2_pki_client_state_t *state)
 {
-    return state && state->revocation_service
-        && state->revocation_service->initialized
-        && !state->revocation_service->revocation_binding_retired
-        && state->revocation_service->revocation_state_ready;
+    return state && sm2_pki_service_binding_live(state->revocation_service);
 }
 
 static sm2_pki_epoch_cache_entry_t *pki_client_find_epoch_root_cache_entry(
@@ -295,7 +292,7 @@ static sm2_pki_error_t pki_client_validate_transparency_policy(
     const sm2_pki_transparency_policy_t *policy)
 {
     if (!policy || policy->threshold == 0)
-        return SM2_PKI_SUCCESS;
+        return SM2_PKI_ERR_PARAM;
     if (!policy->witnesses || policy->witness_count == 0
         || policy->witness_count > SM2_PKI_TRANSPARENCY_MAX_WITNESSES
         || policy->threshold > policy->witness_count)
@@ -338,7 +335,7 @@ static sm2_pki_error_t pki_client_verify_witness_signature_set(
     size_t valid_count = 0;
 
     if (!policy || policy->threshold == 0)
-        return SM2_PKI_SUCCESS;
+        return SM2_PKI_ERR_VERIFY;
     if (!payload || payload_len == 0 || (!signatures && signature_count > 0))
         return SM2_PKI_ERR_VERIFY;
     if (!policy->witnesses || policy->witness_count == 0
@@ -668,16 +665,6 @@ sm2_pki_error_t sm2_pki_client_set_transparency_policy(
     if (!ctx || !ctx->initialized || !state)
         return SM2_PKI_ERR_PARAM;
 
-    if (!policy || policy->threshold == 0)
-    {
-        memset(state->transparency_witnesses, 0,
-            sizeof(state->transparency_witnesses));
-        memset(
-            &state->transparency_policy, 0, sizeof(state->transparency_policy));
-        state->has_transparency_policy = false;
-        return SM2_PKI_SUCCESS;
-    }
-
     sm2_pki_error_t ret = pki_client_validate_transparency_policy(policy);
     if (ret != SM2_PKI_SUCCESS)
         return ret;
@@ -766,32 +753,14 @@ sm2_pki_error_t sm2_pki_client_export_epoch_evidence(sm2_pki_client_ctx_t *ctx,
         return sm2_pki_error_from_ic(ic_ret);
 
     memset(evidence, 0, sizeof(*evidence));
-    sm2_pki_error_t ret = sm2_pki_service_get_epoch_root_record(
-        (sm2_pki_service_ctx_t *)state->revocation_service,
-        &evidence->epoch_root_record);
+    sm2_pki_error_t ret = sm2_pki_service_export_current_epoch_evidence(
+        (sm2_pki_service_ctx_t *)state->revocation_service, &state->cert,
+        &evidence->epoch_root_record, &evidence->revocation_proof.absence_proof,
+        &evidence->issuance_proof.member_proof);
     if (ret != SM2_PKI_SUCCESS)
         return pki_client_map_service_failure_closed(ret);
 
     const sm2_pki_epoch_root_record_t *epoch = &evidence->epoch_root_record;
-    const sm2_pki_service_state_t *service = state->revocation_service;
-    if (!service->epoch_state_ready || !service->revocation_state_ready
-        || !service->issuance_state_ready
-        || epoch->revocation_root_version
-            != service->rev_root_record.root_version
-        || memcmp(epoch->revocation_root_hash,
-               service->rev_root_record.root_hash,
-               sizeof(epoch->revocation_root_hash))
-            != 0
-        || epoch->issuance_root_version
-            != service->issuance_root_record.root_version
-        || memcmp(epoch->issuance_root_hash,
-               service->issuance_root_record.root_hash,
-               sizeof(epoch->issuance_root_hash))
-            != 0)
-    {
-        return SM2_PKI_ERR_VERIFY;
-    }
-
     pki_client_root_verify_ctx_t verify_ctx = { .store = &state->trust_store,
         .require_specific_index = true,
         .required_index = matched_ca_index };
@@ -799,18 +768,6 @@ sm2_pki_error_t sm2_pki_client_export_epoch_evidence(sm2_pki_client_ctx_t *ctx,
         epoch, now_ts, pki_client_root_record_verify_cb, &verify_ctx);
     if (ic_ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ic_ret);
-
-    ret = sm2_pki_service_export_absence_proof(
-        (sm2_pki_service_ctx_t *)state->revocation_service,
-        state->cert.serial_number, &evidence->revocation_proof.absence_proof);
-    if (ret != SM2_PKI_SUCCESS)
-        return pki_client_map_service_failure_closed(ret);
-
-    ret = sm2_pki_service_export_issuance_proof(
-        (sm2_pki_service_ctx_t *)state->revocation_service, &state->cert,
-        &evidence->issuance_proof.member_proof);
-    if (ret != SM2_PKI_SUCCESS)
-        return pki_client_map_service_failure_closed(ret);
 
     ret = pki_client_verify_revocation_proof_with_epoch(
         &state->cert, epoch, &evidence->revocation_proof);
@@ -1236,11 +1193,9 @@ sm2_pki_error_t sm2_pki_verify(sm2_pki_client_ctx_t *ctx,
     if (matched_ca_index)
         *matched_ca_index = local_matched_index;
 
-    const sm2_pki_transparency_policy_t *policy = state->has_transparency_policy
-        ? &state->transparency_policy
-        : request->transparency_policy;
-    if (!policy || policy->threshold == 0)
+    if (!state->has_transparency_policy)
         return SM2_PKI_ERR_VERIFY;
+    const sm2_pki_transparency_policy_t *policy = &state->transparency_policy;
     ret = pki_client_validate_transparency_policy(policy);
     if (ret != SM2_PKI_SUCCESS)
         return SM2_PKI_ERR_VERIFY;

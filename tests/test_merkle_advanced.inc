@@ -1,4 +1,4 @@
-﻿{
+{
     if (!g_ca_initialized)
         test_setup_ca();
 
@@ -100,7 +100,7 @@ static void test_rev_epoch_patch_priority()
             == SM2_IC_SUCCESS,
         "Build Epoch Directory");
 
-    sm2_crl_delta_item_t patch1[] = { { 999999, true } };
+    sm2_rev_delta_item_t patch1[] = { { 999999, true } };
     TEST_ASSERT(sm2_rev_epoch_apply_patch(
                     dir, 1, patch1, 1, merkle_ca_sign_cb, &sig_ctx)
             == SM2_IC_SUCCESS,
@@ -113,7 +113,7 @@ static void test_rev_epoch_patch_priority()
         "Patch Query v1");
     TEST_ASSERT(st == SM2_REV_STATUS_REVOKED, "Patch Priority Revoked");
 
-    sm2_crl_delta_item_t patch2[] = { { 999999, false } };
+    sm2_rev_delta_item_t patch2[] = { { 999999, false } };
     TEST_ASSERT(sm2_rev_epoch_apply_patch(
                     dir, 2, patch2, 1, merkle_ca_sign_cb, &sig_ctx)
             == SM2_IC_SUCCESS,

@@ -47,15 +47,15 @@ extern "C"
     {
         uint64_t serial_number;
         bool revoked;
-    } sm2_crl_delta_item_t;
+    } sm2_rev_delta_item_t;
 
     typedef struct
     {
         uint64_t base_version;
         uint64_t new_version;
-        const sm2_crl_delta_item_t *items;
+        const sm2_rev_delta_item_t *items;
         size_t item_count;
-    } sm2_crl_delta_t;
+    } sm2_rev_delta_t;
 #define SM2_REV_SYNC_NODE_ID_MAX_LEN 32
 #define SM2_REV_SYNC_DIGEST_LEN 32
 #define SM2_REV_SYNC_MAX_SIG_LEN 128
@@ -359,7 +359,7 @@ extern "C"
         sm2_rev_ctx_t *ctx, sm2_rev_lookup_fn query_fn, void *user_ctx);
 
     sm2_ic_error_t sm2_rev_apply_delta(
-        sm2_rev_ctx_t *ctx, const sm2_crl_delta_t *delta, uint64_t now_ts);
+        sm2_rev_ctx_t *ctx, const sm2_rev_delta_t *delta, uint64_t now_ts);
 
     /*
      * Queries revocation status from the current revocation context.
@@ -433,7 +433,7 @@ extern "C"
         const sm2_rev_heartbeat_patch_t *patch, uint64_t now_ts);
 
     sm2_ic_error_t sm2_rev_sync_apply_delta(sm2_rev_ctx_t *ctx,
-        const sm2_rev_sync_delta_plan_t *plan, const sm2_crl_delta_t *delta,
+        const sm2_rev_sync_delta_plan_t *plan, const sm2_rev_delta_t *delta,
         uint64_t now_ts, bool *converged);
 
     sm2_ic_error_t sm2_rev_route_rank_candidates(
@@ -576,7 +576,7 @@ extern "C"
         const sm2_rev_epoch_dir_t *directory, uint64_t now_ts,
         sm2_rev_sync_verify_fn verify_fn, void *verify_user_ctx);
     sm2_ic_error_t sm2_rev_epoch_apply_patch(sm2_rev_epoch_dir_t *directory,
-        uint64_t patch_version, const sm2_crl_delta_item_t *items,
+        uint64_t patch_version, const sm2_rev_delta_item_t *items,
         size_t item_count, sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx);
 
     sm2_ic_error_t sm2_rev_epoch_prove_member(const sm2_rev_tree_t *tree,

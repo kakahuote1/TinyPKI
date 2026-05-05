@@ -20,7 +20,7 @@ struct sm2_rev_ctx_st
     sm2_rev_lookup_fn merkle_query_fn;
     void *merkle_query_user_ctx;
 
-    uint64_t crl_version;
+    uint64_t rev_version;
     uint64_t root_valid_ttl_sec;
     uint64_t root_valid_until;
     uint8_t root_hash[SM2_REV_SYNC_DIGEST_LEN];

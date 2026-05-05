@@ -241,10 +241,9 @@ static int bench_configure_transparency_verifier(sm2_pki_client_ctx_t *client)
         == SM2_PKI_SUCCESS;
 }
 
-static int bench_attach_epoch_witness(
-    sm2_pki_evidence_bundle_t *evidence, sm2_pki_verify_request_t *request)
+static int bench_attach_epoch_witness(sm2_pki_evidence_bundle_t *evidence)
 {
-    if (!evidence || !request || !bench_transparency_policy_init())
+    if (!evidence || !bench_transparency_policy_init())
         return 0;
     if (sm2_pki_epoch_witness_sign(&evidence->epoch_root_record,
             g_bench_witness.witness_id, g_bench_witness.witness_id_len,
@@ -254,7 +253,6 @@ static int bench_attach_epoch_witness(
         return 0;
     }
     evidence->witness_signature_count = 1U;
-    request->transparency_policy = &g_bench_transparency_policy;
     return 1;
 }
 
@@ -292,7 +290,7 @@ static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     request->message_len = message_len;
     request->signature = signature;
     request->evidence_bundle = evidence;
-    if (!bench_attach_epoch_witness(evidence, request))
+    if (!bench_attach_epoch_witness(evidence))
         return 0;
     return 1;
 }
@@ -841,7 +839,7 @@ static double measure_secure_session_median(void)
         req_a_to_b.message_len = bind_a_len;
         req_a_to_b.signature = &sig_a;
         req_a_to_b.evidence_bundle = &evidence_a;
-        if (!bench_attach_epoch_witness(&evidence_a, &req_a_to_b))
+        if (!bench_attach_epoch_witness(&evidence_a))
         {
             cleanup_session_context(&ctx);
             return 0.0;
@@ -853,7 +851,7 @@ static double measure_secure_session_median(void)
         req_b_to_a.message_len = bind_b_len;
         req_b_to_a.signature = &sig_b;
         req_b_to_a.evidence_bundle = &evidence_b;
-        if (!bench_attach_epoch_witness(&evidence_b, &req_b_to_a))
+        if (!bench_attach_epoch_witness(&evidence_b))
         {
             cleanup_session_context(&ctx);
             return 0.0;

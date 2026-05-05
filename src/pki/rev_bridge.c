@@ -610,12 +610,17 @@ sm2_ic_error_t sm2_pki_issuance_tree_append(sm2_pki_issuance_tree_t **tree,
         return SM2_IC_ERR_PARAM;
     if (!*tree)
     {
-        *tree = (sm2_pki_issuance_tree_t *)calloc(1, sizeof(**tree));
-        if (!*tree)
+        sm2_pki_issuance_tree_t *new_tree
+            = (sm2_pki_issuance_tree_t *)calloc(1, sizeof(**tree));
+        if (!new_tree)
             return SM2_IC_ERR_MEMORY;
-        sm2_ic_error_t ret = pki_issuance_hash_empty((*tree)->root_hash);
+        sm2_ic_error_t ret = pki_issuance_hash_empty(new_tree->root_hash);
         if (ret != SM2_IC_SUCCESS)
+        {
+            free(new_tree);
             return ret;
+        }
+        *tree = new_tree;
     }
 
     sm2_pki_issuance_tree_t *state = *tree;

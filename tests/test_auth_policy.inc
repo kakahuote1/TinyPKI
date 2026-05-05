@@ -1,4 +1,4 @@
-﻿static void test_auth_with_revocation_block()
+static void test_auth_with_revocation_block()
 {
     if (!g_ca_initialized)
         test_setup_ca();
@@ -33,8 +33,8 @@
     uint64_t now = test_cert_now(&cert_res.cert);
     TEST_ASSERT(
         sm2_rev_init(&rev_ctx, 32, 300, now) == SM2_IC_SUCCESS, "Rev Init");
-    sm2_crl_delta_item_t items[] = { { cert_res.cert.serial_number, true } };
-    sm2_crl_delta_t delta = { 0, 1, items, 1 };
+    sm2_rev_delta_item_t items[] = { { cert_res.cert.serial_number, true } };
+    sm2_rev_delta_t delta = { 0, 1, items, 1 };
     TEST_ASSERT(
         sm2_rev_apply_delta(rev_ctx, &delta, now + 20) == SM2_IC_SUCCESS,
         "Apply Delta");
@@ -281,8 +281,8 @@ static void test_auth_revocation_policy_strict_cross_check()
     uint64_t now = test_cert_now(&cert_res.cert);
     TEST_ASSERT(
         sm2_rev_init(&rev_ctx, 32, 300, now) == SM2_IC_SUCCESS, "Rev Init");
-    sm2_crl_delta_item_t items[] = { { cert_res.cert.serial_number, true } };
-    sm2_crl_delta_t delta = { 0, 1, items, 1 };
+    sm2_rev_delta_item_t items[] = { { cert_res.cert.serial_number, true } };
+    sm2_rev_delta_t delta = { 0, 1, items, 1 };
     TEST_ASSERT(sm2_rev_apply_delta(rev_ctx, &delta, now + 1) == SM2_IC_SUCCESS,
         "Apply Delta");
 
