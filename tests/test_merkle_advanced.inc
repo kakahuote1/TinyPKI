@@ -55,14 +55,12 @@
 
     uint8_t epoch_buf[16384];
     size_t epoch_len = sizeof(epoch_buf);
-    TEST_ASSERT(
-        sm2_rev_member_proof_encode(&epoch_proof, epoch_buf, &epoch_len)
+    TEST_ASSERT(sm2_rev_member_proof_encode(&epoch_proof, epoch_buf, &epoch_len)
             == SM2_IC_SUCCESS,
         "Epoch Proof Encode");
 
     sm2_rev_member_proof_t epoch_dec;
-    TEST_ASSERT(
-        sm2_rev_member_proof_decode(&epoch_dec, epoch_buf, epoch_len)
+    TEST_ASSERT(sm2_rev_member_proof_decode(&epoch_dec, epoch_buf, epoch_len)
             == SM2_IC_SUCCESS,
         "Epoch Proof Decode");
 
@@ -71,7 +69,8 @@
             == SM2_IC_SUCCESS,
         "Epoch Proof Verify");
 
-    TEST_ASSERT(epoch_len == full_len, "Epoch proof should be one sparse proof");
+    TEST_ASSERT(
+        epoch_len == full_len, "Epoch proof should be one sparse proof");
     printf("   [EPOCH-SPARSE] full=%zu, epoch=%zu\n", full_len, epoch_len);
 
     sm2_rev_epoch_dir_cleanup(&dir_dec);
@@ -143,9 +142,11 @@ static void test_rev_epoch_switch_monotonic()
 
     sm2_rev_tree_t *t1 = NULL;
     sm2_rev_tree_t *t2 = NULL;
+    sm2_rev_tree_t *t_conflict = NULL;
 
     uint64_t revoked1[] = { 1001, 1002, 1003 };
     uint64_t revoked2[] = { 1001, 1002, 1003, 1004, 1005 };
+    uint64_t revoked_conflict[] = { 2001, 2002, 2003 };
 
     TEST_ASSERT(sm2_rev_tree_build(
                     &t1, revoked1, sizeof(revoked1) / sizeof(revoked1[0]), 10)
@@ -155,9 +156,14 @@ static void test_rev_epoch_switch_monotonic()
                     &t2, revoked2, sizeof(revoked2) / sizeof(revoked2[0]), 11)
             == SM2_IC_SUCCESS,
         "Build T2");
+    TEST_ASSERT(sm2_rev_tree_build(&t_conflict, revoked_conflict,
+                    sizeof(revoked_conflict) / sizeof(revoked_conflict[0]), 10)
+            == SM2_IC_SUCCESS,
+        "Build Conflicting T1");
 
     sm2_rev_epoch_dir_t *d1 = NULL;
     sm2_rev_epoch_dir_t *d2 = NULL;
+    sm2_rev_epoch_dir_t *d_conflict = NULL;
     sm2_rev_epoch_dir_t *local = NULL;
 
     TEST_ASSERT(sm2_rev_epoch_dir_build(
@@ -168,12 +174,20 @@ static void test_rev_epoch_switch_monotonic()
                     t2, 61, 1000, 3000, merkle_ca_sign_cb, &sig_ctx, &d2)
             == SM2_IC_SUCCESS,
         "Build D2");
+    TEST_ASSERT(sm2_rev_epoch_dir_build(t_conflict, 60, 1000, 3000,
+                    merkle_ca_sign_cb, &sig_ctx, &d_conflict)
+            == SM2_IC_SUCCESS,
+        "Build Conflicting D1");
 
     TEST_ASSERT(
         sm2_rev_epoch_switch(&local, d1, 1500, merkle_ca_verify_cb, &sig_ctx)
             == SM2_IC_SUCCESS,
         "Switch To D1");
     TEST_ASSERT(local != NULL, "Local Directory Materialized");
+    TEST_ASSERT(sm2_rev_epoch_switch(
+                    &local, d_conflict, 1500, merkle_ca_verify_cb, &sig_ctx)
+            == SM2_IC_ERR_VERIFY,
+        "Reject Same Version Fork");
     TEST_ASSERT(
         sm2_rev_epoch_switch(&local, d2, 1500, merkle_ca_verify_cb, &sig_ctx)
             == SM2_IC_SUCCESS,
@@ -184,8 +198,10 @@ static void test_rev_epoch_switch_monotonic()
         "Reject Older Epoch");
 
     sm2_rev_epoch_dir_cleanup(&local);
+    sm2_rev_epoch_dir_cleanup(&d_conflict);
     sm2_rev_epoch_dir_cleanup(&d2);
     sm2_rev_epoch_dir_cleanup(&d1);
+    sm2_rev_tree_cleanup(&t_conflict);
     sm2_rev_tree_cleanup(&t2);
     sm2_rev_tree_cleanup(&t1);
     TEST_PASS();
@@ -311,12 +327,11 @@ static void test_rev_phase8_metric_bundle()
     printf("   [P8-METRIC] reuse=%.2f%%, bandwidth=%.2f%%\n",
         reuse_rate * 100.0, bandwidth_gain * 100.0);
 
-    TEST_ASSERT(reuse_rate >= 0.20,
-        "Reuse Rate < 20% after compressed proofs");
+    TEST_ASSERT(reuse_rate >= 0.20, "Reuse Rate < 20% after compressed proofs");
     TEST_ASSERT(epoch_proof.sibling_count == full.sibling_count,
         "Epoch proof should preserve sparse membership path");
-    TEST_ASSERT(bandwidth_gain >= 0.05,
-        "Bandwidth Gain < 5% after compressed proofs");
+    TEST_ASSERT(
+        bandwidth_gain >= 0.05, "Bandwidth Gain < 5% after compressed proofs");
 
     sm2_rev_epoch_dir_cleanup(&dir);
     sm2_rev_multi_proof_cleanup(&mp);

@@ -135,6 +135,78 @@ static void test_phase134_service_revoke_failure_rolls_back_state(void)
     TEST_PASS();
 }
 
+static void test_phase135_service_issue_failure_rolls_back_state(void)
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P135_ISSUE_ROLLBACK_CA";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 16, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+
+    const uint8_t identity_a[] = "P135_NODE_A";
+    TEST_ASSERT(sm2_pki_identity_register(service, identity_a,
+                    sizeof(identity_a) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Identity A Register");
+
+    sm2_ic_cert_request_t req_a;
+    sm2_private_key_t temp_priv_a;
+    sm2_ic_cert_result_t cert_a;
+    TEST_ASSERT(pki_internal_create_and_authorize_request(service, identity_a,
+                    sizeof(identity_a) - 1, SM2_KU_DIGITAL_SIGNATURE, &req_a,
+                    &temp_priv_a),
+        "Create Request A");
+    TEST_ASSERT(
+        test_pki_issue_cert(service, &req_a, &cert_a) == SM2_PKI_SUCCESS,
+        "Issue Cert A");
+
+    size_t issued_count_before = service->issued_count;
+    size_t cert_count_before = service->cert_count;
+    sm2_rev_root_record_t issuance_before = service->issuance_root_record;
+    sm2_pki_epoch_root_record_t epoch_before = service->epoch_root_record;
+
+    const uint8_t identity_b[] = "P135_NODE_B";
+    TEST_ASSERT(sm2_pki_identity_register(service, identity_b,
+                    sizeof(identity_b) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Identity B Register");
+
+    sm2_ic_cert_request_t req_b;
+    sm2_private_key_t temp_priv_b;
+    TEST_ASSERT(pki_internal_create_and_authorize_request(service, identity_b,
+                    sizeof(identity_b) - 1, SM2_KU_DIGITAL_SIGNATURE, &req_b,
+                    &temp_priv_b),
+        "Create Request B");
+
+    uint64_t issue_now = test_cert_now(&cert_a.cert) + 20U;
+    service->rev_root_record.valid_until = issue_now - 1U;
+
+    sm2_ic_cert_result_t failed_cert;
+    memset(&failed_cert, 0xA5, sizeof(failed_cert));
+    TEST_ASSERT(sm2_pki_cert_issue(service, &req_b, issue_now, &failed_cert)
+            != SM2_PKI_SUCCESS,
+        "Issue With Stale Revocation Root Reject");
+
+    TEST_ASSERT(service->issued_count == issued_count_before,
+        "Issued Count Rolled Back");
+    TEST_ASSERT(
+        service->cert_count == cert_count_before, "Cert Count Rolled Back");
+    TEST_ASSERT(memcmp(&service->issuance_root_record, &issuance_before,
+                    sizeof(issuance_before))
+            == 0,
+        "Issuance Root Rolled Back");
+    TEST_ASSERT(
+        memcmp(&service->epoch_root_record, &epoch_before, sizeof(epoch_before))
+            == 0,
+        "Epoch Root Rolled Back");
+    TEST_ASSERT(failed_cert.cert.serial_number == 0, "Failed Result Cleared");
+
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
 static void test_phase136_fresh_root_record_matches_sync_state(void)
 {
     sm2_pki_service_ctx_t *service = NULL;
@@ -174,5 +246,6 @@ void run_test_pki_internal_suite(void)
 {
     RUN_TEST(test_phase7_service_ca_key_range_check);
     RUN_TEST(test_phase134_service_revoke_failure_rolls_back_state);
+    RUN_TEST(test_phase135_service_issue_failure_rolls_back_state);
     RUN_TEST(test_phase136_fresh_root_record_matches_sync_state);
 }

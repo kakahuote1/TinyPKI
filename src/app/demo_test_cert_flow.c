@@ -7,6 +7,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include "sm2_pki_service.h"
@@ -137,9 +138,33 @@ int main(void)
     err = sm2_pki_client_export_epoch_evidence(cli, auth_now, &evidence);
     if (!check_pki(err, "Export Epoch Evidence Bundle"))
         goto cleanup;
-    err = sm2_pki_epoch_witness_sign(&evidence.epoch_root_record,
+    size_t commitment_count = 0;
+    err = sm2_pki_service_get_issuance_commitment_count(svc, &commitment_count);
+    if (!check_pki(err, "Read Issuance Commitment Count"))
+        goto cleanup;
+    sm2_pki_issuance_commitment_t *commitments
+        = (sm2_pki_issuance_commitment_t *)calloc(
+            commitment_count, sizeof(*commitments));
+    if (!commitments)
+        goto cleanup;
+    size_t exported_count = 0;
+    err = sm2_pki_service_export_issuance_commitments(
+        svc, 0, commitments, commitment_count, &exported_count);
+    if (!check_pki(err, "Export Issuance Commitments")
+        || exported_count != commitment_count)
+    {
+        free(commitments);
+        goto cleanup;
+    }
+    sm2_pki_epoch_witness_state_t witness_state;
+    sm2_pki_epoch_witness_state_init(&witness_state);
+    err = sm2_pki_epoch_witness_sign_append_only(&witness_state,
+        &evidence.epoch_root_record, &ca_pub,
+        evidence.epoch_root_record.valid_from, commitments, commitment_count,
         witness.witness_id, witness.witness_id_len, &witness_priv,
         &evidence.witness_signatures[0]);
+    sm2_pki_epoch_witness_state_cleanup(&witness_state);
+    free(commitments);
     if (!check_pki(err, "Witness Sign Epoch Root"))
         goto cleanup;
     evidence.witness_signature_count = 1;

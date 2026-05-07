@@ -777,7 +777,7 @@ sm2_pki_error_t sm2_pki_client_export_epoch_evidence(sm2_pki_client_ctx_t *ctx,
         &state->cert, epoch, &evidence->issuance_proof);
 }
 
-sm2_pki_error_t sm2_pki_epoch_witness_sign(
+static sm2_pki_error_t pki_epoch_witness_sign_raw(
     const sm2_pki_epoch_root_record_t *root_record, const uint8_t *witness_id,
     size_t witness_id_len, const sm2_private_key_t *witness_private_key,
     sm2_pki_transparency_witness_signature_t *signature)
@@ -995,7 +995,7 @@ sm2_pki_error_t sm2_pki_epoch_witness_sign_append_only(
         return SM2_PKI_ERR_VERIFY;
     }
 
-    ret = sm2_pki_epoch_witness_sign(root_record, witness_id, witness_id_len,
+    ret = pki_epoch_witness_sign_raw(root_record, witness_id, witness_id_len,
         witness_private_key, signature);
     if (ret != SM2_PKI_SUCCESS)
     {
@@ -1202,13 +1202,6 @@ sm2_pki_error_t sm2_pki_verify(sm2_pki_client_ctx_t *ctx,
 
     return pki_client_verify_epoch_evidence_bundle(state, request->cert,
         request->evidence_bundle, now_ts, local_matched_index, policy);
-}
-
-sm2_pki_error_t sm2_pki_batch_verify(
-    const sm2_auth_verify_item_t *items, size_t item_count, size_t *valid_count)
-{
-    return sm2_pki_error_from_ic(
-        sm2_auth_batch_verify(items, item_count, valid_count));
 }
 
 sm2_pki_error_t sm2_pki_generate_ephemeral_keypair(

@@ -260,6 +260,31 @@ static void test_cbor_key_usage_overflow_rejected()
     TEST_PASS();
 }
 
+static void test_cbor_field_mask_overflow_rejected()
+{
+    uint8_t bad[128];
+    size_t o = 0;
+
+    bad[o++] = 0x84; /* array(4): type, serial, field_mask, V */
+    bad[o++] = 0x01; /* type implicit */
+    bad[o++] = 0x01; /* serial */
+    bad[o++] = 0x1A; /* uint32 */
+    bad[o++] = 0x00;
+    bad[o++] = 0x01;
+    bad[o++] = 0x00;
+    bad[o++] = 0x00; /* field_mask = 0x10000 */
+    bad[o++] = 0x58;
+    bad[o++] = 0x21; /* public_recon_key len=33 */
+    memset(bad + o, 0x55, 33);
+    o += 33;
+
+    sm2_implicit_cert_t out;
+    TEST_ASSERT(sm2_ic_cbor_decode_cert(&out, bad, o) == SM2_IC_ERR_CBOR,
+        "Reject field_mask overflow");
+
+    TEST_PASS();
+}
+
 static void test_issue_ctx_secure_default_only()
 {
     if (!g_ca_initialized)
@@ -685,6 +710,7 @@ void run_test_ecqv_suite(void)
     RUN_TEST(test_tampered_cert);
     RUN_TEST(test_cbor_robustness);
     RUN_TEST(test_cbor_key_usage_overflow_rejected);
+    RUN_TEST(test_cbor_field_mask_overflow_rejected);
     RUN_TEST(test_issue_ctx_secure_default_only);
     RUN_TEST(test_ca_public_key_consistency_enforced);
     RUN_TEST(test_issue_ctx_accessor_and_param_defense);
