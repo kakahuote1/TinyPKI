@@ -189,3 +189,13 @@ cmake --build build --target sm2_bench_capability_suite -j 4
 ## 📄 开源许可证 (License)
 
 本项目遵循自由、开源协议基准，采用 [Apache License 2.0](LICENSE) 授权。
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=kakahuote1%2FTinyPKI&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=kakahuote1/TinyPKI&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=kakahuote1/TinyPKI&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=kakahuote1/TinyPKI&type=date&legend=top-left" />
+ </picture>
+</a>
