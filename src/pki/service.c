@@ -357,6 +357,29 @@ static uint64_t service_root_valid_until(
     return UINT64_MAX;
 }
 
+static sm2_ic_error_t service_sign_issuance_root(sm2_pki_service_ctx_t *ctx,
+    const sm2_pki_issuance_tree_t *tree_to_sign, size_t issued_count,
+    uint64_t now_ts, sm2_rev_root_record_t *root_record)
+{
+    sm2_pki_service_state_t *state = service_state(ctx);
+    if (!ctx || !state || !tree_to_sign || !root_record)
+        return SM2_IC_ERR_PARAM;
+    if (issued_count > UINT64_MAX)
+        return SM2_IC_ERR_PARAM;
+
+    uint64_t valid_until = service_root_valid_until(state, now_ts);
+    uint64_t valid_from = now_ts > 300U ? now_ts - 300U : 0U;
+    uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN];
+    sm2_ic_error_t ret
+        = sm2_pki_issuance_tree_get_root_hash(tree_to_sign, root_hash);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    return sm2_pki_root_record_sign_hash(state->issuer_id, state->issuer_id_len,
+        (uint64_t)issued_count, root_hash, valid_from, valid_until,
+        service_merkle_sign_cb, ctx, root_record);
+}
+
 static sm2_ic_error_t service_publish_issuance_root(
     sm2_pki_service_ctx_t *ctx, uint64_t now_ts, bool rebuild_tree)
 {
@@ -379,18 +402,8 @@ static sm2_ic_error_t service_publish_issuance_root(
         tree_to_sign = new_tree;
     }
 
-    uint64_t valid_until = service_root_valid_until(state, now_ts);
-    uint64_t valid_from = now_ts > 300U ? now_ts - 300U : 0U;
-    uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN];
-    sm2_ic_error_t ret
-        = sm2_pki_issuance_tree_get_root_hash(tree_to_sign, root_hash);
-    if (ret == SM2_IC_SUCCESS)
-    {
-        ret = sm2_pki_root_record_sign_hash(state->issuer_id,
-            state->issuer_id_len, (uint64_t)state->issued_count, root_hash,
-            valid_from, valid_until, service_merkle_sign_cb, ctx,
-            &new_root_record);
-    }
+    sm2_ic_error_t ret = service_sign_issuance_root(
+        ctx, tree_to_sign, state->issued_count, now_ts, &new_root_record);
     if (ret != SM2_IC_SUCCESS)
     {
         sm2_pki_issuance_tree_cleanup(&new_tree);
@@ -407,24 +420,25 @@ static sm2_ic_error_t service_publish_issuance_root(
     return SM2_IC_SUCCESS;
 }
 
-static sm2_ic_error_t service_publish_epoch_root(
-    sm2_pki_service_ctx_t *ctx, uint64_t now_ts)
+static sm2_ic_error_t service_prepare_epoch_root(sm2_pki_service_ctx_t *ctx,
+    const sm2_rev_root_record_t *issuance_root_record, uint64_t now_ts,
+    sm2_pki_epoch_root_record_t *epoch_root, uint64_t *epoch_version)
 {
     sm2_pki_service_state_t *state = service_state(ctx);
-    if (!ctx || !state || !state->revocation_state_ready
-        || !state->issuance_state_ready)
+    if (!ctx || !state || !issuance_root_record || !epoch_root || !epoch_version
+        || !state->revocation_state_ready)
     {
         return SM2_IC_ERR_PARAM;
     }
 
-    uint64_t valid_from = state->rev_root_record.valid_from
-            > state->issuance_root_record.valid_from
+    uint64_t valid_from
+        = state->rev_root_record.valid_from > issuance_root_record->valid_from
         ? state->rev_root_record.valid_from
-        : state->issuance_root_record.valid_from;
-    uint64_t valid_until = state->rev_root_record.valid_until
-            < state->issuance_root_record.valid_until
+        : issuance_root_record->valid_from;
+    uint64_t valid_until
+        = state->rev_root_record.valid_until < issuance_root_record->valid_until
         ? state->rev_root_record.valid_until
-        : state->issuance_root_record.valid_until;
+        : issuance_root_record->valid_until;
     if (now_ts > valid_from)
         valid_from = now_ts;
     if (valid_until < valid_from)
@@ -435,14 +449,33 @@ static sm2_ic_error_t service_publish_epoch_root(
     if (next_epoch_version == 0)
         return SM2_IC_ERR_VERIFY;
 
-    sm2_pki_epoch_root_record_t epoch_root;
-    memset(&epoch_root, 0, sizeof(epoch_root));
     sm2_ic_error_t ret = sm2_pki_epoch_root_sign(state->issuer_id,
         state->issuer_id_len, next_epoch_version,
         state->rev_root_record.root_version, state->rev_root_record.root_hash,
-        state->issuance_root_record.root_version,
-        state->issuance_root_record.root_hash, valid_from, valid_until,
-        service_merkle_sign_cb, ctx, &epoch_root);
+        issuance_root_record->root_version, issuance_root_record->root_hash,
+        valid_from, valid_until, service_merkle_sign_cb, ctx, epoch_root);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    *epoch_version = next_epoch_version;
+    return SM2_IC_SUCCESS;
+}
+
+static sm2_ic_error_t service_publish_epoch_root(
+    sm2_pki_service_ctx_t *ctx, uint64_t now_ts)
+{
+    sm2_pki_service_state_t *state = service_state(ctx);
+    if (!ctx || !state || !state->revocation_state_ready
+        || !state->issuance_state_ready)
+    {
+        return SM2_IC_ERR_PARAM;
+    }
+
+    sm2_pki_epoch_root_record_t epoch_root;
+    memset(&epoch_root, 0, sizeof(epoch_root));
+    uint64_t next_epoch_version = 0;
+    sm2_ic_error_t ret = service_prepare_epoch_root(ctx,
+        &state->issuance_root_record, now_ts, &epoch_root, &next_epoch_version);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -1011,30 +1044,70 @@ sm2_pki_error_t sm2_pki_cert_issue(sm2_pki_service_ctx_t *ctx,
     if (ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ret);
 
+    if (state->issued_count >= (size_t)UINT64_MAX)
+    {
+        memset(result, 0, sizeof(*result));
+        return SM2_PKI_ERR_MEMORY;
+    }
+
     sm2_pki_error_t issued_ret = service_ensure_issued_capacity(state);
     if (issued_ret != SM2_PKI_SUCCESS)
+    {
+        memset(result, 0, sizeof(*result));
         return issued_ret;
+    }
 
-    ret = sm2_pki_issuance_tree_append(&state->issuance_tree,
-        issuance_commitment, (uint64_t)state->issued_count + 1U);
-    if (ret != SM2_IC_SUCCESS)
-        return sm2_pki_error_from_ic(ret);
-
+    size_t new_issued_count = state->issued_count + 1U;
     memcpy(state->issuance_commitments[state->issued_count],
         issuance_commitment, sizeof(issuance_commitment));
-    state->issued_count++;
-    ret = service_publish_issuance_root(ctx, now_ts, false);
+
+    sm2_pki_issuance_tree_t *new_issuance_tree = NULL;
+    ret = sm2_pki_issuance_tree_build(&new_issuance_tree,
+        state->issuance_commitments, new_issued_count,
+        (uint64_t)new_issued_count);
     if (ret != SM2_IC_SUCCESS)
     {
-        state->issued_count--;
-        sm2_pki_issuance_tree_build(&state->issuance_tree,
-            state->issuance_commitments, state->issued_count,
-            (uint64_t)state->issued_count);
+        memset(state->issuance_commitments[state->issued_count], 0,
+            sizeof(issuance_commitment));
+        memset(result, 0, sizeof(*result));
         return sm2_pki_error_from_ic(ret);
     }
-    ret = service_publish_epoch_root(ctx, now_ts);
+
+    sm2_rev_root_record_t new_issuance_root_record;
+    memset(&new_issuance_root_record, 0, sizeof(new_issuance_root_record));
+    ret = service_sign_issuance_root(ctx, new_issuance_tree, new_issued_count,
+        now_ts, &new_issuance_root_record);
     if (ret != SM2_IC_SUCCESS)
+    {
+        memset(state->issuance_commitments[state->issued_count], 0,
+            sizeof(issuance_commitment));
+        sm2_pki_issuance_tree_cleanup(&new_issuance_tree);
+        memset(result, 0, sizeof(*result));
         return sm2_pki_error_from_ic(ret);
+    }
+
+    sm2_pki_epoch_root_record_t new_epoch_root_record;
+    uint64_t new_epoch_version = 0;
+    memset(&new_epoch_root_record, 0, sizeof(new_epoch_root_record));
+    ret = service_prepare_epoch_root(ctx, &new_issuance_root_record, now_ts,
+        &new_epoch_root_record, &new_epoch_version);
+    if (ret != SM2_IC_SUCCESS)
+    {
+        memset(state->issuance_commitments[state->issued_count], 0,
+            sizeof(issuance_commitment));
+        sm2_pki_issuance_tree_cleanup(&new_issuance_tree);
+        memset(result, 0, sizeof(*result));
+        return sm2_pki_error_from_ic(ret);
+    }
+
+    sm2_pki_issuance_tree_cleanup(&state->issuance_tree);
+    state->issuance_tree = new_issuance_tree;
+    state->issued_count = new_issued_count;
+    state->issuance_root_record = new_issuance_root_record;
+    state->issuance_state_ready = true;
+    state->epoch_root_record = new_epoch_root_record;
+    state->epoch_version = new_epoch_version;
+    state->epoch_state_ready = true;
 
     memset(cert_entry, 0, sizeof(*cert_entry));
     cert_entry->used = true;

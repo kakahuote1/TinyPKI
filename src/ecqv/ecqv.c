@@ -991,6 +991,8 @@ sm2_ic_error_t sm2_ic_cbor_decode_cert(
     if (utils_cbor_read_head(input, input_len, &offset, 0, &field_mask)
         != SM2_IC_SUCCESS)
         return SM2_IC_ERR_CBOR;
+    if (field_mask > UINT16_MAX)
+        return SM2_IC_ERR_CBOR;
     if (!utils_valid_field_mask((uint16_t)field_mask))
         return SM2_IC_ERR_CBOR;
     cert->field_mask = (uint16_t)field_mask;

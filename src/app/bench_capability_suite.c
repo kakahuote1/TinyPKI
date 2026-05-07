@@ -685,10 +685,42 @@ static int attach_witness(capability_flow_ctx_t *ctx)
 {
     if (!ctx)
         return 0;
-    if (sm2_pki_epoch_witness_sign(&ctx->evidence.epoch_root_record,
-            ctx->witness.witness_id, ctx->witness.witness_id_len,
-            &ctx->witness_private_key, &ctx->evidence.witness_signatures[0])
+
+    size_t commitment_count = 0;
+    if (sm2_pki_service_get_issuance_commitment_count(
+            ctx->service, &commitment_count)
         != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
+    sm2_pki_issuance_commitment_t *commitments = NULL;
+    if (commitment_count > 0)
+    {
+        commitments = (sm2_pki_issuance_commitment_t *)calloc(
+            commitment_count, sizeof(*commitments));
+        if (!commitments)
+            return 0;
+        size_t exported_count = 0;
+        if (sm2_pki_service_export_issuance_commitments(
+                ctx->service, 0, commitments, commitment_count, &exported_count)
+                != SM2_PKI_SUCCESS
+            || exported_count != commitment_count)
+        {
+            free(commitments);
+            return 0;
+        }
+    }
+
+    sm2_pki_epoch_witness_state_t witness_state;
+    sm2_pki_epoch_witness_state_init(&witness_state);
+    sm2_pki_error_t ret = sm2_pki_epoch_witness_sign_append_only(&witness_state,
+        &ctx->evidence.epoch_root_record, &ctx->ca_pub,
+        ctx->evidence.epoch_root_record.valid_from, commitments,
+        commitment_count, ctx->witness.witness_id, ctx->witness.witness_id_len,
+        &ctx->witness_private_key, &ctx->evidence.witness_signatures[0]);
+    sm2_pki_epoch_witness_state_cleanup(&witness_state);
+    free(commitments);
+    if (ret != SM2_PKI_SUCCESS)
     {
         return 0;
     }
@@ -898,15 +930,13 @@ static int collect_timing_metrics(
 
     for (size_t i = 0; i < BENCH_ROUNDS; i++)
     {
-        sm2_pki_transparency_witness_signature_t signature;
         double t0 = now_ms_highres();
-        if (sm2_pki_epoch_witness_sign(&ctx->evidence.epoch_root_record,
-                ctx->witness.witness_id, ctx->witness.witness_id_len,
-                &ctx->witness_private_key, &signature)
-            != SM2_PKI_SUCCESS)
+        sm2_pki_evidence_bundle_t witness_evidence = ctx->evidence;
+        if (!attach_witness(ctx))
         {
             return 0;
         }
+        ctx->evidence = witness_evidence;
         witness_samples[i] = now_ms_highres() - t0;
     }
 

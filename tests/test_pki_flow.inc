@@ -111,22 +111,14 @@ static void test_phase4_service_client_flow()
     sm2_auth_signature_t sig;
     sm2_pki_evidence_bundle_t evidence;
     sm2_pki_verify_request_t request;
-    TEST_ASSERT(
-        pki_build_signed_verify_request(client, msg, sizeof(msg) - 1, auth_now,
-            &sig, &evidence, &request),
+    TEST_ASSERT(pki_build_signed_verify_request(client, msg, sizeof(msg) - 1,
+                    auth_now, &sig, &evidence, &request),
         "Build Signed Verify Request");
     size_t matched = 0;
     TEST_ASSERT(
         sm2_pki_verify(client, &request, auth_now, &matched) == SM2_PKI_SUCCESS,
         "PKI Verify");
     TEST_ASSERT(matched == 0, "Matched Default CA");
-
-    sm2_auth_verify_item_t item
-        = { request.public_key, msg, sizeof(msg) - 1, &sig };
-    size_t valid_count = 0;
-    TEST_ASSERT(sm2_pki_batch_verify(&item, 1, &valid_count) == SM2_PKI_SUCCESS,
-        "PKI Batch Verify");
-    TEST_ASSERT(valid_count == 1, "Batch Valid 1");
 
     sm2_private_key_t eph_priv;
     sm2_ec_point_t eph_pub;
@@ -222,9 +214,8 @@ static void test_phase4_revocation_epoch_and_cross_domain()
     sm2_auth_signature_t sig_b;
     sm2_pki_evidence_bundle_t evidence_b;
     sm2_pki_verify_request_t req_auth;
-    TEST_ASSERT(
-        pki_build_signed_verify_request(client_b, msg, sizeof(msg) - 1,
-            auth_now + 20, &sig_b, &evidence_b, &req_auth),
+    TEST_ASSERT(pki_build_signed_verify_request(client_b, msg, sizeof(msg) - 1,
+                    auth_now + 20, &sig_b, &evidence_b, &req_auth),
         "Build Cross Verify Request");
 
     size_t matched = 0;
@@ -357,11 +348,6 @@ static void test_phase4_pki_controls_and_param_defense()
     TEST_ASSERT(pki_client_get_identity_material(client, NULL, &client_pub),
         "Get Client Public Key");
 
-    size_t valid_count = 0;
-    TEST_ASSERT(
-        sm2_pki_batch_verify(NULL, 1, &valid_count) == SM2_PKI_ERR_PARAM,
-        "Batch Verify NULL Items");
-
     uint8_t session_key[16];
     sm2_private_key_t eph_priv;
     sm2_ec_point_t eph_pub;
@@ -391,10 +377,11 @@ static void test_phase4_pki_controls_and_param_defense()
 
     uint8_t aead_iv[12] = { 0 };
     uint8_t tag[SM2_AUTH_AEAD_TAG_MAX_LEN] = { 0 };
+    size_t ciphertext_len = 0;
     size_t tag_len = 16;
     TEST_ASSERT(sm2_pki_encrypt(SM2_AUTH_AEAD_MODE_SM4_GCM, session_key,
                     aead_iv, sizeof(aead_iv), NULL, 0, msg, sizeof(msg) - 1,
-                    NULL, &valid_count, tag, &tag_len)
+                    NULL, &ciphertext_len, tag, &tag_len)
             == SM2_PKI_ERR_PARAM,
         "Encrypt NULL Ciphertext");
     TEST_ASSERT(sm2_pki_service_refresh_root(NULL, 0) == SM2_PKI_ERR_PARAM,

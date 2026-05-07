@@ -98,12 +98,6 @@ extern "C"
     void sm2_pki_epoch_witness_state_cleanup(
         sm2_pki_epoch_witness_state_t *state);
 
-    sm2_pki_error_t sm2_pki_epoch_witness_sign(
-        const sm2_pki_epoch_root_record_t *root_record,
-        const uint8_t *witness_id, size_t witness_id_len,
-        const sm2_private_key_t *witness_private_key,
-        sm2_pki_transparency_witness_signature_t *signature);
-
     sm2_ic_error_t sm2_pki_epoch_root_digest(
         const sm2_pki_epoch_root_record_t *root_record,
         uint8_t digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN]);
@@ -141,9 +135,6 @@ extern "C"
     sm2_pki_error_t sm2_pki_verify(sm2_pki_client_ctx_t *ctx,
         const sm2_pki_verify_request_t *request, uint64_t now_ts,
         size_t *matched_ca_index);
-
-    sm2_pki_error_t sm2_pki_batch_verify(const sm2_auth_verify_item_t *items,
-        size_t item_count, size_t *valid_count);
 
     sm2_pki_error_t sm2_pki_generate_ephemeral_keypair(
         sm2_private_key_t *ephemeral_private_key,

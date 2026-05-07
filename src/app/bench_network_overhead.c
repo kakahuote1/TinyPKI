@@ -59,6 +59,7 @@ typedef struct
     sm2_pki_service_ctx_t *service;
     sm2_pki_client_ctx_t *client_a;
     sm2_pki_client_ctx_t *client_b;
+    sm2_ec_point_t ca_pub;
     uint64_t auth_now;
 } bench_session_ctx_t;
 
@@ -241,14 +242,48 @@ static int bench_configure_transparency_verifier(sm2_pki_client_ctx_t *client)
         == SM2_PKI_SUCCESS;
 }
 
-static int bench_attach_epoch_witness(sm2_pki_evidence_bundle_t *evidence)
+static int bench_attach_epoch_witness(const sm2_pki_service_ctx_t *service,
+    const sm2_ec_point_t *ca_public_key, sm2_pki_evidence_bundle_t *evidence)
 {
-    if (!evidence || !bench_transparency_policy_init())
+    if (!service || !ca_public_key || !evidence
+        || !bench_transparency_policy_init())
         return 0;
-    if (sm2_pki_epoch_witness_sign(&evidence->epoch_root_record,
-            g_bench_witness.witness_id, g_bench_witness.witness_id_len,
-            &g_bench_witness_priv, &evidence->witness_signatures[0])
+
+    size_t commitment_count = 0;
+    if (sm2_pki_service_get_issuance_commitment_count(
+            service, &commitment_count)
         != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
+    sm2_pki_issuance_commitment_t *commitments = NULL;
+    if (commitment_count > 0)
+    {
+        commitments = (sm2_pki_issuance_commitment_t *)calloc(
+            commitment_count, sizeof(*commitments));
+        if (!commitments)
+            return 0;
+        size_t exported_count = 0;
+        if (sm2_pki_service_export_issuance_commitments(
+                service, 0, commitments, commitment_count, &exported_count)
+                != SM2_PKI_SUCCESS
+            || exported_count != commitment_count)
+        {
+            free(commitments);
+            return 0;
+        }
+    }
+
+    sm2_pki_epoch_witness_state_t witness_state;
+    sm2_pki_epoch_witness_state_init(&witness_state);
+    sm2_pki_error_t ret = sm2_pki_epoch_witness_sign_append_only(&witness_state,
+        &evidence->epoch_root_record, ca_public_key,
+        evidence->epoch_root_record.valid_from, commitments, commitment_count,
+        g_bench_witness.witness_id, g_bench_witness.witness_id_len,
+        &g_bench_witness_priv, &evidence->witness_signatures[0]);
+    sm2_pki_epoch_witness_state_cleanup(&witness_state);
+    free(commitments);
+    if (ret != SM2_PKI_SUCCESS)
     {
         return 0;
     }
@@ -256,7 +291,8 @@ static int bench_attach_epoch_witness(sm2_pki_evidence_bundle_t *evidence)
     return 1;
 }
 
-static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
+static int build_signed_verify_request(const sm2_pki_service_ctx_t *service,
+    const sm2_ec_point_t *ca_public_key, sm2_pki_client_ctx_t *signer,
     const uint8_t *message, size_t message_len, uint64_t now_ts,
     sm2_auth_signature_t *signature, sm2_pki_evidence_bundle_t *evidence,
     sm2_pki_verify_request_t *request)
@@ -264,8 +300,8 @@ static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     const sm2_implicit_cert_t *cert = NULL;
     const sm2_ec_point_t *public_key = NULL;
 
-    if (!signer || !message || message_len == 0 || !signature || !evidence
-        || !request)
+    if (!service || !ca_public_key || !signer || !message || message_len == 0
+        || !signature || !evidence || !request)
     {
         return 0;
     }
@@ -290,7 +326,7 @@ static int build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     request->message_len = message_len;
     request->signature = signature;
     request->evidence_bundle = evidence;
-    if (!bench_attach_epoch_witness(evidence))
+    if (!bench_attach_epoch_witness(service, ca_public_key, evidence))
         return 0;
     return 1;
 }
@@ -381,9 +417,9 @@ static int build_flow_context(bench_flow_ctx_t *ctx)
     ctx->auth_now = ctx->cert_result.cert.valid_from != 0
         ? ctx->cert_result.cert.valid_from
         : current_unix_ts();
-    return build_signed_verify_request(ctx->client, ctx->message,
-        ctx->message_len, ctx->auth_now, &ctx->signature, &ctx->evidence,
-        &ctx->verify_request);
+    return build_signed_verify_request(ctx->service, &ctx->ca_pub, ctx->client,
+        ctx->message, ctx->message_len, ctx->auth_now, &ctx->signature,
+        &ctx->evidence, &ctx->verify_request);
 }
 
 static void cleanup_flow_context(bench_flow_ctx_t *ctx)
@@ -407,7 +443,6 @@ static int build_session_context(bench_session_ctx_t *ctx)
     sm2_ic_cert_result_t cert_b;
     sm2_private_key_t temp_a;
     sm2_private_key_t temp_b;
-    sm2_ec_point_t ca_pub;
 
     if (!ctx)
         return 0;
@@ -416,7 +451,7 @@ static int build_session_context(bench_session_ctx_t *ctx)
     memset(&cert_b, 0, sizeof(cert_b));
     memset(&temp_a, 0, sizeof(temp_a));
     memset(&temp_b, 0, sizeof(temp_b));
-    memset(&ca_pub, 0, sizeof(ca_pub));
+    memset(&ctx->ca_pub, 0, sizeof(ctx->ca_pub));
 
     if (sm2_pki_service_create(&ctx->service, issuer, sizeof(issuer) - 1, 32,
             300, current_unix_ts())
@@ -439,14 +474,14 @@ static int build_session_context(bench_session_ctx_t *ctx)
     {
         return 0;
     }
-    if (sm2_pki_service_get_ca_public_key(ctx->service, &ca_pub)
+    if (sm2_pki_service_get_ca_public_key(ctx->service, &ctx->ca_pub)
         != SM2_PKI_SUCCESS)
     {
         return 0;
     }
-    if (sm2_pki_client_create(&ctx->client_a, &ca_pub, ctx->service)
+    if (sm2_pki_client_create(&ctx->client_a, &ctx->ca_pub, ctx->service)
             != SM2_PKI_SUCCESS
-        || sm2_pki_client_create(&ctx->client_b, &ca_pub, ctx->service)
+        || sm2_pki_client_create(&ctx->client_b, &ctx->ca_pub, ctx->service)
             != SM2_PKI_SUCCESS)
     {
         return 0;
@@ -456,9 +491,11 @@ static int build_session_context(bench_session_ctx_t *ctx)
     {
         return 0;
     }
-    if (sm2_pki_client_import_cert(ctx->client_a, &cert_a, &temp_a, &ca_pub)
+    if (sm2_pki_client_import_cert(
+            ctx->client_a, &cert_a, &temp_a, &ctx->ca_pub)
             != SM2_PKI_SUCCESS
-        || sm2_pki_client_import_cert(ctx->client_b, &cert_b, &temp_b, &ca_pub)
+        || sm2_pki_client_import_cert(
+               ctx->client_b, &cert_b, &temp_b, &ctx->ca_pub)
             != SM2_PKI_SUCCESS)
     {
         return 0;
@@ -839,7 +876,7 @@ static double measure_secure_session_median(void)
         req_a_to_b.message_len = bind_a_len;
         req_a_to_b.signature = &sig_a;
         req_a_to_b.evidence_bundle = &evidence_a;
-        if (!bench_attach_epoch_witness(&evidence_a))
+        if (!bench_attach_epoch_witness(ctx.service, &ctx.ca_pub, &evidence_a))
         {
             cleanup_session_context(&ctx);
             return 0.0;
@@ -851,7 +888,7 @@ static double measure_secure_session_median(void)
         req_b_to_a.message_len = bind_b_len;
         req_b_to_a.signature = &sig_b;
         req_b_to_a.evidence_bundle = &evidence_b;
-        if (!bench_attach_epoch_witness(&evidence_b))
+        if (!bench_attach_epoch_witness(ctx.service, &ctx.ca_pub, &evidence_b))
         {
             cleanup_session_context(&ctx);
             return 0.0;

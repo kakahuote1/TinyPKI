@@ -501,9 +501,38 @@ sm2_ic_error_t sm2_rev_epoch_switch(sm2_rev_epoch_dir_t **local_directory,
             return SM2_IC_ERR_VERIFY;
         }
         if (incoming_directory->epoch_id == state->epoch_id
+            && incoming_directory->root_record.root_version
+                == state->root_record.root_version
+            && memcmp(incoming_directory->root_record.root_hash,
+                   state->root_record.root_hash, SM2_REV_MERKLE_HASH_LEN)
+                != 0)
+        {
+            return SM2_IC_ERR_VERIFY;
+        }
+        if (incoming_directory->epoch_id == state->epoch_id
             && incoming_directory->patch_version < state->patch_version)
         {
             return SM2_IC_ERR_VERIFY;
+        }
+        if (incoming_directory->epoch_id == state->epoch_id
+            && incoming_directory->patch_version == state->patch_version)
+        {
+            uint8_t incoming_patch_digest[SM2_REV_MERKLE_HASH_LEN];
+            uint8_t state_patch_digest[SM2_REV_MERKLE_HASH_LEN];
+            ret = merkle_calc_patch_digest(incoming_directory->patch_items,
+                incoming_directory->patch_item_count, incoming_patch_digest);
+            if (ret != SM2_IC_SUCCESS)
+                return ret;
+            ret = merkle_calc_patch_digest(state->patch_items,
+                state->patch_item_count, state_patch_digest);
+            if (ret != SM2_IC_SUCCESS)
+                return ret;
+            if (memcmp(incoming_patch_digest, state_patch_digest,
+                    SM2_REV_MERKLE_HASH_LEN)
+                != 0)
+            {
+                return SM2_IC_ERR_VERIFY;
+            }
         }
     }
 
