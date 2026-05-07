@@ -181,10 +181,12 @@ static void test_revocation_phase11_attack_surface_negative_cases(void)
         "Read Tree Root Hash");
 
     revoke_merkle_sig_ctx_t sig_ctx = { &g_ca_priv, &g_ca_pub };
+    const uint8_t authority[] = "BFT_TEST_CA";
     sm2_rev_root_record_t root_record;
     memset(&root_record, 0, sizeof(root_record));
-    TEST_ASSERT(sm2_rev_root_sign(tree, 1000, 1300, revoke_merkle_sign_cb,
-                    &sig_ctx, &root_record)
+    TEST_ASSERT(
+        sm2_rev_root_sign_with_authority(tree, authority, sizeof(authority) - 1,
+            1000, 1300, revoke_merkle_sign_cb, &sig_ctx, &root_record)
             == SM2_IC_SUCCESS,
         "Sign Root Record");
     TEST_ASSERT(sm2_rev_root_verify(

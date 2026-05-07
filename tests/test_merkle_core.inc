@@ -126,8 +126,9 @@ static void test_rev_root_signature_and_light_verify()
     merkle_ca_sig_ctx_t sig_ctx = { &g_ca_priv, &g_ca_pub };
 
     sm2_rev_root_record_t root_record;
-    TEST_ASSERT(sm2_rev_root_sign(
-                    tree, 1000, 2000, merkle_ca_sign_cb, &sig_ctx, &root_record)
+    TEST_ASSERT(sm2_rev_root_sign_with_authority(tree, g_merkle_authority,
+                    sizeof(g_merkle_authority) - 1, 1000, 2000,
+                    merkle_ca_sign_cb, &sig_ctx, &root_record)
             == SM2_IC_SUCCESS,
         "Root Sign");
 
@@ -223,8 +224,9 @@ static void test_rev_multi_proof_roundtrip()
 
     merkle_ca_sig_ctx_t sig_ctx = { &g_ca_priv, &g_ca_pub };
     sm2_rev_root_record_t root_record;
-    TEST_ASSERT(sm2_rev_root_sign(
-                    tree, 1000, 2000, merkle_ca_sign_cb, &sig_ctx, &root_record)
+    TEST_ASSERT(sm2_rev_root_sign_with_authority(tree, g_merkle_authority,
+                    sizeof(g_merkle_authority) - 1, 1000, 2000,
+                    merkle_ca_sign_cb, &sig_ctx, &root_record)
             == SM2_IC_SUCCESS,
         "Sign Root For MultiProof");
     TEST_ASSERT(sm2_rev_multi_proof_verify_with_root(

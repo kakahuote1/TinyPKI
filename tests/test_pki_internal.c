@@ -135,6 +135,133 @@ static void test_phase134_service_revoke_failure_rolls_back_state(void)
     TEST_PASS();
 }
 
+static void test_phase134_service_revoke_epoch_failure_is_atomic(void)
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P134_ATOMIC_REVOKE_CA";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 16, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+
+    const uint8_t identity[] = "P134_ATOMIC_NODE";
+    TEST_ASSERT(sm2_pki_identity_register(service, identity,
+                    sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Identity Register");
+
+    sm2_ic_cert_request_t req;
+    sm2_private_key_t temp_priv;
+    sm2_ic_cert_result_t cert_res;
+    TEST_ASSERT(
+        pki_internal_create_and_authorize_request(service, identity,
+            sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE, &req, &temp_priv),
+        "Create Request");
+    TEST_ASSERT(
+        test_pki_issue_cert(service, &req, &cert_res) == SM2_PKI_SUCCESS,
+        "Issue Cert");
+
+    uint64_t auth_now = test_cert_now(&cert_res.cert);
+    uint64_t rev_version_before = sm2_rev_version(service->rev_ctx);
+    sm2_rev_root_record_t rev_root_before = service->rev_root_record;
+    sm2_rev_root_record_t issuance_before = service->issuance_root_record;
+    sm2_pki_epoch_root_record_t epoch_before = service->epoch_root_record;
+    uint64_t epoch_version_before = service->epoch_version;
+
+    service->epoch_version = UINT64_MAX;
+    TEST_ASSERT(sm2_pki_service_revoke(
+                    service, cert_res.cert.serial_number, auth_now + 10)
+            != SM2_PKI_SUCCESS,
+        "Revoke With Overflow Epoch Reject");
+
+    TEST_ASSERT(sm2_rev_version(service->rev_ctx) == rev_version_before,
+        "Revocation Version Preserved");
+    TEST_ASSERT(memcmp(&service->rev_root_record, &rev_root_before,
+                    sizeof(rev_root_before))
+            == 0,
+        "Revocation Root Preserved");
+    TEST_ASSERT(memcmp(&service->issuance_root_record, &issuance_before,
+                    sizeof(issuance_before))
+            == 0,
+        "Issuance Root Preserved");
+
+    sm2_rev_status_t status = SM2_REV_STATUS_UNKNOWN;
+    sm2_rev_source_t source = SM2_REV_SOURCE_NONE;
+    TEST_ASSERT(
+        sm2_pki_service_check_revocation(service, cert_res.cert.serial_number,
+            auth_now + 11, &status, &source)
+            == SM2_PKI_SUCCESS,
+        "Check After Failed Atomic Revoke");
+    TEST_ASSERT(status == SM2_REV_STATUS_GOOD,
+        "Failed Atomic Revoke Must Not Publish Revoked State");
+
+    service->epoch_version = epoch_version_before;
+    service->epoch_root_record = epoch_before;
+    TEST_ASSERT(sm2_pki_service_revoke(
+                    service, cert_res.cert.serial_number, auth_now + 20)
+            == SM2_PKI_SUCCESS,
+        "Revoke After Restore");
+    TEST_ASSERT(
+        sm2_pki_service_check_revocation(service, cert_res.cert.serial_number,
+            auth_now + 21, &status, &source)
+            == SM2_PKI_SUCCESS,
+        "Check After Revoke");
+    TEST_ASSERT(status == SM2_REV_STATUS_REVOKED, "Restored Revoke Published");
+
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
+static void test_phase134_service_revoke_refreshes_issuance_root(void)
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P134_REVOKE_REFRESH_CA";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 16, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+
+    const uint8_t identity[] = "P134_REVOKE_REFRESH_NODE";
+    TEST_ASSERT(sm2_pki_identity_register(service, identity,
+                    sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Identity Register");
+
+    sm2_ic_cert_request_t req;
+    sm2_private_key_t temp_priv;
+    sm2_ic_cert_result_t cert_res;
+    TEST_ASSERT(
+        pki_internal_create_and_authorize_request(service, identity,
+            sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE, &req, &temp_priv),
+        "Create Request");
+    TEST_ASSERT(
+        test_pki_issue_cert(service, &req, &cert_res) == SM2_PKI_SUCCESS,
+        "Issue Cert");
+
+    uint64_t auth_now = test_cert_now(&cert_res.cert);
+    service->issuance_root_record.valid_until = auth_now - 1U;
+    TEST_ASSERT(sm2_pki_service_revoke(
+                    service, cert_res.cert.serial_number, auth_now + 10)
+            == SM2_PKI_SUCCESS,
+        "Revoke Refreshes Stale Issuance Root");
+    TEST_ASSERT(service->issuance_root_record.valid_until >= auth_now + 10,
+        "Issuance Root Re-signed");
+
+    sm2_rev_status_t status = SM2_REV_STATUS_UNKNOWN;
+    sm2_rev_source_t source = SM2_REV_SOURCE_NONE;
+    TEST_ASSERT(
+        sm2_pki_service_check_revocation(service, cert_res.cert.serial_number,
+            auth_now + 11, &status, &source)
+            == SM2_PKI_SUCCESS,
+        "Check After Revoke");
+    TEST_ASSERT(status == SM2_REV_STATUS_REVOKED, "Revoke Published");
+
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
 static void test_phase135_service_issue_failure_rolls_back_state(void)
 {
     sm2_pki_service_ctx_t *service = NULL;
@@ -246,6 +373,8 @@ void run_test_pki_internal_suite(void)
 {
     RUN_TEST(test_phase7_service_ca_key_range_check);
     RUN_TEST(test_phase134_service_revoke_failure_rolls_back_state);
+    RUN_TEST(test_phase134_service_revoke_epoch_failure_is_atomic);
+    RUN_TEST(test_phase134_service_revoke_refreshes_issuance_root);
     RUN_TEST(test_phase135_service_issue_failure_rolls_back_state);
     RUN_TEST(test_phase136_fresh_root_record_matches_sync_state);
 }

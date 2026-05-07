@@ -421,11 +421,11 @@ static void test_auth_forward_secure_session_key()
                     transcript1, sizeof(transcript1) - 1, bind_b1, &bind_b1_len)
             == SM2_IC_SUCCESS,
         "Build Bind B1");
-    TEST_ASSERT(sm2_auth_sign(&priv_a, bind_a1, bind_a1_len, &sig_a)
-            == SM2_IC_SUCCESS,
+    TEST_ASSERT(
+        sm2_auth_sign(&priv_a, bind_a1, bind_a1_len, &sig_a) == SM2_IC_SUCCESS,
         "Sign Bind A1");
-    TEST_ASSERT(sm2_auth_sign(&priv_b, bind_b1, bind_b1_len, &sig_b)
-            == SM2_IC_SUCCESS,
+    TEST_ASSERT(
+        sm2_auth_sign(&priv_b, bind_b1, bind_b1_len, &sig_b) == SM2_IC_SUCCESS,
         "Sign Bind B1");
     a_to_b.message = bind_a1;
     a_to_b.message_len = bind_a1_len;
@@ -465,11 +465,11 @@ static void test_auth_forward_secure_session_key()
                     transcript1, sizeof(transcript1) - 1, bind_b2, &bind_b2_len)
             == SM2_IC_SUCCESS,
         "Build Bind B2");
-    TEST_ASSERT(sm2_auth_sign(&priv_a, bind_a2, bind_a2_len, &sig_a)
-            == SM2_IC_SUCCESS,
+    TEST_ASSERT(
+        sm2_auth_sign(&priv_a, bind_a2, bind_a2_len, &sig_a) == SM2_IC_SUCCESS,
         "Sign Bind A2");
-    TEST_ASSERT(sm2_auth_sign(&priv_b, bind_b2, bind_b2_len, &sig_b)
-            == SM2_IC_SUCCESS,
+    TEST_ASSERT(
+        sm2_auth_sign(&priv_b, bind_b2, bind_b2_len, &sig_b) == SM2_IC_SUCCESS,
         "Sign Bind B2");
     a_to_b.message = bind_a2;
     a_to_b.message_len = bind_a2_len;
@@ -524,6 +524,19 @@ static void test_auth_aead_integrity()
         size_t cipher_len = sizeof(cipher);
         uint8_t tag[SM2_AUTH_AEAD_TAG_MAX_LEN];
         size_t tag_len = sizeof(tag);
+        uint8_t short_iv[SM2_AUTH_AEAD_IV_LEN - 1] = { 0 };
+        size_t bad_tag_len = 8;
+        size_t bad_cipher_len = sizeof(cipher);
+        TEST_ASSERT(sm2_auth_encrypt(modes[i], key, short_iv, sizeof(short_iv),
+                        aad, sizeof(aad) - 1, plain, sizeof(plain) - 1, cipher,
+                        &bad_cipher_len, tag, &tag_len)
+                == SM2_IC_ERR_PARAM,
+            "AEAD Short IV Reject");
+        TEST_ASSERT(sm2_auth_encrypt(modes[i], key, iv, sizeof(iv), aad,
+                        sizeof(aad) - 1, plain, sizeof(plain) - 1, cipher,
+                        &bad_cipher_len, tag, &bad_tag_len)
+                == SM2_IC_ERR_PARAM,
+            "AEAD Short Tag Reject");
 
         int supported = test_auth_aead_mode_available(modes[i]);
         sm2_ic_error_t enc_ret = sm2_auth_encrypt(modes[i], key, iv, sizeof(iv),
@@ -552,6 +565,18 @@ static void test_auth_aead_integrity()
         TEST_ASSERT(recover_len == sizeof(plain) - 1, "AEAD Recover Len");
         TEST_ASSERT(memcmp(recover, plain, sizeof(plain) - 1) == 0,
             "AEAD Recover Plain");
+        recover_len = sizeof(recover);
+        TEST_ASSERT(sm2_auth_decrypt(modes[i], key, short_iv, sizeof(short_iv),
+                        aad, sizeof(aad) - 1, cipher, cipher_len, tag, tag_len,
+                        recover, &recover_len)
+                == SM2_IC_ERR_PARAM,
+            "AEAD Decrypt Short IV Reject");
+        recover_len = sizeof(recover);
+        TEST_ASSERT(sm2_auth_decrypt(modes[i], key, iv, sizeof(iv), aad,
+                        sizeof(aad) - 1, cipher, cipher_len, tag, 8, recover,
+                        &recover_len)
+                == SM2_IC_ERR_PARAM,
+            "AEAD Decrypt Short Tag Reject");
 
         cipher[0] ^= 0x80;
         recover_len = sizeof(recover);

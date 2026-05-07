@@ -1017,7 +1017,7 @@ sm2_ic_error_t sm2_rev_root_sign_with_authority(const sm2_rev_tree_t *tree,
 {
     if (!tree || !sign_fn || !root_record)
         return SM2_IC_ERR_PARAM;
-    if ((!authority_id && authority_id_len > 0)
+    if (!authority_id || authority_id_len == 0
         || authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN
         || valid_until < valid_from)
     {
@@ -1052,14 +1052,6 @@ sm2_ic_error_t sm2_rev_root_sign_with_authority(const sm2_rev_tree_t *tree,
     return SM2_IC_SUCCESS;
 }
 
-sm2_ic_error_t sm2_rev_root_sign(const sm2_rev_tree_t *tree,
-    uint64_t valid_from, uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn,
-    void *sign_user_ctx, sm2_rev_root_record_t *root_record)
-{
-    return sm2_rev_root_sign_with_authority(tree, NULL, 0, valid_from,
-        valid_until, sign_fn, sign_user_ctx, root_record);
-}
-
 sm2_ic_error_t sm2_rev_root_verify(const sm2_rev_root_record_t *root_record,
     uint64_t now_ts, sm2_rev_sync_verify_fn verify_fn, void *verify_user_ctx)
 {
@@ -1069,6 +1061,7 @@ sm2_ic_error_t sm2_rev_root_verify(const sm2_rev_root_record_t *root_record,
         || root_record->signature_len > sizeof(root_record->signature)
         || root_record->valid_until < root_record->valid_from
         || now_ts < root_record->valid_from || now_ts > root_record->valid_until
+        || root_record->authority_id_len == 0
         || root_record->authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
     {
         return SM2_IC_ERR_VERIFY;
