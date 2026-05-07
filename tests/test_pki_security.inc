@@ -1234,6 +1234,16 @@ static void test_phase141_issuance_transparency_required_and_threshold()
         witnesses[i].witness_id_len = wid_lens[i];
         witnesses[i].public_key = witness_pub[i];
     }
+    sm2_pki_transparency_witness_t duplicate_key_witnesses[2];
+    duplicate_key_witnesses[0] = witnesses[0];
+    duplicate_key_witnesses[1] = witnesses[1];
+    duplicate_key_witnesses[1].public_key = witnesses[0].public_key;
+    sm2_pki_transparency_policy_t duplicate_key_policy
+        = { duplicate_key_witnesses, 2, 2 };
+    TEST_ASSERT(
+        sm2_pki_client_set_transparency_policy(verifier, &duplicate_key_policy)
+            == SM2_PKI_ERR_PARAM,
+        "Duplicate Witness Public Key Reject");
     sm2_pki_transparency_policy_t policy
         = { witnesses, sizeof(witnesses) / sizeof(witnesses[0]), 2 };
     TEST_ASSERT(sm2_pki_client_set_transparency_policy(verifier, &policy)

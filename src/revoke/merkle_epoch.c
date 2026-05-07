@@ -211,7 +211,7 @@ sm2_ic_error_t sm2_rev_epoch_dir_build_with_authority(
 {
     if (!tree || !directory || !sign_fn)
         return SM2_IC_ERR_PARAM;
-    if ((!authority_id && authority_id_len > 0)
+    if (!authority_id || authority_id_len == 0
         || authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
     {
         return SM2_IC_ERR_PARAM;
@@ -261,15 +261,6 @@ sm2_ic_error_t sm2_rev_epoch_dir_build_with_authority(
 
     state->directory_signature_len = sig_len;
     return SM2_IC_SUCCESS;
-}
-
-sm2_ic_error_t sm2_rev_epoch_dir_build(const sm2_rev_tree_t *tree,
-    uint64_t epoch_id, uint64_t valid_from, uint64_t valid_until,
-    sm2_rev_sync_sign_fn sign_fn, void *sign_user_ctx,
-    sm2_rev_epoch_dir_t **directory)
-{
-    return sm2_rev_epoch_dir_build_with_authority(tree, epoch_id, NULL, 0,
-        valid_from, valid_until, sign_fn, sign_user_ctx, directory);
 }
 
 sm2_ic_error_t sm2_rev_epoch_dir_verify(const sm2_rev_epoch_dir_t *directory,

@@ -15,8 +15,9 @@
 
     merkle_ca_sig_ctx_t sig_ctx = { &g_ca_priv, &g_ca_pub };
     sm2_rev_epoch_dir_t *dir = NULL;
-    TEST_ASSERT(sm2_rev_epoch_dir_build(
-                    tree, 42, 1000, 2000, merkle_ca_sign_cb, &sig_ctx, &dir)
+    TEST_ASSERT(sm2_rev_epoch_dir_build_with_authority(tree, 42,
+                    g_merkle_authority, sizeof(g_merkle_authority) - 1, 1000,
+                    2000, merkle_ca_sign_cb, &sig_ctx, &dir)
             == SM2_IC_SUCCESS,
         "Build Epoch Directory");
 
@@ -94,8 +95,9 @@ static void test_rev_epoch_patch_priority()
 
     merkle_ca_sig_ctx_t sig_ctx = { &g_ca_priv, &g_ca_pub };
     sm2_rev_epoch_dir_t *dir = NULL;
-    TEST_ASSERT(sm2_rev_epoch_dir_build(
-                    tree, 50, 1000, 2000, merkle_ca_sign_cb, &sig_ctx, &dir)
+    TEST_ASSERT(sm2_rev_epoch_dir_build_with_authority(tree, 50,
+                    g_merkle_authority, sizeof(g_merkle_authority) - 1, 1000,
+                    2000, merkle_ca_sign_cb, &sig_ctx, &dir)
             == SM2_IC_SUCCESS,
         "Build Epoch Directory");
 
@@ -166,16 +168,19 @@ static void test_rev_epoch_switch_monotonic()
     sm2_rev_epoch_dir_t *d_conflict = NULL;
     sm2_rev_epoch_dir_t *local = NULL;
 
-    TEST_ASSERT(sm2_rev_epoch_dir_build(
-                    t1, 60, 1000, 3000, merkle_ca_sign_cb, &sig_ctx, &d1)
+    TEST_ASSERT(sm2_rev_epoch_dir_build_with_authority(t1, 60,
+                    g_merkle_authority, sizeof(g_merkle_authority) - 1, 1000,
+                    3000, merkle_ca_sign_cb, &sig_ctx, &d1)
             == SM2_IC_SUCCESS,
         "Build D1");
-    TEST_ASSERT(sm2_rev_epoch_dir_build(
-                    t2, 61, 1000, 3000, merkle_ca_sign_cb, &sig_ctx, &d2)
+    TEST_ASSERT(sm2_rev_epoch_dir_build_with_authority(t2, 61,
+                    g_merkle_authority, sizeof(g_merkle_authority) - 1, 1000,
+                    3000, merkle_ca_sign_cb, &sig_ctx, &d2)
             == SM2_IC_SUCCESS,
         "Build D2");
-    TEST_ASSERT(sm2_rev_epoch_dir_build(t_conflict, 60, 1000, 3000,
-                    merkle_ca_sign_cb, &sig_ctx, &d_conflict)
+    TEST_ASSERT(sm2_rev_epoch_dir_build_with_authority(t_conflict, 60,
+                    g_merkle_authority, sizeof(g_merkle_authority) - 1, 1000,
+                    3000, merkle_ca_sign_cb, &sig_ctx, &d_conflict)
             == SM2_IC_SUCCESS,
         "Build Conflicting D1");
 
@@ -308,8 +313,9 @@ static void test_rev_phase8_metric_bundle()
 
     merkle_ca_sig_ctx_t sig_ctx = { &g_ca_priv, &g_ca_pub };
     sm2_rev_epoch_dir_t *dir = NULL;
-    TEST_ASSERT(sm2_rev_epoch_dir_build(
-                    tree, 66, 1000, 3000, merkle_ca_sign_cb, &sig_ctx, &dir)
+    TEST_ASSERT(sm2_rev_epoch_dir_build_with_authority(tree, 66,
+                    g_merkle_authority, sizeof(g_merkle_authority) - 1, 1000,
+                    3000, merkle_ca_sign_cb, &sig_ctx, &dir)
             == SM2_IC_SUCCESS,
         "Build Metric Epoch Directory");
 

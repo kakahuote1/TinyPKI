@@ -581,7 +581,8 @@ sm2_ic_error_t sm2_rev_root_encode(const sm2_rev_root_record_t *root_record,
 {
     if (!root_record || !output || !output_len)
         return SM2_IC_ERR_PARAM;
-    if (root_record->authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
+    if (root_record->authority_id_len == 0
+        || root_record->authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
         return SM2_IC_ERR_PARAM;
     if (root_record->signature_len == 0
         || root_record->signature_len > sizeof(root_record->signature))
@@ -641,18 +642,15 @@ sm2_ic_error_t sm2_rev_root_decode(
     uint64_t arr_len = 0;
     sm2_ic_error_t ret
         = cbor_get_type_value(input, input_len, &off, &major, &arr_len);
-    if (ret != SM2_IC_SUCCESS || major != 4 || (arr_len != 5 && arr_len != 6))
+    if (ret != SM2_IC_SUCCESS || major != 4 || arr_len != 6)
         return SM2_IC_ERR_CBOR;
 
-    if (arr_len == 6)
-    {
-        size_t authority_id_len = 0;
-        ret = cbor_get_bytes(input, input_len, &off, root_record->authority_id,
-            SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN, &authority_id_len);
-        if (ret != SM2_IC_SUCCESS)
-            return SM2_IC_ERR_CBOR;
-        root_record->authority_id_len = authority_id_len;
-    }
+    size_t authority_id_len = 0;
+    ret = cbor_get_bytes(input, input_len, &off, root_record->authority_id,
+        SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN, &authority_id_len);
+    if (ret != SM2_IC_SUCCESS || authority_id_len == 0)
+        return SM2_IC_ERR_CBOR;
+    root_record->authority_id_len = authority_id_len;
 
     ret = cbor_get_type_value(
         input, input_len, &off, &major, &root_record->root_version);

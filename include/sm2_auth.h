@@ -22,6 +22,8 @@ extern "C"
 
 #define SM2_AUTH_MAX_SIG_DER_LEN 96
 #define SM2_AUTH_MAX_CA_STORE 16
+#define SM2_AUTH_AEAD_IV_LEN 12
+#define SM2_AUTH_AEAD_TAG_LEN 16
 #define SM2_AUTH_AEAD_TAG_MAX_LEN 16
 
     typedef struct

@@ -1310,11 +1310,12 @@ sm2_ic_error_t sm2_auth_encrypt(sm2_auth_aead_mode_t mode,
     size_t aad_len, const uint8_t *plaintext, size_t plaintext_len,
     uint8_t *ciphertext, size_t *ciphertext_len, uint8_t *tag, size_t *tag_len)
 {
-    if (!key || !iv || iv_len == 0 || !ciphertext || !ciphertext_len || !tag
-        || !tag_len)
+    if (!key || !iv || !ciphertext || !ciphertext_len || !tag || !tag_len)
     {
         return SM2_IC_ERR_PARAM;
     }
+    if (iv_len != SM2_AUTH_AEAD_IV_LEN)
+        return SM2_IC_ERR_PARAM;
     if (plaintext_len > 0 && !plaintext)
         return SM2_IC_ERR_PARAM;
     if (aad_len > 0 && !aad)
@@ -1322,8 +1323,8 @@ sm2_ic_error_t sm2_auth_encrypt(sm2_auth_aead_mode_t mode,
     if (*ciphertext_len < plaintext_len)
         return SM2_IC_ERR_MEMORY;
 
-    size_t actual_tag_len = (*tag_len == 0) ? 16 : *tag_len;
-    if (actual_tag_len < 8 || actual_tag_len > SM2_AUTH_AEAD_TAG_MAX_LEN)
+    size_t actual_tag_len = (*tag_len == 0) ? SM2_AUTH_AEAD_TAG_LEN : *tag_len;
+    if (actual_tag_len != SM2_AUTH_AEAD_TAG_LEN)
         return SM2_IC_ERR_PARAM;
 
     int iv_len_i = 0;
@@ -1415,14 +1416,15 @@ sm2_ic_error_t sm2_auth_decrypt(sm2_auth_aead_mode_t mode,
     const uint8_t *tag, size_t tag_len, uint8_t *plaintext,
     size_t *plaintext_len)
 {
-    if (!key || !iv || iv_len == 0 || !ciphertext || !tag || !plaintext
-        || !plaintext_len)
+    if (!key || !iv || !ciphertext || !tag || !plaintext || !plaintext_len)
     {
         return SM2_IC_ERR_PARAM;
     }
+    if (iv_len != SM2_AUTH_AEAD_IV_LEN)
+        return SM2_IC_ERR_PARAM;
     if (aad_len > 0 && !aad)
         return SM2_IC_ERR_PARAM;
-    if (tag_len < 8 || tag_len > SM2_AUTH_AEAD_TAG_MAX_LEN)
+    if (tag_len != SM2_AUTH_AEAD_TAG_LEN)
         return SM2_IC_ERR_PARAM;
     if (*plaintext_len < ciphertext_len)
         return SM2_IC_ERR_MEMORY;

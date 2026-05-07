@@ -288,6 +288,13 @@ static bool pki_client_witness_id_valid(
         && witness_id_len <= SM2_PKI_TRANSPARENCY_WITNESS_ID_MAX_LEN;
 }
 
+static bool pki_client_public_keys_equal(
+    const sm2_ec_point_t *a, const sm2_ec_point_t *b)
+{
+    return a && b && memcmp(a->x, b->x, sizeof(a->x)) == 0
+        && memcmp(a->y, b->y, sizeof(a->y)) == 0;
+}
+
 static sm2_pki_error_t pki_client_validate_transparency_policy(
     const sm2_pki_transparency_policy_t *policy)
 {
@@ -313,6 +320,11 @@ static sm2_pki_error_t pki_client_validate_transparency_policy(
                 && memcmp(witness->witness_id, policy->witnesses[j].witness_id,
                        witness->witness_id_len)
                     == 0)
+            {
+                return SM2_PKI_ERR_PARAM;
+            }
+            if (pki_client_public_keys_equal(
+                    &witness->public_key, &policy->witnesses[j].public_key))
             {
                 return SM2_PKI_ERR_PARAM;
             }
@@ -345,6 +357,8 @@ static sm2_pki_error_t pki_client_verify_witness_signature_set(
     {
         return SM2_PKI_ERR_VERIFY;
     }
+    if (pki_client_validate_transparency_policy(policy) != SM2_PKI_SUCCESS)
+        return SM2_PKI_ERR_VERIFY;
 
     memset(used, 0, sizeof(used));
 

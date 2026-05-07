@@ -13,6 +13,8 @@ typedef struct
     const sm2_ec_point_t *ca_pub;
 } merkle_ca_sig_ctx_t;
 
+static const uint8_t g_merkle_authority[] = "MERKLE_TEST_CA";
+
 static sm2_ic_error_t merkle_ca_sign_cb(void *user_ctx, const uint8_t *data,
     size_t data_len, uint8_t *signature, size_t *signature_len)
 {

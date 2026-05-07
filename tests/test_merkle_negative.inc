@@ -22,8 +22,9 @@ static void test_merkle_expired_root_record_rejected(void)
 
     merkle_ca_sig_ctx_t ctx = { &g_ca_priv, &g_ca_pub };
     sm2_rev_root_record_t root;
-    TEST_ASSERT(
-        sm2_rev_root_sign(tree, 1000, 2000, merkle_ca_sign_cb, &ctx, &root)
+    TEST_ASSERT(sm2_rev_root_sign_with_authority(tree, g_merkle_authority,
+                    sizeof(g_merkle_authority) - 1, 1000, 2000,
+                    merkle_ca_sign_cb, &ctx, &root)
             == SM2_IC_SUCCESS,
         "Sign root");
 
@@ -45,8 +46,9 @@ static void test_merkle_hot_patch_stale_version_rejected(void)
 
     merkle_ca_sig_ctx_t ctx = { &g_ca_priv, &g_ca_pub };
     sm2_rev_epoch_dir_t *dir = NULL;
-    TEST_ASSERT(sm2_rev_epoch_dir_build(
-                    tree, 1, 1000, 9000, merkle_ca_sign_cb, &ctx, &dir)
+    TEST_ASSERT(sm2_rev_epoch_dir_build_with_authority(tree, 1,
+                    g_merkle_authority, sizeof(g_merkle_authority) - 1, 1000,
+                    9000, merkle_ca_sign_cb, &ctx, &dir)
             == SM2_IC_SUCCESS,
         "Build epoch dir");
 
