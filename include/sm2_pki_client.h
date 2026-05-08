@@ -39,6 +39,14 @@ extern "C"
     typedef struct
     {
         sm2_pki_epoch_root_record_t epoch_root_record;
+        sm2_pki_transparency_witness_signature_t
+            witness_signatures[SM2_PKI_TRANSPARENCY_MAX_WITNESSES];
+        size_t witness_signature_count;
+    } sm2_pki_epoch_checkpoint_t;
+
+    typedef struct
+    {
+        sm2_pki_epoch_root_record_t epoch_root_record;
         sm2_pki_epoch_revocation_proof_t revocation_proof;
         sm2_pki_epoch_issuance_proof_t issuance_proof;
         sm2_pki_transparency_witness_signature_t
@@ -72,6 +80,13 @@ extern "C"
     /* Sets the verifier-side t-of-n witness policy required for verify. */
     sm2_pki_error_t sm2_pki_client_set_transparency_policy(
         sm2_pki_client_ctx_t *ctx, const sm2_pki_transparency_policy_t *policy);
+
+    /* Imports a CA-broadcast epoch checkpoint into the local cache. */
+    /* Checks CA signature and witness threshold before caching. */
+    /* Verify only accepts evidence anchored to a cached checkpoint. */
+    sm2_pki_error_t sm2_pki_client_import_epoch_checkpoint(
+        sm2_pki_client_ctx_t *ctx, const sm2_pki_epoch_checkpoint_t *checkpoint,
+        uint64_t now_ts);
 
     sm2_pki_error_t sm2_pki_client_get_cert(
         const sm2_pki_client_ctx_t *ctx, const sm2_implicit_cert_t **cert);

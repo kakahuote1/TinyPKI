@@ -291,6 +291,22 @@ static int bench_attach_epoch_witness(const sm2_pki_service_ctx_t *service,
     return 1;
 }
 
+static int bench_import_epoch_checkpoint_from_evidence(
+    sm2_pki_client_ctx_t *client, const sm2_pki_evidence_bundle_t *evidence,
+    uint64_t now_ts)
+{
+    if (!client || !evidence)
+        return 0;
+    sm2_pki_epoch_checkpoint_t checkpoint;
+    memset(&checkpoint, 0, sizeof(checkpoint));
+    checkpoint.epoch_root_record = evidence->epoch_root_record;
+    memcpy(checkpoint.witness_signatures, evidence->witness_signatures,
+        sizeof(checkpoint.witness_signatures));
+    checkpoint.witness_signature_count = evidence->witness_signature_count;
+    return sm2_pki_client_import_epoch_checkpoint(client, &checkpoint, now_ts)
+        == SM2_PKI_SUCCESS;
+}
+
 static int build_signed_verify_request(const sm2_pki_service_ctx_t *service,
     const sm2_ec_point_t *ca_public_key, sm2_pki_client_ctx_t *signer,
     const uint8_t *message, size_t message_len, uint64_t now_ts,
@@ -418,8 +434,10 @@ static int build_flow_context(bench_flow_ctx_t *ctx)
         ? ctx->cert_result.cert.valid_from
         : current_unix_ts();
     return build_signed_verify_request(ctx->service, &ctx->ca_pub, ctx->client,
-        ctx->message, ctx->message_len, ctx->auth_now, &ctx->signature,
-        &ctx->evidence, &ctx->verify_request);
+               ctx->message, ctx->message_len, ctx->auth_now, &ctx->signature,
+               &ctx->evidence, &ctx->verify_request)
+        && bench_import_epoch_checkpoint_from_evidence(
+            ctx->verifier, &ctx->evidence, ctx->auth_now);
 }
 
 static void cleanup_flow_context(bench_flow_ctx_t *ctx)
@@ -889,6 +907,14 @@ static double measure_secure_session_median(void)
         req_b_to_a.signature = &sig_b;
         req_b_to_a.evidence_bundle = &evidence_b;
         if (!bench_attach_epoch_witness(ctx.service, &ctx.ca_pub, &evidence_b))
+        {
+            cleanup_session_context(&ctx);
+            return 0.0;
+        }
+        if (!bench_import_epoch_checkpoint_from_evidence(
+                ctx.client_a, &evidence_b, ctx.auth_now)
+            || !bench_import_epoch_checkpoint_from_evidence(
+                ctx.client_b, &evidence_a, ctx.auth_now))
         {
             cleanup_session_context(&ctx);
             return 0.0;

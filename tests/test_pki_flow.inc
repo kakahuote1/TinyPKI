@@ -217,6 +217,9 @@ static void test_phase4_revocation_epoch_and_cross_domain()
     TEST_ASSERT(pki_build_signed_verify_request(client_b, msg, sizeof(msg) - 1,
                     auth_now + 20, &sig_b, &evidence_b, &req_auth),
         "Build Cross Verify Request");
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
+                    verifier, &evidence_b, auth_now + 20),
+        "Verifier Imports CA_B Checkpoint");
 
     size_t matched = 0;
     TEST_ASSERT(sm2_pki_verify(verifier, &req_auth, auth_now + 20, &matched)

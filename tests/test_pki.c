@@ -275,6 +275,23 @@ static int pki_attach_default_epoch_witness(
     return 1;
 }
 
+static int pki_import_epoch_checkpoint_from_evidence(
+    sm2_pki_client_ctx_t *client, const sm2_pki_evidence_bundle_t *evidence,
+    uint64_t now_ts)
+{
+    if (!client || !evidence)
+        return 0;
+
+    sm2_pki_epoch_checkpoint_t checkpoint;
+    memset(&checkpoint, 0, sizeof(checkpoint));
+    checkpoint.epoch_root_record = evidence->epoch_root_record;
+    memcpy(checkpoint.witness_signatures, evidence->witness_signatures,
+        sizeof(checkpoint.witness_signatures));
+    checkpoint.witness_signature_count = evidence->witness_signature_count;
+    return sm2_pki_client_import_epoch_checkpoint(client, &checkpoint, now_ts)
+        == SM2_PKI_SUCCESS;
+}
+
 static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     const uint8_t *message, size_t message_len, uint64_t now_ts,
     sm2_auth_signature_t *signature, sm2_pki_evidence_bundle_t *evidence,
@@ -310,7 +327,7 @@ static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
     if (!pki_attach_default_epoch_witness(signer, evidence)
         || !pki_configure_default_transparency_policy(signer))
         return 0;
-    return 1;
+    return pki_import_epoch_checkpoint_from_evidence(signer, evidence, now_ts);
 }
 
 /* Split by theme to keep PKI tests focused on flow, revocation and security

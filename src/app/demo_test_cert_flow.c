@@ -168,6 +168,15 @@ int main(void)
     if (!check_pki(err, "Witness Sign Epoch Root"))
         goto cleanup;
     evidence.witness_signature_count = 1;
+    sm2_pki_epoch_checkpoint_t checkpoint;
+    memset(&checkpoint, 0, sizeof(checkpoint));
+    checkpoint.epoch_root_record = evidence.epoch_root_record;
+    memcpy(checkpoint.witness_signatures, evidence.witness_signatures,
+        sizeof(checkpoint.witness_signatures));
+    checkpoint.witness_signature_count = evidence.witness_signature_count;
+    err = sm2_pki_client_import_epoch_checkpoint(cli, &checkpoint, auth_now);
+    if (!check_pki(err, "Import Epoch Checkpoint"))
+        goto cleanup;
     auth_req.evidence_bundle = &evidence;
 
     err = sm2_pki_verify(cli, &auth_req, auth_now, &matched_idx);

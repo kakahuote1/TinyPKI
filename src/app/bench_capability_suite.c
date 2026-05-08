@@ -728,6 +728,22 @@ static int attach_witness(capability_flow_ctx_t *ctx)
     return 1;
 }
 
+static int import_evidence_checkpoint(
+    capability_flow_ctx_t *ctx, sm2_pki_client_ctx_t *client)
+{
+    if (!ctx || !client)
+        return 0;
+    sm2_pki_epoch_checkpoint_t checkpoint;
+    memset(&checkpoint, 0, sizeof(checkpoint));
+    checkpoint.epoch_root_record = ctx->evidence.epoch_root_record;
+    memcpy(checkpoint.witness_signatures, ctx->evidence.witness_signatures,
+        sizeof(checkpoint.witness_signatures));
+    checkpoint.witness_signature_count = ctx->evidence.witness_signature_count;
+    return sm2_pki_client_import_epoch_checkpoint(
+               client, &checkpoint, ctx->auth_now)
+        == SM2_PKI_SUCCESS;
+}
+
 static int build_flow(capability_flow_ctx_t *ctx)
 {
     const uint8_t issuer[] = "CAPABILITY_CA";
@@ -821,7 +837,8 @@ static int build_flow(capability_flow_ctx_t *ctx)
     ctx->request.message_len = ctx->message_len;
     ctx->request.signature = &ctx->signature;
     ctx->request.evidence_bundle = &ctx->evidence;
-    return attach_witness(ctx);
+    return attach_witness(ctx)
+        && import_evidence_checkpoint(ctx, ctx->verifier);
 }
 
 static void cleanup_flow(capability_flow_ctx_t *ctx)
