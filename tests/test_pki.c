@@ -338,6 +338,7 @@ void run_test_pki_suite(void)
     RUN_TEST(test_phase133_revocation_service_binding_lifecycle);
     RUN_TEST(test_phase134_pki_verify_requires_epoch_bundle);
     RUN_TEST(test_phase137_client_epoch_cache_refresh_and_rollback);
+    RUN_TEST(test_phase137_epoch_cache_survives_local_cert_import);
     RUN_TEST(test_phase138_service_binding_tracks_newer_root_versions);
     RUN_TEST(test_phase140_epoch_bundle_requires_matching_checkpoint);
     RUN_TEST(test_phase141_issuance_transparency_required_and_threshold);

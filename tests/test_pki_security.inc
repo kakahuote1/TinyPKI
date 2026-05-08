@@ -903,6 +903,104 @@ static void test_phase137_client_epoch_cache_refresh_and_rollback()
     TEST_PASS();
 }
 
+static void test_phase137_epoch_cache_survives_local_cert_import()
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P137_IMPORT_CACHE_CA";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 32, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+
+    const uint8_t peer_identity[] = "P137_IMPORT_PEER";
+    const uint8_t local_identity[] = "P137_IMPORT_LOCAL";
+    TEST_ASSERT(sm2_pki_identity_register(service, peer_identity,
+                    sizeof(peer_identity) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Peer Identity Register");
+    TEST_ASSERT(sm2_pki_identity_register(service, local_identity,
+                    sizeof(local_identity) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Local Identity Register");
+
+    sm2_private_key_t peer_temp;
+    sm2_private_key_t local_temp;
+    sm2_ic_cert_result_t peer_cert;
+    sm2_ic_cert_result_t local_cert;
+    TEST_ASSERT(pki_issue_identity_cert(service, peer_identity,
+                    sizeof(peer_identity) - 1, SM2_KU_DIGITAL_SIGNATURE,
+                    &peer_cert, &peer_temp),
+        "Issue Peer Cert");
+    TEST_ASSERT(pki_issue_identity_cert(service, local_identity,
+                    sizeof(local_identity) - 1, SM2_KU_DIGITAL_SIGNATURE,
+                    &local_cert, &local_temp),
+        "Issue Local Cert");
+
+    sm2_ec_point_t ca_pub;
+    TEST_ASSERT(
+        sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
+        "Get CA Pub");
+
+    sm2_pki_client_ctx_t *peer = NULL;
+    sm2_pki_client_ctx_t *verifier = NULL;
+    TEST_ASSERT(sm2_pki_client_create(&peer, &ca_pub, service)
+            == SM2_PKI_SUCCESS,
+        "Peer Init");
+    TEST_ASSERT(sm2_pki_client_import_cert(peer, &peer_cert, &peer_temp, &ca_pub)
+            == SM2_PKI_SUCCESS,
+        "Peer Import");
+    TEST_ASSERT(sm2_pki_client_create(&verifier, &ca_pub, NULL)
+            == SM2_PKI_SUCCESS,
+        "Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Verifier Witness Policy");
+
+    const uint8_t msg[] = "P137_IMPORT_CACHE";
+    uint64_t auth_now = test_cert_now(&peer_cert.cert);
+    sm2_auth_signature_t sig_initial;
+    sm2_auth_signature_t sig_refreshed;
+    sm2_pki_evidence_bundle_t evidence_initial;
+    sm2_pki_evidence_bundle_t evidence_refreshed;
+    sm2_pki_verify_request_t request_initial;
+    sm2_pki_verify_request_t request_refreshed;
+    TEST_ASSERT(
+        pki_build_signed_verify_request(peer, msg, sizeof(msg) - 1, auth_now,
+            &sig_initial, &evidence_initial, &request_initial),
+        "Build Initial Request");
+
+    size_t matched = 0;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request_initial, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Verify Initial Epoch");
+
+    TEST_ASSERT(
+        sm2_pki_service_refresh_root(service, auth_now + 10) == SM2_PKI_SUCCESS,
+        "Refresh Epoch Root");
+    TEST_ASSERT(pki_build_signed_verify_request(peer, msg, sizeof(msg) - 1,
+                    auth_now + 10, &sig_refreshed, &evidence_refreshed,
+                    &request_refreshed),
+        "Build Refreshed Request");
+    TEST_ASSERT(
+        sm2_pki_verify(verifier, &request_refreshed, auth_now + 10, &matched)
+            == SM2_PKI_SUCCESS,
+        "Verify Refreshed Epoch");
+
+    TEST_ASSERT(
+        sm2_pki_client_import_cert(verifier, &local_cert, &local_temp, &ca_pub)
+            == SM2_PKI_SUCCESS,
+        "Verifier Local Import");
+    TEST_ASSERT(
+        sm2_pki_verify(verifier, &request_initial, auth_now + 10, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Local Import Must Preserve Epoch Anti-Rollback");
+
+    sm2_pki_client_destroy(&verifier);
+    sm2_pki_client_destroy(&peer);
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
 static void test_phase138_service_binding_tracks_newer_root_versions()
 {
     sm2_pki_service_ctx_t *service = NULL;

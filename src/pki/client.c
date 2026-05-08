@@ -127,6 +127,68 @@ static sm2_pki_epoch_cache_entry_t *pki_client_ensure_epoch_root_cache_entry(
     return NULL;
 }
 
+static sm2_pki_error_t pki_client_check_epoch_root_freshness(
+    const sm2_pki_epoch_cache_entry_t *entry,
+    const sm2_pki_epoch_root_record_t *root_record,
+    const uint8_t epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN],
+    size_t matched_ca_index)
+{
+    if (!entry || !root_record || !epoch_digest)
+        return SM2_PKI_ERR_PARAM;
+
+    if (root_record->epoch_version < entry->highest_seen_epoch_version)
+        return SM2_PKI_ERR_VERIFY;
+    if (entry->has_epoch_record
+        && root_record->epoch_version == entry->highest_seen_epoch_version
+        && memcmp(
+               epoch_digest, entry->epoch_digest, SM2_PKI_EPOCH_ROOT_DIGEST_LEN)
+            != 0)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+    if (entry->has_pinned_ca_index
+        && entry->pinned_ca_index != matched_ca_index)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+    if (entry->has_revocation_root)
+    {
+        if (root_record->revocation_root_version
+            < entry->highest_seen_revocation_root_version)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+        if (root_record->revocation_root_version
+                == entry->highest_seen_revocation_root_version
+            && memcmp(root_record->revocation_root_hash,
+                   entry->latest_revocation_root_hash,
+                   sizeof(root_record->revocation_root_hash))
+                != 0)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+    }
+    if (entry->has_issuance_root)
+    {
+        if (root_record->issuance_root_version
+            < entry->highest_seen_issuance_root_version)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+        if (root_record->issuance_root_version
+                == entry->highest_seen_issuance_root_version
+            && memcmp(root_record->issuance_root_hash,
+                   entry->latest_issuance_root_hash,
+                   sizeof(root_record->issuance_root_hash))
+                != 0)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+    }
+
+    return SM2_PKI_SUCCESS;
+}
+
 static sm2_pki_error_t pki_client_expected_authority_from_cert(
     const sm2_implicit_cert_t *cert, const uint8_t **authority_id,
     size_t *authority_id_len)
@@ -177,56 +239,10 @@ static sm2_pki_error_t pki_client_accept_epoch_root_record(
     if (!entry)
         return SM2_PKI_ERR_MEMORY;
 
-    if (root_record->epoch_version < entry->highest_seen_epoch_version)
-        return SM2_PKI_ERR_VERIFY;
-    if (entry->has_epoch_record
-        && root_record->epoch_version == entry->highest_seen_epoch_version)
-    {
-        if (memcmp(epoch_digest, entry->epoch_digest, sizeof(epoch_digest))
-            != 0)
-        {
-            return SM2_PKI_ERR_VERIFY;
-        }
-    }
-    if (entry->has_pinned_ca_index
-        && entry->pinned_ca_index != matched_ca_index)
-    {
-        return SM2_PKI_ERR_VERIFY;
-    }
-    if (entry->has_revocation_root)
-    {
-        if (root_record->revocation_root_version
-            < entry->highest_seen_revocation_root_version)
-        {
-            return SM2_PKI_ERR_VERIFY;
-        }
-        if (root_record->revocation_root_version
-                == entry->highest_seen_revocation_root_version
-            && memcmp(root_record->revocation_root_hash,
-                   entry->latest_revocation_root_hash,
-                   sizeof(root_record->revocation_root_hash))
-                != 0)
-        {
-            return SM2_PKI_ERR_VERIFY;
-        }
-    }
-    if (entry->has_issuance_root)
-    {
-        if (root_record->issuance_root_version
-            < entry->highest_seen_issuance_root_version)
-        {
-            return SM2_PKI_ERR_VERIFY;
-        }
-        if (root_record->issuance_root_version
-                == entry->highest_seen_issuance_root_version
-            && memcmp(root_record->issuance_root_hash,
-                   entry->latest_issuance_root_hash,
-                   sizeof(root_record->issuance_root_hash))
-                != 0)
-        {
-            return SM2_PKI_ERR_VERIFY;
-        }
-    }
+    sm2_pki_error_t ret = pki_client_check_epoch_root_freshness(
+        entry, root_record, epoch_digest, matched_ca_index);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
 
     entry->epoch_record = *root_record;
     memcpy(entry->epoch_digest, epoch_digest, sizeof(entry->epoch_digest));
