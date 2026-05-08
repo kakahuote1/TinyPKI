@@ -5,6 +5,7 @@
 out/
 tmp/
 build/
+build-*/
 cmake-build-*/
 compile_commands.json
 CTestTestfile.cmake
