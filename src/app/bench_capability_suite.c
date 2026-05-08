@@ -117,6 +117,7 @@ typedef struct
     sm2_pki_transparency_policy_t policy;
     sm2_auth_signature_t signature;
     sm2_pki_evidence_bundle_t evidence;
+    sm2_pki_epoch_checkpoint_t checkpoint;
     sm2_pki_verify_request_t request;
     uint8_t message[64];
     size_t message_len;
@@ -681,10 +682,17 @@ static int get_identity_material(sm2_pki_client_ctx_t *client,
         && sm2_pki_client_get_public_key(client, public_key) == SM2_PKI_SUCCESS;
 }
 
-static int attach_witness(capability_flow_ctx_t *ctx)
+static int build_epoch_checkpoint(capability_flow_ctx_t *ctx)
 {
     if (!ctx)
         return 0;
+    memset(&ctx->checkpoint, 0, sizeof(ctx->checkpoint));
+    if (sm2_pki_service_get_epoch_root_record(
+            ctx->service, &ctx->checkpoint.epoch_root_record)
+        != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
 
     size_t commitment_count = 0;
     if (sm2_pki_service_get_issuance_commitment_count(
@@ -714,17 +722,17 @@ static int attach_witness(capability_flow_ctx_t *ctx)
     sm2_pki_epoch_witness_state_t witness_state;
     sm2_pki_epoch_witness_state_init(&witness_state);
     sm2_pki_error_t ret = sm2_pki_epoch_witness_sign_append_only(&witness_state,
-        &ctx->evidence.epoch_root_record, &ctx->ca_pub,
-        ctx->evidence.epoch_root_record.valid_from, commitments,
+        &ctx->checkpoint.epoch_root_record, &ctx->ca_pub,
+        ctx->checkpoint.epoch_root_record.valid_from, commitments,
         commitment_count, ctx->witness.witness_id, ctx->witness.witness_id_len,
-        &ctx->witness_private_key, &ctx->evidence.witness_signatures[0]);
+        &ctx->witness_private_key, &ctx->checkpoint.witness_signatures[0]);
     sm2_pki_epoch_witness_state_cleanup(&witness_state);
     free(commitments);
     if (ret != SM2_PKI_SUCCESS)
     {
         return 0;
     }
-    ctx->evidence.witness_signature_count = 1U;
+    ctx->checkpoint.witness_signature_count = 1U;
     return 1;
 }
 
@@ -733,14 +741,8 @@ static int import_evidence_checkpoint(
 {
     if (!ctx || !client)
         return 0;
-    sm2_pki_epoch_checkpoint_t checkpoint;
-    memset(&checkpoint, 0, sizeof(checkpoint));
-    checkpoint.epoch_root_record = ctx->evidence.epoch_root_record;
-    memcpy(checkpoint.witness_signatures, ctx->evidence.witness_signatures,
-        sizeof(checkpoint.witness_signatures));
-    checkpoint.witness_signature_count = ctx->evidence.witness_signature_count;
     return sm2_pki_client_import_epoch_checkpoint(
-               client, &checkpoint, ctx->auth_now)
+               client, &ctx->checkpoint, ctx->auth_now)
         == SM2_PKI_SUCCESS;
 }
 
@@ -837,7 +839,7 @@ static int build_flow(capability_flow_ctx_t *ctx)
     ctx->request.message_len = ctx->message_len;
     ctx->request.signature = &ctx->signature;
     ctx->request.evidence_bundle = &ctx->evidence;
-    return attach_witness(ctx)
+    return build_epoch_checkpoint(ctx)
         && import_evidence_checkpoint(ctx, ctx->verifier);
 }
 
@@ -867,15 +869,15 @@ static size_t issuance_proof_bytes(const sm2_pki_issuance_member_proof_t *proof)
         + proof->sibling_count * (SM2_REV_MERKLE_HASH_LEN + 1U);
 }
 
-static size_t witness_bytes(const sm2_pki_evidence_bundle_t *evidence)
+static size_t witness_bytes(const sm2_pki_epoch_checkpoint_t *checkpoint)
 {
     size_t total = 0;
-    if (!evidence)
+    if (!checkpoint)
         return 0U;
-    for (size_t i = 0; i < evidence->witness_signature_count; i++)
+    for (size_t i = 0; i < checkpoint->witness_signature_count; i++)
     {
-        total += evidence->witness_signatures[i].witness_id_len
-            + evidence->witness_signatures[i].signature_len;
+        total += checkpoint->witness_signatures[i].witness_id_len
+            + checkpoint->witness_signatures[i].signature_len;
     }
     return total;
 }
@@ -908,14 +910,13 @@ static int collect_size_metrics(
     metrics->cert_bytes = cert_len;
     metrics->signature_bytes = ctx->signature.der_len;
     metrics->epoch_root_bytes
-        = epoch_root_bytes(&ctx->evidence.epoch_root_record);
+        = epoch_root_bytes(&ctx->checkpoint.epoch_root_record);
     metrics->revocation_proof_bytes = absence_len;
     metrics->issuance_proof_bytes
         = issuance_proof_bytes(&ctx->evidence.issuance_proof.member_proof);
-    metrics->witness_signature_bytes = witness_bytes(&ctx->evidence);
-    metrics->evidence_bundle_bytes = metrics->epoch_root_bytes
-        + metrics->revocation_proof_bytes + metrics->issuance_proof_bytes
-        + metrics->witness_signature_bytes;
+    metrics->witness_signature_bytes = witness_bytes(&ctx->checkpoint);
+    metrics->evidence_bundle_bytes = SM2_PKI_EPOCH_ROOT_DIGEST_LEN
+        + metrics->revocation_proof_bytes + metrics->issuance_proof_bytes;
     metrics->authentication_bundle_bytes = metrics->cert_bytes
         + metrics->signature_bytes + metrics->evidence_bundle_bytes;
     return 1;
@@ -948,12 +949,12 @@ static int collect_timing_metrics(
     for (size_t i = 0; i < BENCH_ROUNDS; i++)
     {
         double t0 = now_ms_highres();
-        sm2_pki_evidence_bundle_t witness_evidence = ctx->evidence;
-        if (!attach_witness(ctx))
+        sm2_pki_epoch_checkpoint_t saved_checkpoint = ctx->checkpoint;
+        if (!build_epoch_checkpoint(ctx))
         {
             return 0;
         }
-        ctx->evidence = witness_evidence;
+        ctx->checkpoint = saved_checkpoint;
         witness_samples[i] = now_ms_highres() - t0;
     }
 

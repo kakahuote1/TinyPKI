@@ -214,11 +214,12 @@ static void test_phase4_revocation_epoch_and_cross_domain()
     sm2_auth_signature_t sig_b;
     sm2_pki_evidence_bundle_t evidence_b;
     sm2_pki_verify_request_t req_auth;
+    sm2_pki_epoch_checkpoint_t checkpoint_b;
     TEST_ASSERT(pki_build_signed_verify_request(client_b, msg, sizeof(msg) - 1,
                     auth_now + 20, &sig_b, &evidence_b, &req_auth),
         "Build Cross Verify Request");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    verifier, &evidence_b, auth_now + 20),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, client_b, auth_now + 20, &checkpoint_b),
         "Verifier Imports CA_B Checkpoint");
 
     size_t matched = 0;
@@ -245,7 +246,7 @@ static void test_phase4_revocation_epoch_and_cross_domain()
         "Revoked Peer Cannot Export Fresh Evidence");
 
     TEST_ASSERT(sm2_pki_verify(verifier, &req_auth,
-                    evidence_b.epoch_root_record.valid_until + 1, &matched)
+                    checkpoint_b.epoch_root_record.valid_until + 1, &matched)
             == SM2_PKI_ERR_VERIFY,
         "Verify Blocked After Evidence Expiry");
 

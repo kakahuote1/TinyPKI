@@ -295,20 +295,18 @@ static sm2_pki_error_t pki_client_match_epoch_root_ca(
 }
 
 static sm2_pki_error_t pki_client_epoch_root_digest_matches(
-    const sm2_pki_epoch_root_record_t *a, const sm2_pki_epoch_root_record_t *b)
+    const sm2_pki_epoch_root_record_t *root_record,
+    const uint8_t digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN])
 {
-    uint8_t digest_a[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
-    uint8_t digest_b[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
-    if (!a || !b)
+    uint8_t actual_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
+    if (!root_record || !digest)
         return SM2_PKI_ERR_PARAM;
 
-    sm2_ic_error_t ic_ret = sm2_pki_epoch_root_digest(a, digest_a);
+    sm2_ic_error_t ic_ret
+        = sm2_pki_epoch_root_digest(root_record, actual_digest);
     if (ic_ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ic_ret);
-    ic_ret = sm2_pki_epoch_root_digest(b, digest_b);
-    if (ic_ret != SM2_IC_SUCCESS)
-        return sm2_pki_error_from_ic(ic_ret);
-    return memcmp(digest_a, digest_b, sizeof(digest_a)) == 0
+    return memcmp(actual_digest, digest, sizeof(actual_digest)) == 0
         ? SM2_PKI_SUCCESS
         : SM2_PKI_ERR_VERIFY;
 }
@@ -568,26 +566,13 @@ static sm2_pki_error_t pki_client_verify_epoch_evidence_bundle(
         return SM2_PKI_ERR_PARAM;
 
     const sm2_pki_epoch_root_record_t *cached_epoch = NULL;
-    const uint8_t *authority_id = NULL;
-    size_t authority_id_len = 0;
-    sm2_pki_error_t ret = pki_client_expected_authority_from_cert(
-        cert, &authority_id, &authority_id_len);
-    if (ret != SM2_PKI_SUCCESS)
-        return ret;
-    if (evidence->epoch_root_record.authority_id_len != authority_id_len
-        || memcmp(evidence->epoch_root_record.authority_id, authority_id,
-               authority_id_len)
-            != 0)
-    {
-        return SM2_PKI_ERR_VERIFY;
-    }
 
-    ret = pki_client_get_cached_epoch_root(
+    sm2_pki_error_t ret = pki_client_get_cached_epoch_root(
         state, cert, now_ts, matched_ca_index, &cached_epoch);
     if (ret != SM2_PKI_SUCCESS)
         return ret;
     ret = pki_client_epoch_root_digest_matches(
-        cached_epoch, &evidence->epoch_root_record);
+        cached_epoch, evidence->epoch_digest);
     if (ret != SM2_PKI_SUCCESS)
         return ret;
 
@@ -892,19 +877,24 @@ sm2_pki_error_t sm2_pki_client_export_epoch_evidence(sm2_pki_client_ctx_t *ctx,
         return sm2_pki_error_from_ic(ic_ret);
 
     memset(evidence, 0, sizeof(*evidence));
+    sm2_pki_epoch_root_record_t epoch_record;
+    memset(&epoch_record, 0, sizeof(epoch_record));
     sm2_pki_error_t ret = sm2_pki_service_export_current_epoch_evidence(
         (sm2_pki_service_ctx_t *)state->revocation_service, &state->cert,
-        &evidence->epoch_root_record, &evidence->revocation_proof.absence_proof,
+        &epoch_record, &evidence->revocation_proof.absence_proof,
         &evidence->issuance_proof.member_proof);
     if (ret != SM2_PKI_SUCCESS)
         return pki_client_map_service_failure_closed(ret);
 
-    const sm2_pki_epoch_root_record_t *epoch = &evidence->epoch_root_record;
+    const sm2_pki_epoch_root_record_t *epoch = &epoch_record;
     pki_client_root_verify_ctx_t verify_ctx = { .store = &state->trust_store,
         .require_specific_index = true,
         .required_index = matched_ca_index };
     ic_ret = sm2_pki_epoch_root_verify(
         epoch, now_ts, pki_client_root_record_verify_cb, &verify_ctx);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+    ic_ret = sm2_pki_epoch_root_digest(epoch, evidence->epoch_digest);
     if (ic_ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ic_ret);
 

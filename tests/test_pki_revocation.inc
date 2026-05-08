@@ -44,6 +44,7 @@ static void test_phase8_merkle_hook_and_service_binding()
     sm2_auth_signature_t sig;
     sm2_pki_evidence_bundle_t evidence;
     sm2_pki_verify_request_t auth_req;
+    sm2_pki_epoch_checkpoint_t checkpoint;
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
                     auth_now, &sig, &evidence, &auth_req),
         "Build Carried Evidence Request");
@@ -54,8 +55,8 @@ static void test_phase8_merkle_hook_and_service_binding()
         "Verifier Init");
     TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
         "Verifier Witness Policy");
-    TEST_ASSERT(
-        pki_import_epoch_checkpoint_from_evidence(verifier, &evidence, auth_now),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, signer, auth_now, &checkpoint),
         "Verifier Imports Checkpoint");
 
     size_t matched = 0;
@@ -75,7 +76,7 @@ static void test_phase8_merkle_hook_and_service_binding()
         "Revoked Signer Cannot Export Good Evidence");
 
     TEST_ASSERT(sm2_pki_verify(verifier, &auth_req,
-                    evidence.epoch_root_record.valid_until + 1, &matched)
+                    checkpoint.epoch_root_record.valid_until + 1, &matched)
             == SM2_PKI_ERR_VERIFY,
         "Expired Carried Evidence Rejected");
 
@@ -130,6 +131,7 @@ static void test_phase9_epoch_lookup_unknown_query_override_behavior()
     sm2_auth_signature_t sig;
     sm2_pki_evidence_bundle_t evidence;
     sm2_pki_verify_request_t auth_req;
+    sm2_pki_epoch_checkpoint_t checkpoint;
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
                     auth_now, &sig, &evidence, &auth_req),
         "Build Signed Request");
@@ -140,8 +142,8 @@ static void test_phase9_epoch_lookup_unknown_query_override_behavior()
         "Verifier Init");
     TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
         "Verifier Witness Policy");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    verifier, &evidence, auth_now + 100),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, signer, auth_now + 100, &checkpoint),
         "Verifier Imports Checkpoint");
 
     size_t matched = 0;
@@ -165,14 +167,14 @@ static void test_phase9_epoch_lookup_unknown_query_override_behavior()
             == SM2_PKI_ERR_VERIFY,
         "Wrong Serial Evidence Reject");
 
-    sm2_pki_evidence_bundle_t wrong_authority = evidence;
-    wrong_authority.epoch_root_record.authority_id[0] ^= 0x01U;
-    sm2_pki_verify_request_t wrong_authority_req = auth_req;
-    wrong_authority_req.evidence_bundle = &wrong_authority;
-    TEST_ASSERT(sm2_pki_verify(verifier, &wrong_authority_req,
+    sm2_pki_evidence_bundle_t wrong_digest = evidence;
+    wrong_digest.epoch_digest[0] ^= 0x01U;
+    sm2_pki_verify_request_t wrong_digest_req = auth_req;
+    wrong_digest_req.evidence_bundle = &wrong_digest;
+    TEST_ASSERT(sm2_pki_verify(verifier, &wrong_digest_req,
                     auth_now + 100, &matched)
             == SM2_PKI_ERR_VERIFY,
-        "Wrong Authority Evidence Reject");
+        "Wrong Epoch Digest Reject");
 
     sm2_pki_client_destroy(&verifier);
     sm2_pki_client_destroy(&signer);
@@ -430,6 +432,7 @@ static void test_phase11_merkle_freshness_e2e_gate()
     sm2_auth_signature_t sig;
     sm2_pki_evidence_bundle_t evidence;
     sm2_pki_verify_request_t auth_req;
+    sm2_pki_epoch_checkpoint_t checkpoint;
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
                     auth_now, &sig, &evidence, &auth_req),
         "Build Fresh Evidence Request");
@@ -440,8 +443,8 @@ static void test_phase11_merkle_freshness_e2e_gate()
         "Verifier Init");
     TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
         "Verifier Witness Policy");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    verifier, &evidence, auth_now + 100),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, signer, auth_now + 100, &checkpoint),
         "Verifier Imports Checkpoint");
 
     size_t matched = 0;
@@ -449,7 +452,7 @@ static void test_phase11_merkle_freshness_e2e_gate()
             == SM2_PKI_SUCCESS,
         "Fresh Proof Allows Auth");
     TEST_ASSERT(sm2_pki_verify(verifier, &auth_req,
-                    evidence.epoch_root_record.valid_until + 1, &matched)
+                    checkpoint.epoch_root_record.valid_until + 1, &matched)
             == SM2_PKI_ERR_VERIFY,
         "Expired Proof Blocks Auth");
 
