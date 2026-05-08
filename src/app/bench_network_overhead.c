@@ -48,6 +48,7 @@ typedef struct
     sm2_private_key_t temp_private_key;
     sm2_auth_signature_t signature;
     sm2_pki_evidence_bundle_t evidence;
+    sm2_pki_epoch_checkpoint_t checkpoint;
     sm2_pki_verify_request_t verify_request;
     uint8_t message[64];
     size_t message_len;
@@ -242,12 +243,19 @@ static int bench_configure_transparency_verifier(sm2_pki_client_ctx_t *client)
         == SM2_PKI_SUCCESS;
 }
 
-static int bench_attach_epoch_witness(const sm2_pki_service_ctx_t *service,
-    const sm2_ec_point_t *ca_public_key, sm2_pki_evidence_bundle_t *evidence)
+static int bench_build_epoch_checkpoint(const sm2_pki_service_ctx_t *service,
+    const sm2_ec_point_t *ca_public_key, sm2_pki_epoch_checkpoint_t *checkpoint)
 {
-    if (!service || !ca_public_key || !evidence
+    if (!service || !ca_public_key || !checkpoint
         || !bench_transparency_policy_init())
         return 0;
+    memset(checkpoint, 0, sizeof(*checkpoint));
+    if (sm2_pki_service_get_epoch_root_record(
+            service, &checkpoint->epoch_root_record)
+        != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
 
     size_t commitment_count = 0;
     if (sm2_pki_service_get_issuance_commitment_count(
@@ -277,33 +285,26 @@ static int bench_attach_epoch_witness(const sm2_pki_service_ctx_t *service,
     sm2_pki_epoch_witness_state_t witness_state;
     sm2_pki_epoch_witness_state_init(&witness_state);
     sm2_pki_error_t ret = sm2_pki_epoch_witness_sign_append_only(&witness_state,
-        &evidence->epoch_root_record, ca_public_key,
-        evidence->epoch_root_record.valid_from, commitments, commitment_count,
+        &checkpoint->epoch_root_record, ca_public_key,
+        checkpoint->epoch_root_record.valid_from, commitments, commitment_count,
         g_bench_witness.witness_id, g_bench_witness.witness_id_len,
-        &g_bench_witness_priv, &evidence->witness_signatures[0]);
+        &g_bench_witness_priv, &checkpoint->witness_signatures[0]);
     sm2_pki_epoch_witness_state_cleanup(&witness_state);
     free(commitments);
     if (ret != SM2_PKI_SUCCESS)
     {
         return 0;
     }
-    evidence->witness_signature_count = 1U;
+    checkpoint->witness_signature_count = 1U;
     return 1;
 }
 
-static int bench_import_epoch_checkpoint_from_evidence(
-    sm2_pki_client_ctx_t *client, const sm2_pki_evidence_bundle_t *evidence,
-    uint64_t now_ts)
+static int bench_import_epoch_checkpoint(sm2_pki_client_ctx_t *client,
+    const sm2_pki_epoch_checkpoint_t *checkpoint, uint64_t now_ts)
 {
-    if (!client || !evidence)
+    if (!client || !checkpoint)
         return 0;
-    sm2_pki_epoch_checkpoint_t checkpoint;
-    memset(&checkpoint, 0, sizeof(checkpoint));
-    checkpoint.epoch_root_record = evidence->epoch_root_record;
-    memcpy(checkpoint.witness_signatures, evidence->witness_signatures,
-        sizeof(checkpoint.witness_signatures));
-    checkpoint.witness_signature_count = evidence->witness_signature_count;
-    return sm2_pki_client_import_epoch_checkpoint(client, &checkpoint, now_ts)
+    return sm2_pki_client_import_epoch_checkpoint(client, checkpoint, now_ts)
         == SM2_PKI_SUCCESS;
 }
 
@@ -311,13 +312,13 @@ static int build_signed_verify_request(const sm2_pki_service_ctx_t *service,
     const sm2_ec_point_t *ca_public_key, sm2_pki_client_ctx_t *signer,
     const uint8_t *message, size_t message_len, uint64_t now_ts,
     sm2_auth_signature_t *signature, sm2_pki_evidence_bundle_t *evidence,
-    sm2_pki_verify_request_t *request)
+    sm2_pki_epoch_checkpoint_t *checkpoint, sm2_pki_verify_request_t *request)
 {
     const sm2_implicit_cert_t *cert = NULL;
     const sm2_ec_point_t *public_key = NULL;
 
     if (!service || !ca_public_key || !signer || !message || message_len == 0
-        || !signature || !evidence || !request)
+        || !signature || !evidence || !checkpoint || !request)
     {
         return 0;
     }
@@ -342,7 +343,7 @@ static int build_signed_verify_request(const sm2_pki_service_ctx_t *service,
     request->message_len = message_len;
     request->signature = signature;
     request->evidence_bundle = evidence;
-    if (!bench_attach_epoch_witness(service, ca_public_key, evidence))
+    if (!bench_build_epoch_checkpoint(service, ca_public_key, checkpoint))
         return 0;
     return 1;
 }
@@ -435,9 +436,9 @@ static int build_flow_context(bench_flow_ctx_t *ctx)
         : current_unix_ts();
     return build_signed_verify_request(ctx->service, &ctx->ca_pub, ctx->client,
                ctx->message, ctx->message_len, ctx->auth_now, &ctx->signature,
-               &ctx->evidence, &ctx->verify_request)
-        && bench_import_epoch_checkpoint_from_evidence(
-            ctx->verifier, &ctx->evidence, ctx->auth_now);
+               &ctx->evidence, &ctx->checkpoint, &ctx->verify_request)
+        && bench_import_epoch_checkpoint(
+            ctx->verifier, &ctx->checkpoint, ctx->auth_now);
 }
 
 static void cleanup_flow_context(bench_flow_ctx_t *ctx)
@@ -571,13 +572,13 @@ static int compute_payload_metrics(
     if (!encode_cert_len(
             &flow.cert_result.cert, cert_buf, sizeof(cert_buf), &cert_len))
         goto fail;
-    root_len = epoch_root_wire_size(&flow.evidence.epoch_root_record);
+    root_len = epoch_root_wire_size(&flow.checkpoint.epoch_root_record);
     issuance_len
         = issuance_proof_wire_size(&flow.evidence.issuance_proof.member_proof);
-    for (size_t i = 0; i < flow.evidence.witness_signature_count; i++)
+    for (size_t i = 0; i < flow.checkpoint.witness_signature_count; i++)
     {
-        witness_len += flow.evidence.witness_signatures[i].witness_id_len
-            + flow.evidence.witness_signatures[i].signature_len;
+        witness_len += flow.checkpoint.witness_signatures[i].witness_id_len
+            + flow.checkpoint.witness_signatures[i].signature_len;
     }
     if (!encode_absence_len(&flow.evidence.revocation_proof.absence_proof,
             absence_buf, sizeof(absence_buf), &absence_len))
@@ -605,12 +606,13 @@ static int compute_payload_metrics(
     metrics[0].bytes = (size_t)x509_der_len;
     metrics[1].name = "ECQV Implicit Certificate";
     metrics[1].bytes = cert_len;
-    metrics[2].name = "CA-signed Epoch Root";
-    metrics[2].bytes = root_len;
+    metrics[2].name = "Epoch Checkpoint";
+    metrics[2].bytes = root_len + witness_len;
     metrics[3].name = "Merkle Absence Proof";
     metrics[3].bytes = absence_len;
     metrics[4].name = "Epoch Evidence Bundle";
-    metrics[4].bytes = root_len + absence_len + issuance_len + witness_len;
+    metrics[4].bytes
+        = SM2_PKI_EPOCH_ROOT_DIGEST_LEN + absence_len + issuance_len;
     metrics[5].name = "Authentication Bundle";
     metrics[5].bytes = cert_len + flow.signature.der_len + metrics[4].bytes;
     metrics[6].name = "Merkle Multiproof (16)";
@@ -842,6 +844,8 @@ static double measure_secure_session_median(void)
         sm2_auth_signature_t sig_b;
         sm2_pki_evidence_bundle_t evidence_a;
         sm2_pki_evidence_bundle_t evidence_b;
+        sm2_pki_epoch_checkpoint_t checkpoint_a;
+        sm2_pki_epoch_checkpoint_t checkpoint_b;
         sm2_pki_verify_request_t req_a_to_b;
         sm2_pki_verify_request_t req_b_to_a;
         uint8_t sk_a[16];
@@ -857,6 +861,8 @@ static double measure_secure_session_median(void)
         memset(&sig_b, 0, sizeof(sig_b));
         memset(&evidence_a, 0, sizeof(evidence_a));
         memset(&evidence_b, 0, sizeof(evidence_b));
+        memset(&checkpoint_a, 0, sizeof(checkpoint_a));
+        memset(&checkpoint_b, 0, sizeof(checkpoint_b));
         memset(&req_a_to_b, 0, sizeof(req_a_to_b));
         memset(&req_b_to_a, 0, sizeof(req_b_to_a));
 
@@ -881,6 +887,10 @@ static double measure_secure_session_median(void)
             || sm2_pki_client_export_epoch_evidence(
                    ctx.client_b, ctx.auth_now, &evidence_b)
                 != SM2_PKI_SUCCESS
+            || !bench_build_epoch_checkpoint(
+                ctx.service, &ctx.ca_pub, &checkpoint_a)
+            || !bench_build_epoch_checkpoint(
+                ctx.service, &ctx.ca_pub, &checkpoint_b)
             || !client_get_identity_material(ctx.client_a, &cert_a, &pub_a)
             || !client_get_identity_material(ctx.client_b, &cert_b, &pub_b))
         {
@@ -894,11 +904,6 @@ static double measure_secure_session_median(void)
         req_a_to_b.message_len = bind_a_len;
         req_a_to_b.signature = &sig_a;
         req_a_to_b.evidence_bundle = &evidence_a;
-        if (!bench_attach_epoch_witness(ctx.service, &ctx.ca_pub, &evidence_a))
-        {
-            cleanup_session_context(&ctx);
-            return 0.0;
-        }
 
         req_b_to_a.cert = cert_b;
         req_b_to_a.public_key = pub_b;
@@ -906,15 +911,10 @@ static double measure_secure_session_median(void)
         req_b_to_a.message_len = bind_b_len;
         req_b_to_a.signature = &sig_b;
         req_b_to_a.evidence_bundle = &evidence_b;
-        if (!bench_attach_epoch_witness(ctx.service, &ctx.ca_pub, &evidence_b))
-        {
-            cleanup_session_context(&ctx);
-            return 0.0;
-        }
-        if (!bench_import_epoch_checkpoint_from_evidence(
-                ctx.client_a, &evidence_b, ctx.auth_now)
-            || !bench_import_epoch_checkpoint_from_evidence(
-                ctx.client_b, &evidence_a, ctx.auth_now))
+        if (!bench_import_epoch_checkpoint(
+                ctx.client_a, &checkpoint_b, ctx.auth_now)
+            || !bench_import_epoch_checkpoint(
+                ctx.client_b, &checkpoint_a, ctx.auth_now))
         {
             cleanup_session_context(&ctx);
             return 0.0;

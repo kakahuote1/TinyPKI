@@ -46,12 +46,9 @@ extern "C"
 
     typedef struct
     {
-        sm2_pki_epoch_root_record_t epoch_root_record;
+        uint8_t epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
         sm2_pki_epoch_revocation_proof_t revocation_proof;
         sm2_pki_epoch_issuance_proof_t issuance_proof;
-        sm2_pki_transparency_witness_signature_t
-            witness_signatures[SM2_PKI_TRANSPARENCY_MAX_WITNESSES];
-        size_t witness_signature_count;
     } sm2_pki_evidence_bundle_t;
 
     typedef struct

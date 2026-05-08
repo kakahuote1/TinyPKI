@@ -44,6 +44,7 @@ int main(void)
     sm2_pki_transparency_policy_t transparency_policy;
     sm2_auth_signature_t sig;
     sm2_pki_evidence_bundle_t evidence;
+    sm2_pki_epoch_checkpoint_t checkpoint;
     size_t matched_idx = 0;
     sm2_pki_verify_request_t auth_req;
     const sm2_implicit_cert_t *cli_cert = NULL;
@@ -64,6 +65,7 @@ int main(void)
     memset(&transparency_policy, 0, sizeof(transparency_policy));
     memset(&sig, 0, sizeof(sig));
     memset(&evidence, 0, sizeof(evidence));
+    memset(&checkpoint, 0, sizeof(checkpoint));
     memset(&auth_req, 0, sizeof(auth_req));
 
     /* 1) Initialize in-memory CA/RA service */
@@ -138,6 +140,10 @@ int main(void)
     err = sm2_pki_client_export_epoch_evidence(cli, auth_now, &evidence);
     if (!check_pki(err, "Export Epoch Evidence Bundle"))
         goto cleanup;
+    err = sm2_pki_service_get_epoch_root_record(
+        svc, &checkpoint.epoch_root_record);
+    if (!check_pki(err, "Read Epoch Checkpoint"))
+        goto cleanup;
     size_t commitment_count = 0;
     err = sm2_pki_service_get_issuance_commitment_count(svc, &commitment_count);
     if (!check_pki(err, "Read Issuance Commitment Count"))
@@ -159,21 +165,15 @@ int main(void)
     sm2_pki_epoch_witness_state_t witness_state;
     sm2_pki_epoch_witness_state_init(&witness_state);
     err = sm2_pki_epoch_witness_sign_append_only(&witness_state,
-        &evidence.epoch_root_record, &ca_pub,
-        evidence.epoch_root_record.valid_from, commitments, commitment_count,
+        &checkpoint.epoch_root_record, &ca_pub,
+        checkpoint.epoch_root_record.valid_from, commitments, commitment_count,
         witness.witness_id, witness.witness_id_len, &witness_priv,
-        &evidence.witness_signatures[0]);
+        &checkpoint.witness_signatures[0]);
     sm2_pki_epoch_witness_state_cleanup(&witness_state);
     free(commitments);
     if (!check_pki(err, "Witness Sign Epoch Root"))
         goto cleanup;
-    evidence.witness_signature_count = 1;
-    sm2_pki_epoch_checkpoint_t checkpoint;
-    memset(&checkpoint, 0, sizeof(checkpoint));
-    checkpoint.epoch_root_record = evidence.epoch_root_record;
-    memcpy(checkpoint.witness_signatures, evidence.witness_signatures,
-        sizeof(checkpoint.witness_signatures));
-    checkpoint.witness_signature_count = evidence.witness_signature_count;
+    checkpoint.witness_signature_count = 1;
     err = sm2_pki_client_import_epoch_checkpoint(cli, &checkpoint, auth_now);
     if (!check_pki(err, "Import Epoch Checkpoint"))
         goto cleanup;

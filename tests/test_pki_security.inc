@@ -583,8 +583,6 @@ static void test_phase13_secure_pki_session_default_api()
     req_a_to_b.message_len = bind_a_len;
     req_a_to_b.signature = &sig_a;
     req_a_to_b.evidence_bundle = &evidence_a;
-    TEST_ASSERT(pki_attach_default_epoch_witness(client_a, &evidence_a),
-        "Attach Witness A");
 
     req_b_to_a.cert = client_b_cert;
     req_b_to_a.public_key = client_b_pub;
@@ -592,15 +590,13 @@ static void test_phase13_secure_pki_session_default_api()
     req_b_to_a.message_len = bind_b_len;
     req_b_to_a.signature = &sig_b;
     req_b_to_a.evidence_bundle = &evidence_b;
-    TEST_ASSERT(pki_attach_default_epoch_witness(client_b, &evidence_b),
-        "Attach Witness B");
     TEST_ASSERT(
-        pki_import_epoch_checkpoint_from_evidence(client_a, &evidence_b,
-            auth_now),
+        pki_import_epoch_checkpoint_from_signer(client_a, client_b,
+            auth_now, NULL),
         "Client A Imports Peer Checkpoint");
     TEST_ASSERT(
-        pki_import_epoch_checkpoint_from_evidence(client_b, &evidence_a,
-            auth_now),
+        pki_import_epoch_checkpoint_from_signer(client_b, client_a,
+            auth_now, NULL),
         "Client B Imports Peer Checkpoint");
 
     uint8_t sk_a[16];
@@ -868,12 +864,14 @@ static void test_phase137_client_epoch_cache_refresh_and_rollback()
     sm2_pki_evidence_bundle_t evidence_refreshed;
     sm2_pki_verify_request_t request_initial;
     sm2_pki_verify_request_t request_refreshed;
+    sm2_pki_epoch_checkpoint_t checkpoint_initial;
+    sm2_pki_epoch_checkpoint_t checkpoint_refreshed;
     TEST_ASSERT(
         pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1, auth_now,
             &sig_initial, &evidence_initial, &request_initial),
         "Build Initial Request");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    verifier, &evidence_initial, auth_now),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, signer, auth_now, &checkpoint_initial),
         "Verifier Imports Initial Checkpoint");
 
     size_t matched = 0;
@@ -882,12 +880,12 @@ static void test_phase137_client_epoch_cache_refresh_and_rollback()
         "Verify Initial Epoch");
 
     sm2_pki_evidence_bundle_t tampered_evidence = evidence_initial;
-    tampered_evidence.epoch_root_record.authority_id[0] ^= 0x01U;
+    tampered_evidence.epoch_digest[0] ^= 0x01U;
     sm2_pki_verify_request_t tampered_request = request_initial;
     tampered_request.evidence_bundle = &tampered_evidence;
     TEST_ASSERT(sm2_pki_verify(verifier, &tampered_request, auth_now, &matched)
             == SM2_PKI_ERR_VERIFY,
-        "Tampered Epoch Authority Reject");
+        "Tampered Epoch Digest Reject");
 
     TEST_ASSERT(
         sm2_pki_service_refresh_root(service, auth_now + 10) == SM2_PKI_SUCCESS,
@@ -896,12 +894,12 @@ static void test_phase137_client_epoch_cache_refresh_and_rollback()
                     auth_now + 10, &sig_refreshed, &evidence_refreshed,
                     &request_refreshed),
         "Build Refreshed Request");
-    TEST_ASSERT(evidence_refreshed.epoch_root_record.epoch_version
-            > evidence_initial.epoch_root_record.epoch_version,
-        "Refreshed Epoch Version Advanced");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    verifier, &evidence_refreshed, auth_now + 10),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, signer, auth_now + 10, &checkpoint_refreshed),
         "Verifier Imports Refreshed Checkpoint");
+    TEST_ASSERT(checkpoint_refreshed.epoch_root_record.epoch_version
+            > checkpoint_initial.epoch_root_record.epoch_version,
+        "Refreshed Epoch Version Advanced");
     TEST_ASSERT(
         sm2_pki_verify(verifier, &request_refreshed, auth_now + 10, &matched)
             == SM2_PKI_SUCCESS,
@@ -982,8 +980,8 @@ static void test_phase137_epoch_cache_survives_local_cert_import()
         pki_build_signed_verify_request(peer, msg, sizeof(msg) - 1, auth_now,
             &sig_initial, &evidence_initial, &request_initial),
         "Build Initial Request");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    verifier, &evidence_initial, auth_now),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, peer, auth_now, NULL),
         "Verifier Imports Initial Checkpoint");
 
     size_t matched = 0;
@@ -998,8 +996,8 @@ static void test_phase137_epoch_cache_survives_local_cert_import()
                     auth_now + 10, &sig_refreshed, &evidence_refreshed,
                     &request_refreshed),
         "Build Refreshed Request");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    verifier, &evidence_refreshed, auth_now + 10),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, peer, auth_now + 10, NULL),
         "Verifier Imports Refreshed Checkpoint");
     TEST_ASSERT(
         sm2_pki_verify(verifier, &request_refreshed, auth_now + 10, &matched)
@@ -1078,6 +1076,8 @@ static void test_phase138_service_binding_tracks_newer_root_versions()
     sm2_auth_signature_t sig;
     sm2_pki_evidence_bundle_t evidence;
     sm2_pki_verify_request_t request;
+    sm2_pki_epoch_checkpoint_t checkpoint_initial;
+    sm2_pki_epoch_checkpoint_t checkpoint_updated;
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
                     auth_now, &sig, &evidence, &request),
         "Build Initial Evidence Request");
@@ -1088,8 +1088,8 @@ static void test_phase138_service_binding_tracks_newer_root_versions()
         "Verifier Init");
     TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
         "Verifier Witness Policy");
-    TEST_ASSERT(
-        pki_import_epoch_checkpoint_from_evidence(verifier, &evidence, auth_now),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, signer, auth_now, &checkpoint_initial),
         "Verifier Imports Initial Checkpoint");
 
     size_t matched = 0;
@@ -1097,7 +1097,7 @@ static void test_phase138_service_binding_tracks_newer_root_versions()
             == SM2_PKI_SUCCESS,
         "Initial Verify Imports Epoch");
     uint64_t initial_version
-        = evidence.epoch_root_record.revocation_root_version;
+        = checkpoint_initial.epoch_root_record.revocation_root_version;
 
     TEST_ASSERT(sm2_pki_service_revoke(
                     service, cert_aux.cert.serial_number, auth_now + 10)
@@ -1107,14 +1107,15 @@ static void test_phase138_service_binding_tracks_newer_root_versions()
     TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
                     auth_now + 20, &sig, &evidence, &request),
         "Build Updated Evidence Request");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    verifier, &evidence, auth_now + 20),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, signer, auth_now + 20, &checkpoint_updated),
         "Verifier Imports Updated Checkpoint");
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now + 20, &matched)
             == SM2_PKI_SUCCESS,
         "Verify With Updated Epoch");
     TEST_ASSERT(
-        evidence.epoch_root_record.revocation_root_version > initial_version,
+        checkpoint_updated.epoch_root_record.revocation_root_version
+            > initial_version,
         "Epoch Revocation Root Advanced");
 
     sm2_pki_client_destroy(&verifier);
@@ -1194,8 +1195,8 @@ static void test_phase140_epoch_bundle_requires_matching_checkpoint()
         pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1, auth_now,
             &sig_initial, &evidence_initial, &request_initial),
         "Build Initial Evidence");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    verifier, &evidence_initial, auth_now),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, signer, auth_now, NULL),
         "Verifier Imports Initial Checkpoint");
     TEST_ASSERT(sm2_pki_verify(verifier, &request_initial, auth_now, &matched)
             == SM2_PKI_SUCCESS,
@@ -1227,8 +1228,8 @@ static void test_phase140_epoch_bundle_requires_matching_checkpoint()
         pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
             auth_now + 20, &sig_updated, &evidence_updated, &request_updated),
         "Build Updated Evidence");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    verifier, &evidence_updated, auth_now + 20),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, signer, auth_now + 20, NULL),
         "Verifier Imports Updated Checkpoint");
     TEST_ASSERT(
         sm2_pki_verify(verifier, &request_updated, auth_now + 20, &matched)
@@ -1329,17 +1330,20 @@ static void test_phase141_issuance_transparency_required_and_threshold()
             == SM2_PKI_ERR_VERIFY,
         "Missing Imported Checkpoint Reject");
 
-    sm2_pki_evidence_bundle_t no_witness = rev_evidence;
+    sm2_pki_epoch_checkpoint_t default_checkpoint;
+    TEST_ASSERT(pki_build_default_epoch_checkpoint(signer, &default_checkpoint),
+        "Build Default Checkpoint");
+    sm2_pki_epoch_checkpoint_t no_witness = default_checkpoint;
     no_witness.witness_signature_count = 0;
-    request.evidence_bundle = &no_witness;
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
+    TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
                     verifier, &no_witness, auth_now)
-            == 0,
+            != SM2_PKI_SUCCESS,
         "Missing Mandatory Witness Signature Reject");
 
     request.evidence_bundle = &rev_evidence;
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    verifier, &rev_evidence, auth_now),
+    TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
+                    verifier, &default_checkpoint, auth_now)
+            == SM2_PKI_SUCCESS,
         "Verifier Imports Default Checkpoint");
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_SUCCESS,
@@ -1351,6 +1355,7 @@ static void test_phase141_issuance_transparency_required_and_threshold()
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_ERR_VERIFY,
         "Wrong Issuance Commitment Reject");
+    request.evidence_bundle = &rev_evidence;
 
     sm2_private_key_t witness_priv[3];
     sm2_ec_point_t witness_pub[3];
@@ -1407,43 +1412,48 @@ static void test_phase141_issuance_transparency_required_and_threshold()
     TEST_ASSERT(threshold_exported_count == threshold_commitment_count,
         "Exported Issuance Count");
 
-    sm2_pki_evidence_bundle_t one_sig = rev_evidence;
-    memset(one_sig.witness_signatures, 0, sizeof(one_sig.witness_signatures));
+    sm2_pki_epoch_checkpoint_t one_sig_checkpoint;
+    memset(&one_sig_checkpoint, 0, sizeof(one_sig_checkpoint));
+    TEST_ASSERT(sm2_pki_service_get_epoch_root_record(
+                    service, &one_sig_checkpoint.epoch_root_record)
+            == SM2_PKI_SUCCESS,
+        "Read Threshold Epoch Root");
     sm2_pki_epoch_witness_state_t witness_state0;
     sm2_pki_epoch_witness_state_init(&witness_state0);
     TEST_ASSERT(sm2_pki_epoch_witness_sign_append_only(&witness_state0,
-                    &one_sig.epoch_root_record, &ca_pub,
-                    one_sig.epoch_root_record.valid_from, threshold_commitments,
-                    threshold_commitment_count, wid0, sizeof(wid0) - 1,
-                    &witness_priv[0], &one_sig.witness_signatures[0])
+                    &one_sig_checkpoint.epoch_root_record, &ca_pub,
+                    one_sig_checkpoint.epoch_root_record.valid_from,
+                    threshold_commitments, threshold_commitment_count, wid0,
+                    sizeof(wid0) - 1, &witness_priv[0],
+                    &one_sig_checkpoint.witness_signatures[0])
             == SM2_PKI_SUCCESS,
         "Witness Sign 0");
     sm2_pki_epoch_witness_state_cleanup(&witness_state0);
-    one_sig.witness_signature_count = 1;
-    request.evidence_bundle = &one_sig;
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    verifier, &one_sig, auth_now)
-            == 0,
+    one_sig_checkpoint.witness_signature_count = 1;
+    TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
+                    verifier, &one_sig_checkpoint, auth_now)
+            != SM2_PKI_SUCCESS,
         "One Of Two Checkpoint Import Reject");
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_ERR_VERIFY,
         "One Of Two Witnesses Reject");
 
-    sm2_pki_evidence_bundle_t two_sig = one_sig;
+    sm2_pki_epoch_checkpoint_t two_sig_checkpoint = one_sig_checkpoint;
     sm2_pki_epoch_witness_state_t witness_state1;
     sm2_pki_epoch_witness_state_init(&witness_state1);
     TEST_ASSERT(sm2_pki_epoch_witness_sign_append_only(&witness_state1,
-                    &two_sig.epoch_root_record, &ca_pub,
-                    two_sig.epoch_root_record.valid_from, threshold_commitments,
-                    threshold_commitment_count, wid1, sizeof(wid1) - 1,
-                    &witness_priv[1], &two_sig.witness_signatures[1])
+                    &two_sig_checkpoint.epoch_root_record, &ca_pub,
+                    two_sig_checkpoint.epoch_root_record.valid_from,
+                    threshold_commitments, threshold_commitment_count, wid1,
+                    sizeof(wid1) - 1, &witness_priv[1],
+                    &two_sig_checkpoint.witness_signatures[1])
             == SM2_PKI_SUCCESS,
         "Witness Sign 1");
     sm2_pki_epoch_witness_state_cleanup(&witness_state1);
-    two_sig.witness_signature_count = 2;
-    request.evidence_bundle = &two_sig;
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    verifier, &two_sig, auth_now),
+    two_sig_checkpoint.witness_signature_count = 2;
+    TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
+                    verifier, &two_sig_checkpoint, auth_now)
+            == SM2_PKI_SUCCESS,
         "Two Of Three Checkpoint Import Accept");
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_SUCCESS,
@@ -1687,14 +1697,18 @@ static void test_phase143_epoch_bundle_binds_roots_and_witnesses()
         "Build Epoch Verify Request");
 
     size_t matched = 0;
-    sm2_pki_evidence_bundle_t missing_witness = bundle;
+    sm2_pki_epoch_checkpoint_t checkpoint;
+    TEST_ASSERT(pki_build_default_epoch_checkpoint(signer, &checkpoint),
+        "Build Epoch Checkpoint");
+    sm2_pki_epoch_checkpoint_t missing_witness = checkpoint;
     missing_witness.witness_signature_count = 0;
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
+    TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
                     verifier, &missing_witness, auth_now)
-            == 0,
+            != SM2_PKI_SUCCESS,
         "Epoch Missing Witness Reject");
-    TEST_ASSERT(
-        pki_import_epoch_checkpoint_from_evidence(verifier, &bundle, auth_now),
+    TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
+                    verifier, &checkpoint, auth_now)
+            == SM2_PKI_SUCCESS,
         "Verifier Imports Epoch Checkpoint");
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
             == SM2_PKI_SUCCESS,
@@ -1886,6 +1900,9 @@ static void test_phase139_root_versions_are_scoped_per_authority()
     sm2_pki_evidence_bundle_t evidence_b;
     sm2_pki_verify_request_t request_a;
     sm2_pki_verify_request_t request_b;
+    sm2_pki_epoch_checkpoint_t checkpoint_a;
+    sm2_pki_epoch_checkpoint_t checkpoint_b;
+    sm2_pki_epoch_checkpoint_t checkpoint_a_new;
     const uint8_t msg_a[] = "P139_PIN_A";
     const uint8_t msg_b[] = "P139_PIN_B";
     uint64_t auth_now_a = test_cert_now(&cert_a_live.cert);
@@ -1913,11 +1930,11 @@ static void test_phase139_root_versions_are_scoped_per_authority()
         pki_build_signed_verify_request(signer_b, msg_b, sizeof(msg_b) - 1,
             auth_now_b, &sig_b, &evidence_b, &request_b),
         "Build Pin B Request");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    client, &evidence_a, auth_now_a),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    client, signer_a, auth_now_a, &checkpoint_a),
         "Client Imports Authority A Checkpoint");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    client, &evidence_b, auth_now_b),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    client, signer_b, auth_now_b, &checkpoint_b),
         "Client Imports Authority B Checkpoint");
 
     size_t matched = 0;
@@ -1940,12 +1957,12 @@ static void test_phase139_root_versions_are_scoped_per_authority()
         pki_build_signed_verify_request(signer_a, msg_a, sizeof(msg_a) - 1,
             base_now + 20, &sig_a_new, &evidence_a_new, &request_a_new),
         "Build Advanced A Request");
-    TEST_ASSERT(evidence_a_new.epoch_root_record.revocation_root_version
-            > evidence_b.epoch_root_record.revocation_root_version,
-        "Authority A Version Higher Than B");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    client, &evidence_a_new, base_now + 20),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    client, signer_a, base_now + 20, &checkpoint_a_new),
         "Client Imports Advanced A Checkpoint");
+    TEST_ASSERT(checkpoint_a_new.epoch_root_record.revocation_root_version
+            > checkpoint_b.epoch_root_record.revocation_root_version,
+        "Authority A Version Higher Than B");
     TEST_ASSERT(sm2_pki_verify(client, &request_a_new, base_now + 20, &matched)
             == SM2_PKI_SUCCESS,
         "Verify Advanced A");
@@ -2055,11 +2072,11 @@ static void test_phase139_multi_ca_epoch_rejects_spoofed_authority()
         pki_build_signed_verify_request(signer_b, msg_b, sizeof(msg_b) - 1,
             auth_now, &sig_b, &evidence_b, &request_b),
         "Build B Request");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    client, &evidence_a, auth_now),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    client, signer_a, auth_now, NULL),
         "Client Imports Authority A Checkpoint");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_evidence(
-                    client, &evidence_b, auth_now)
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    client, signer_b, auth_now, NULL)
             == 0,
         "Same Authority From CA B Checkpoint Reject");
 
