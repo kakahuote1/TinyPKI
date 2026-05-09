@@ -5,8 +5,7 @@
  * @brief High-throughput unified authentication based on SM2 implicit certs.
  */
 
-#include "sm2_auth.h"
-#include "sm2_revocation.h"
+#include "auth_internal.h"
 #include "sm2_secure_mem.h"
 #include <stdlib.h>
 #include <string.h>

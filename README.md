@@ -162,11 +162,12 @@ cmake --build build --target sm2_bench_capability_suite -j 4
 公开安全接口采用清晰一致的命名空间。接入时，可按能力维度包含对应头文件：
 
 * `include/sm2_implicit_cert.h`: ECQV 请求生成、CA 签发、证书验证与终端侧密钥重构
-* `include/sm2_revocation.h`: 路径压缩 sparse Merkle 撤销累加器、member/absence proof、multiproof、epoch 缓存与撤销同步/BFT 辅助能力
+* `include/sm2_revocation.h`: 撤销状态、根记录、证明数据结构、同步调度、路由、仲裁与BFT辅助能力；原始树构造和证明编码属于库内部实现
 * `include/sm2_pki_transparency.h`: issuance MMR proof、统一 epoch root、witness 签名、append-only 见证状态与 `t-of-n` 见证策略类型
-* `include/sm2_auth.h`: 认证请求校验、revocation policy、握手绑定、双向握手与 AEAD 会话保护
-* `include/sm2_crypto.h`: 底层签名、验签、随机数、哈希、AEAD 以及统一 PKI 错误映射
+* `include/sm2_auth.h`: 公开签名类型和AEAD模式常量；具体认证、签名池和握手原语由高层PKI客户端封装
+* `include/sm2_pki_types.h`: 统一PKI错误码和公共基础类型
 * `include/sm2_pki_service.h` / `sm2_pki_client.h`: 面向内存态 CA/RA 服务端与设备侧客户端的高层流程 API（Opaque Handle 隔离），验证路径强制使用 epoch evidence 与客户端级 witness policy
+* `include/sm2_tinypki.h`: 推荐的一站式公开入口，包含上述稳定接口
 
 
 ---

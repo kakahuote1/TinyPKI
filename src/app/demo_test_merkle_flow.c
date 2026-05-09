@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "sm2_revocation.h"
+#include "../revoke/revoke_internal.h"
 
 static int check_ic(sm2_ic_error_t err, const char *step)
 {

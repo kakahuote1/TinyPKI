@@ -18,6 +18,8 @@
 
 #include "sm2_pki_service.h"
 #include "sm2_pki_client.h"
+#include "../auth/auth_internal.h"
+#include "../revoke/revoke_internal.h"
 
 #define BENCH_BASELINE_X509_BITS 2048
 #define BENCH_LATENCY_ROUNDS 21

@@ -14,7 +14,7 @@
 #include <windows.h>
 #endif
 #include "sm2_implicit_cert.h"
-#include "sm2_auth.h"
+#include "../auth/auth_internal.h"
 
 /* ANSI Color Codes */
 #define CLR_RESET "\033[0m"

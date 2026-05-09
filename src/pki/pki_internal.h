@@ -5,6 +5,9 @@
 
 #include "sm2_pki_client.h"
 #include "sm2_pki_service.h"
+#include "crypto_internal.h"
+#include "../auth/auth_internal.h"
+#include "../revoke/revoke_internal.h"
 
 typedef struct sm2_pki_service_ctx_st sm2_pki_service_state_t;
 typedef struct sm2_pki_client_ctx_st sm2_pki_client_state_t;
@@ -76,6 +79,25 @@ sm2_pki_error_t sm2_pki_service_export_current_epoch_evidence(
     sm2_pki_epoch_root_record_t *epoch_root,
     sm2_rev_absence_proof_t *revocation_proof,
     sm2_pki_issuance_member_proof_t *issuance_proof);
+sm2_pki_error_t sm2_pki_service_get_root_record(
+    const sm2_pki_service_ctx_t *ctx, sm2_rev_root_record_t *root_record);
+sm2_pki_error_t sm2_pki_service_export_epoch_dir(sm2_pki_service_ctx_t *ctx,
+    uint64_t epoch_id, uint64_t valid_from, uint64_t valid_until,
+    sm2_rev_epoch_dir_t **directory);
+sm2_pki_error_t sm2_pki_service_export_member_proof(
+    const sm2_pki_service_ctx_t *ctx, uint64_t serial_number,
+    sm2_rev_member_proof_t *proof);
+sm2_pki_error_t sm2_pki_service_export_absence_proof(
+    const sm2_pki_service_ctx_t *ctx, uint64_t serial_number,
+    sm2_rev_absence_proof_t *proof);
+sm2_pki_error_t sm2_pki_service_export_issuance_proof(
+    const sm2_pki_service_ctx_t *ctx, const sm2_implicit_cert_t *cert,
+    sm2_pki_issuance_member_proof_t *proof);
+sm2_pki_error_t sm2_pki_key_agreement(sm2_pki_client_ctx_t *ctx,
+    const sm2_private_key_t *local_ephemeral_private_key,
+    const sm2_ec_point_t *peer_public_key,
+    const sm2_ec_point_t *peer_ephemeral_public_key, const uint8_t *transcript,
+    size_t transcript_len, uint8_t *session_key, size_t session_key_len);
 
 typedef struct
 {

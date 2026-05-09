@@ -11,7 +11,7 @@
 #ifndef SM2_MERKLE_INTERNAL_H
 #define SM2_MERKLE_INTERNAL_H
 
-#include "sm2_revocation.h"
+#include "revoke_internal.h"
 #include <stdlib.h>
 #include <limits.h>
 #include <string.h>
@@ -19,6 +19,24 @@
 #ifdef __cplusplus
 extern "C"
 {
+#endif
+
+#ifndef SM2_REVOKE_INTERNAL_TYPEDEFS
+#define SM2_REVOKE_INTERNAL_TYPEDEFS
+    typedef struct sm2_rev_tree_st sm2_rev_tree_t;
+    typedef struct sm2_rev_multi_proof_st sm2_rev_multi_proof_t;
+    typedef struct sm2_rev_epoch_dir_st sm2_rev_epoch_dir_t;
+#endif
+
+#ifndef SM2_REVOKE_LOOKUP_CTX_TYPEDEF
+#define SM2_REVOKE_LOOKUP_CTX_TYPEDEF
+    typedef struct
+    {
+        const sm2_rev_epoch_dir_t *directory;
+        sm2_ic_error_t (*verify_fn)(void *user_ctx, const uint8_t *data,
+            size_t data_len, const uint8_t *signature, size_t signature_len);
+        void *verify_user_ctx;
+    } sm2_rev_lookup_ctx_t;
 #endif
 
     struct sm2_rev_tree_st

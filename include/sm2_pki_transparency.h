@@ -11,7 +11,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "sm2_crypto.h"
+#include "sm2_implicit_cert.h"
+#include "sm2_pki_types.h"
 #include "sm2_revocation.h"
 
 #ifdef __cplusplus

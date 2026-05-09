@@ -14,7 +14,7 @@
 #include <stdbool.h>
 #include "sm2_implicit_cert.h"
 #include "sm2_auth.h"
-#include "sm2_crypto.h"
+#include "sm2_pki_types.h"
 #include "sm2_revocation.h"
 #include "sm2_pki_transparency.h"
 
@@ -151,14 +151,6 @@ extern "C"
     sm2_pki_error_t sm2_pki_generate_ephemeral_keypair(
         sm2_private_key_t *ephemeral_private_key,
         sm2_ec_point_t *ephemeral_public_key);
-
-    /* Low-level key agreement; caller must verify peer evidence first. */
-    sm2_pki_error_t sm2_pki_key_agreement(sm2_pki_client_ctx_t *ctx,
-        const sm2_private_key_t *local_ephemeral_private_key,
-        const sm2_ec_point_t *peer_public_key,
-        const sm2_ec_point_t *peer_ephemeral_public_key,
-        const uint8_t *transcript, size_t transcript_len, uint8_t *session_key,
-        size_t session_key_len);
 
     /* Establishes a session after peer evidence and handshake verification. */
     sm2_pki_error_t sm2_pki_secure_session_establish(sm2_pki_client_ctx_t *ctx,

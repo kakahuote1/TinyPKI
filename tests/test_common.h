@@ -17,9 +17,10 @@
 #include "sm2_implicit_cert.h"
 #include "sm2_revocation.h"
 #include "sm2_auth.h"
-#include "sm2_crypto.h"
+#include "sm2_pki_types.h"
 #include "sm2_pki_service.h"
 #include "sm2_pki_client.h"
+#include "../src/pki/pki_internal.h"
 
 extern int g_tests_run;
 extern int g_tests_passed;

@@ -5,8 +5,8 @@
  * @brief Phase4 crypto component wrappers and unified error mapping.
  */
 
-#include "sm2_crypto.h"
-#include "sm2_implicit_cert.h"
+#include "crypto_internal.h"
+#include "../auth/auth_internal.h"
 
 sm2_pki_error_t sm2_pki_error_from_ic(sm2_ic_error_t err)
 {
