@@ -390,6 +390,23 @@ static bool pki_client_public_keys_equal(
         && memcmp(a->y, b->y, sizeof(a->y)) == 0;
 }
 
+static bool pki_client_trust_store_contains_ca(
+    const sm2_pki_client_state_t *state, const sm2_ec_point_t *ca_public_key)
+{
+    if (!state || !ca_public_key || state->trust_store.count == 0)
+        return false;
+
+    for (size_t i = 0; i < state->trust_store.count; i++)
+    {
+        if (pki_client_public_keys_equal(
+                &state->trust_store.ca_pub_keys[i], ca_public_key))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 static sm2_pki_error_t pki_client_validate_transparency_policy(
     const sm2_pki_transparency_policy_t *policy)
 {
@@ -1212,6 +1229,8 @@ sm2_pki_error_t sm2_pki_client_import_cert(sm2_pki_client_ctx_t *ctx,
     {
         return SM2_PKI_ERR_PARAM;
     }
+    if (!pki_client_trust_store_contains_ca(state, ca_public_key))
+        return SM2_PKI_ERR_VERIFY;
 
     memset(&imported_private_key, 0, sizeof(imported_private_key));
     memset(&imported_public_key, 0, sizeof(imported_public_key));
