@@ -261,7 +261,9 @@ static void test_phase4_pki_controls_and_param_defense()
 {
     sm2_pki_service_ctx_t *service = NULL;
     sm2_pki_service_ctx_t *bad_service = NULL;
+    sm2_pki_service_ctx_t *untrusted_service = NULL;
     const uint8_t issuer[] = "CTRL_CA";
+    const uint8_t untrusted_issuer[] = "UNTRUSTED_CA";
     uint64_t base_now = test_now_unix();
     TEST_ASSERT(sm2_pki_service_create(
                     &bad_service, issuer, sizeof(issuer) - 1, 32, 0, base_now)
@@ -293,13 +295,35 @@ static void test_phase4_pki_controls_and_param_defense()
     TEST_ASSERT(cert_res.cert.field_mask == SM2_IC_FIELD_MASK_ALL,
         "Issued Mask Secure");
 
+    TEST_ASSERT(sm2_pki_service_create(&untrusted_service, untrusted_issuer,
+                    sizeof(untrusted_issuer) - 1, 16, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Untrusted Service Init");
+    const uint8_t untrusted_identity[] = "UNTRUSTED_NODE";
+    TEST_ASSERT(sm2_pki_identity_register(untrusted_service,
+                    untrusted_identity, sizeof(untrusted_identity) - 1,
+                    SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Untrusted Identity Register");
+    sm2_ic_cert_result_t untrusted_cert;
+    sm2_private_key_t untrusted_temp;
+    TEST_ASSERT(pki_issue_identity_cert(untrusted_service, untrusted_identity,
+                    sizeof(untrusted_identity) - 1, SM2_KU_DIGITAL_SIGNATURE,
+                    &untrusted_cert, &untrusted_temp),
+        "Issue Untrusted Cert");
+
     sm2_ec_point_t ca_pub;
+    sm2_ec_point_t untrusted_ca_pub;
     sm2_private_key_t wrong_ca_priv;
     sm2_ec_point_t wrong_ca_pub;
     sm2_ic_cert_result_t tampered_cert_res;
     TEST_ASSERT(
         sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
         "Get CA Pub");
+    TEST_ASSERT(sm2_pki_service_get_ca_public_key(
+                    untrusted_service, &untrusted_ca_pub)
+            == SM2_PKI_SUCCESS,
+        "Get Untrusted CA Pub");
     TEST_ASSERT(test_generate_sm2_keypair(&wrong_ca_priv, &wrong_ca_pub),
         "Generate Wrong CA");
 
@@ -321,6 +345,10 @@ static void test_phase4_pki_controls_and_param_defense()
         sm2_pki_client_import_cert(client, &cert_res, &temp_priv, &wrong_ca_pub)
             == SM2_PKI_ERR_VERIFY,
         "Import Wrong CA Reject");
+    TEST_ASSERT(sm2_pki_client_import_cert(
+                    client, &untrusted_cert, &untrusted_temp, &untrusted_ca_pub)
+            == SM2_PKI_ERR_VERIFY,
+        "Import Untrusted CA Reject");
     TEST_ASSERT(sm2_pki_client_import_cert(
                     client, &tampered_cert_res, &temp_priv, &ca_pub)
             == SM2_PKI_ERR_VERIFY,
@@ -393,6 +421,7 @@ static void test_phase4_pki_controls_and_param_defense()
 
     sm2_pki_client_destroy(&client);
     sm2_pki_client_destroy(&client);
+    sm2_pki_service_destroy(&untrusted_service);
     sm2_pki_service_destroy(&service);
     sm2_pki_service_destroy(&service);
     TEST_PASS();

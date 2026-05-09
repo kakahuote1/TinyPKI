@@ -127,7 +127,7 @@ extern "C"
         const sm2_pki_epoch_root_vote_t *votes, size_t vote_count,
         size_t threshold, sm2_pki_epoch_quorum_result_t *result);
 
-    /* Imports a certificate and clears cached signing state for old keys. */
+    /* Imports a certificate from a CA already present in the trust store. */
     sm2_pki_error_t sm2_pki_client_import_cert(sm2_pki_client_ctx_t *ctx,
         const sm2_ic_cert_result_t *cert_result,
         const sm2_private_key_t *temp_private_key,
