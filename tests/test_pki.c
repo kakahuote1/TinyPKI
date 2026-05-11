@@ -341,6 +341,20 @@ static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
         signer, signer, now_ts, NULL);
 }
 
+static size_t pki_client_evidence_cache_count(sm2_pki_client_ctx_t *client)
+{
+    const sm2_pki_client_state_t *state = client;
+    size_t count = 0;
+    if (!state)
+        return 0;
+    for (size_t i = 0; i < SM2_PKI_VERIFIED_EVIDENCE_CACHE_CAPACITY; i++)
+    {
+        if (state->evidence_cache[i].used)
+            count++;
+    }
+    return count;
+}
+
 /* Split by theme to keep PKI tests focused on flow, revocation and security
  * policy. */
 #include "test_pki_flow.inc"

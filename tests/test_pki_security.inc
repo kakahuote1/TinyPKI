@@ -1201,6 +1201,13 @@ static void test_phase140_epoch_bundle_requires_matching_checkpoint()
     TEST_ASSERT(sm2_pki_verify(verifier, &request_initial, auth_now, &matched)
             == SM2_PKI_SUCCESS,
         "Verify Initial Evidence");
+    TEST_ASSERT(pki_client_evidence_cache_count(verifier) == 1,
+        "Initial Evidence Cached");
+    TEST_ASSERT(sm2_pki_verify(verifier, &request_initial, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Replay Same Evidence Uses Bound Cache");
+    TEST_ASSERT(pki_client_evidence_cache_count(verifier) == 1,
+        "Replay Does Not Duplicate Cache");
 
     sm2_pki_evidence_bundle_t wrong_revocation = evidence_initial;
     wrong_revocation.revocation_proof.absence_proof.target_serial ^= 0x01U;
@@ -1235,6 +1242,8 @@ static void test_phase140_epoch_bundle_requires_matching_checkpoint()
         sm2_pki_verify(verifier, &request_updated, auth_now + 20, &matched)
             == SM2_PKI_SUCCESS,
         "Verify Updated Evidence");
+    TEST_ASSERT(pki_client_evidence_cache_count(verifier) == 2,
+        "Updated Evidence Cached Separately");
     TEST_ASSERT(
         sm2_pki_verify(verifier, &request_initial, auth_now + 20, &matched)
             == SM2_PKI_ERR_VERIFY,
