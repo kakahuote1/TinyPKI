@@ -129,6 +129,7 @@ typedef struct
 } sm2_pki_identity_entry_t;
 
 #define SM2_PKI_INITIAL_CERT_CAPACITY 16U
+#define SM2_PKI_VERIFIED_EVIDENCE_CACHE_CAPACITY 16U
 
 typedef struct
 {
@@ -138,6 +139,25 @@ typedef struct
     uint64_t valid_until;
     bool revoked;
 } sm2_pki_cert_entry_t;
+
+typedef struct
+{
+    bool used;
+    uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
+    size_t authority_id_len;
+    size_t pinned_ca_index;
+    uint64_t serial_number;
+    uint8_t cert_commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN];
+    uint8_t epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
+    uint8_t proof_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
+    uint64_t epoch_version;
+    uint64_t revocation_root_version;
+    uint8_t revocation_root_hash[SM2_REV_MERKLE_HASH_LEN];
+    uint64_t issuance_root_version;
+    uint8_t issuance_root_hash[SM2_REV_MERKLE_HASH_LEN];
+    uint64_t valid_until;
+    uint64_t last_used_counter;
+} sm2_pki_verified_evidence_cache_entry_t;
 
 struct sm2_pki_service_ctx_st
 {
@@ -184,6 +204,9 @@ struct sm2_pki_client_ctx_st
     sm2_auth_trust_store_t trust_store;
     sm2_pki_service_state_t *revocation_service;
     sm2_pki_epoch_cache_entry_t epoch_root_cache[SM2_AUTH_MAX_CA_STORE];
+    sm2_pki_verified_evidence_cache_entry_t
+        evidence_cache[SM2_PKI_VERIFIED_EVIDENCE_CACHE_CAPACITY];
+    uint64_t evidence_cache_counter;
 
     sm2_pki_transparency_witness_t
         transparency_witnesses[SM2_PKI_TRANSPARENCY_MAX_WITNESSES];
