@@ -103,6 +103,7 @@ typedef struct
 {
     bool used;
     bool has_epoch_record;
+    bool has_epoch_digest;
     bool has_pinned_ca_index;
     bool has_revocation_root;
     bool has_issuance_root;
