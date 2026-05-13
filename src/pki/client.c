@@ -138,7 +138,7 @@ static sm2_pki_error_t pki_client_check_epoch_root_freshness(
 
     if (root_record->epoch_version < entry->highest_seen_epoch_version)
         return SM2_PKI_ERR_VERIFY;
-    if (entry->has_epoch_record
+    if (entry->has_epoch_digest
         && root_record->epoch_version == entry->highest_seen_epoch_version
         && memcmp(
                epoch_digest, entry->epoch_digest, SM2_PKI_EPOCH_ROOT_DIGEST_LEN)
@@ -248,6 +248,7 @@ static sm2_pki_error_t pki_client_accept_epoch_root_record(
     memcpy(entry->epoch_digest, epoch_digest, sizeof(entry->epoch_digest));
     entry->used = true;
     entry->has_epoch_record = true;
+    entry->has_epoch_digest = true;
     entry->has_pinned_ca_index = true;
     entry->pinned_ca_index = matched_ca_index;
     if (root_record->epoch_version > entry->highest_seen_epoch_version)
@@ -317,6 +318,15 @@ static void pki_client_cache_reset(sm2_pki_client_state_t *state)
         return;
     memset(state->evidence_cache, 0, sizeof(state->evidence_cache));
     state->evidence_cache_counter = 0;
+}
+
+static void pki_client_epoch_cache_drop_checkpoints(
+    sm2_pki_client_state_t *state)
+{
+    if (!state)
+        return;
+    for (size_t i = 0; i < SM2_AUTH_MAX_CA_STORE; i++)
+        state->epoch_root_cache[i].has_epoch_record = false;
 }
 
 static void pki_client_cache_u64_to_be(uint64_t v, uint8_t out[8])
@@ -679,8 +689,9 @@ static bool pki_client_public_keys_equal(
         && memcmp(a->y, b->y, sizeof(a->y)) == 0;
 }
 
-static bool pki_client_trust_store_contains_ca(
-    const sm2_pki_client_state_t *state, const sm2_ec_point_t *ca_public_key)
+static bool pki_client_find_trusted_ca_index(
+    const sm2_pki_client_state_t *state, const sm2_ec_point_t *ca_public_key,
+    size_t *matched_ca_index)
 {
     if (!state || !ca_public_key || state->trust_store.count == 0)
         return false;
@@ -690,10 +701,18 @@ static bool pki_client_trust_store_contains_ca(
         if (pki_client_public_keys_equal(
                 &state->trust_store.ca_pub_keys[i], ca_public_key))
         {
+            if (matched_ca_index)
+                *matched_ca_index = i;
             return true;
         }
     }
     return false;
+}
+
+static bool pki_client_trust_store_contains_ca(
+    const sm2_pki_client_state_t *state, const sm2_ec_point_t *ca_public_key)
+{
+    return pki_client_find_trusted_ca_index(state, ca_public_key, NULL);
 }
 
 static sm2_pki_error_t pki_client_validate_transparency_policy(
@@ -1099,7 +1118,7 @@ sm2_pki_error_t sm2_pki_client_set_transparency_policy(
     state->transparency_policy.witness_count = policy->witness_count;
     state->transparency_policy.threshold = policy->threshold;
     state->has_transparency_policy = true;
-    memset(state->epoch_root_cache, 0, sizeof(state->epoch_root_cache));
+    pki_client_epoch_cache_drop_checkpoints(state);
     pki_client_cache_reset(state);
     return SM2_PKI_SUCCESS;
 }
@@ -1133,6 +1152,249 @@ sm2_pki_error_t sm2_pki_client_import_epoch_checkpoint(
 
     return pki_client_accept_epoch_root_record(
         state, &checkpoint->epoch_root_record, now_ts, matched_ca_index);
+}
+
+sm2_pki_error_t sm2_pki_client_export_persisted_state(
+    const sm2_pki_client_ctx_t *ctx, sm2_pki_client_persisted_state_t *out)
+{
+    const sm2_pki_client_state_t *state = pki_client_state_const(ctx);
+    if (!ctx || !ctx->initialized || !state || !out)
+        return SM2_PKI_ERR_PARAM;
+
+    memset(out, 0, sizeof(*out));
+    out->format_version = SM2_PKI_CLIENT_PERSISTED_STATE_VERSION;
+
+    for (size_t i = 0; i < SM2_AUTH_MAX_CA_STORE; i++)
+    {
+        const sm2_pki_epoch_cache_entry_t *entry = &state->epoch_root_cache[i];
+        if (!entry->used || !entry->has_pinned_ca_index
+            || !entry->has_epoch_digest || !entry->has_revocation_root
+            || !entry->has_issuance_root)
+        {
+            continue;
+        }
+        if (entry->pinned_ca_index >= state->trust_store.count)
+            return SM2_PKI_ERR_STATE;
+        if (out->record_count >= SM2_PKI_CLIENT_PERSISTED_STATE_MAX_AUTHORITIES)
+        {
+            return SM2_PKI_ERR_STATE;
+        }
+
+        sm2_pki_client_persisted_authority_state_t *record
+            = &out->records[out->record_count++];
+        memcpy(
+            record->authority_id, entry->authority_id, entry->authority_id_len);
+        record->authority_id_len = entry->authority_id_len;
+        record->ca_public_key
+            = state->trust_store.ca_pub_keys[entry->pinned_ca_index];
+        record->highest_seen_epoch_version = entry->highest_seen_epoch_version;
+        memcpy(record->epoch_digest, entry->epoch_digest,
+            sizeof(record->epoch_digest));
+        record->highest_seen_revocation_root_version
+            = entry->highest_seen_revocation_root_version;
+        memcpy(record->latest_revocation_root_hash,
+            entry->latest_revocation_root_hash,
+            sizeof(record->latest_revocation_root_hash));
+        record->highest_seen_issuance_root_version
+            = entry->highest_seen_issuance_root_version;
+        memcpy(record->latest_issuance_root_hash,
+            entry->latest_issuance_root_hash,
+            sizeof(record->latest_issuance_root_hash));
+    }
+
+    return SM2_PKI_SUCCESS;
+}
+
+static bool pki_client_persisted_authority_duplicate(
+    const sm2_pki_client_persisted_state_t *state, size_t index)
+{
+    const sm2_pki_client_persisted_authority_state_t *record
+        = &state->records[index];
+    for (size_t i = 0; i < index; i++)
+    {
+        const sm2_pki_client_persisted_authority_state_t *prior
+            = &state->records[i];
+        if (record->authority_id_len == prior->authority_id_len
+            && memcmp(record->authority_id, prior->authority_id,
+                   record->authority_id_len)
+                == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static sm2_pki_error_t pki_client_check_persisted_record_conflict(
+    const sm2_pki_epoch_cache_entry_t *entry,
+    const sm2_pki_client_persisted_authority_state_t *record,
+    size_t matched_ca_index)
+{
+    if (!entry || !record)
+        return SM2_PKI_SUCCESS;
+    if (entry->has_pinned_ca_index
+        && entry->pinned_ca_index != matched_ca_index)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+    if (record->highest_seen_epoch_version < entry->highest_seen_epoch_version)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+    if (entry->has_epoch_digest
+        && record->highest_seen_epoch_version
+            == entry->highest_seen_epoch_version
+        && memcmp(record->epoch_digest, entry->epoch_digest,
+               sizeof(record->epoch_digest))
+            != 0)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+    if (entry->has_revocation_root)
+    {
+        if (record->highest_seen_revocation_root_version
+            < entry->highest_seen_revocation_root_version)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+        if (record->highest_seen_revocation_root_version
+                == entry->highest_seen_revocation_root_version
+            && memcmp(record->latest_revocation_root_hash,
+                   entry->latest_revocation_root_hash,
+                   sizeof(record->latest_revocation_root_hash))
+                != 0)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+    }
+    if (entry->has_issuance_root)
+    {
+        if (record->highest_seen_issuance_root_version
+            < entry->highest_seen_issuance_root_version)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+        if (record->highest_seen_issuance_root_version
+                == entry->highest_seen_issuance_root_version
+            && memcmp(record->latest_issuance_root_hash,
+                   entry->latest_issuance_root_hash,
+                   sizeof(record->latest_issuance_root_hash))
+                != 0)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+    }
+    return SM2_PKI_SUCCESS;
+}
+
+static bool pki_client_cached_checkpoint_matches_persisted(
+    const sm2_pki_epoch_cache_entry_t *entry,
+    const sm2_pki_client_persisted_authority_state_t *record)
+{
+    return entry && record && entry->has_epoch_record
+        && entry->epoch_record.epoch_version
+        == record->highest_seen_epoch_version
+        && memcmp(entry->epoch_digest, record->epoch_digest,
+               sizeof(record->epoch_digest))
+        == 0;
+}
+
+sm2_pki_error_t sm2_pki_client_import_persisted_state(sm2_pki_client_ctx_t *ctx,
+    const sm2_pki_client_persisted_state_t *persisted)
+{
+    sm2_pki_client_state_t *state = pki_client_state(ctx);
+    size_t matched_ca_indices[SM2_PKI_CLIENT_PERSISTED_STATE_MAX_AUTHORITIES];
+    size_t new_record_count = 0;
+    size_t free_entry_count = 0;
+
+    if (!ctx || !ctx->initialized || !state || !persisted)
+        return SM2_PKI_ERR_PARAM;
+    if (persisted->format_version != SM2_PKI_CLIENT_PERSISTED_STATE_VERSION
+        || persisted->record_count
+            > SM2_PKI_CLIENT_PERSISTED_STATE_MAX_AUTHORITIES)
+    {
+        return SM2_PKI_ERR_PARAM;
+    }
+
+    for (size_t i = 0; i < SM2_AUTH_MAX_CA_STORE; i++)
+    {
+        if (!state->epoch_root_cache[i].used)
+            free_entry_count++;
+    }
+
+    for (size_t i = 0; i < persisted->record_count; i++)
+    {
+        const sm2_pki_client_persisted_authority_state_t *record
+            = &persisted->records[i];
+        if (!pki_client_authority_id_valid(
+                record->authority_id, record->authority_id_len)
+            || record->highest_seen_epoch_version == 0)
+        {
+            return SM2_PKI_ERR_PARAM;
+        }
+        if (pki_client_persisted_authority_duplicate(persisted, i))
+            return SM2_PKI_ERR_VERIFY;
+        if (!pki_client_find_trusted_ca_index(
+                state, &record->ca_public_key, &matched_ca_indices[i]))
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+
+        const sm2_pki_epoch_cache_entry_t *entry
+            = pki_client_find_epoch_root_cache_entry(
+                state, record->authority_id, record->authority_id_len);
+        sm2_pki_error_t ret = pki_client_check_persisted_record_conflict(
+            entry, record, matched_ca_indices[i]);
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+        if (!entry)
+            new_record_count++;
+    }
+
+    if (new_record_count > free_entry_count)
+        return SM2_PKI_ERR_MEMORY;
+
+    for (size_t i = 0; i < persisted->record_count; i++)
+    {
+        const sm2_pki_client_persisted_authority_state_t *record
+            = &persisted->records[i];
+        sm2_pki_epoch_cache_entry_t *entry
+            = pki_client_ensure_epoch_root_cache_entry(
+                state, record->authority_id, record->authority_id_len);
+        if (!entry)
+            return SM2_PKI_ERR_MEMORY;
+
+        bool keep_cached_checkpoint
+            = pki_client_cached_checkpoint_matches_persisted(entry, record);
+        if (!keep_cached_checkpoint)
+            entry->has_epoch_record = false;
+
+        memcpy(entry->authority_id, record->authority_id,
+            record->authority_id_len);
+        entry->authority_id_len = record->authority_id_len;
+        entry->used = true;
+        entry->has_epoch_digest = true;
+        entry->has_pinned_ca_index = true;
+        entry->pinned_ca_index = matched_ca_indices[i];
+        entry->highest_seen_epoch_version = record->highest_seen_epoch_version;
+        memcpy(entry->epoch_digest, record->epoch_digest,
+            sizeof(entry->epoch_digest));
+        entry->highest_seen_revocation_root_version
+            = record->highest_seen_revocation_root_version;
+        memcpy(entry->latest_revocation_root_hash,
+            record->latest_revocation_root_hash,
+            sizeof(entry->latest_revocation_root_hash));
+        entry->has_revocation_root = true;
+        entry->highest_seen_issuance_root_version
+            = record->highest_seen_issuance_root_version;
+        memcpy(entry->latest_issuance_root_hash,
+            record->latest_issuance_root_hash,
+            sizeof(entry->latest_issuance_root_hash));
+        entry->has_issuance_root = true;
+    }
+
+    pki_client_cache_reset(state);
+    return SM2_PKI_SUCCESS;
 }
 
 sm2_pki_error_t sm2_pki_client_get_cert(

@@ -44,6 +44,30 @@ extern "C"
         size_t witness_signature_count;
     } sm2_pki_epoch_checkpoint_t;
 
+#define SM2_PKI_CLIENT_PERSISTED_STATE_VERSION 1U
+#define SM2_PKI_CLIENT_PERSISTED_STATE_MAX_AUTHORITIES 16U
+
+    typedef struct
+    {
+        uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
+        size_t authority_id_len;
+        sm2_ec_point_t ca_public_key;
+        uint64_t highest_seen_epoch_version;
+        uint8_t epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
+        uint64_t highest_seen_revocation_root_version;
+        uint8_t latest_revocation_root_hash[SM2_REV_MERKLE_HASH_LEN];
+        uint64_t highest_seen_issuance_root_version;
+        uint8_t latest_issuance_root_hash[SM2_REV_MERKLE_HASH_LEN];
+    } sm2_pki_client_persisted_authority_state_t;
+
+    typedef struct
+    {
+        uint32_t format_version;
+        size_t record_count;
+        sm2_pki_client_persisted_authority_state_t
+            records[SM2_PKI_CLIENT_PERSISTED_STATE_MAX_AUTHORITIES];
+    } sm2_pki_client_persisted_state_t;
+
     typedef struct
     {
         uint8_t epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
@@ -84,6 +108,19 @@ extern "C"
     sm2_pki_error_t sm2_pki_client_import_epoch_checkpoint(
         sm2_pki_client_ctx_t *ctx, const sm2_pki_epoch_checkpoint_t *checkpoint,
         uint64_t now_ts);
+
+    /*
+     * Exports/imports local anti-rollback high-water marks for durable storage.
+     * Imported high-water marks reject stale checkpoints but are not accepted
+     * as cached checkpoints for evidence verification.
+     */
+    sm2_pki_error_t sm2_pki_client_export_persisted_state(
+        const sm2_pki_client_ctx_t *ctx,
+        sm2_pki_client_persisted_state_t *state);
+
+    sm2_pki_error_t sm2_pki_client_import_persisted_state(
+        sm2_pki_client_ctx_t *ctx,
+        const sm2_pki_client_persisted_state_t *state);
 
     sm2_pki_error_t sm2_pki_client_get_cert(
         const sm2_pki_client_ctx_t *ctx, const sm2_implicit_cert_t **cert);
