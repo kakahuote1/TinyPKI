@@ -29,6 +29,7 @@ typedef struct
 } pki_client_root_verify_ctx_t;
 
 #define SM2_PKI_WITNESS_PAYLOAD_MAX 1024U
+#define SM2_PKI_SM3_BLOCK_LEN 64U
 
 static sm2_ic_error_t pki_client_root_record_verify_cb(void *user_ctx,
     const uint8_t *data, size_t data_len, const uint8_t *signature,
@@ -373,6 +374,12 @@ static void pki_client_cache_u64_to_be(uint64_t v, uint8_t out[8])
         out[7U - i] = (uint8_t)(v >> (i * 8U));
 }
 
+static void pki_client_cache_u32_to_be(uint32_t v, uint8_t out[4])
+{
+    for (size_t i = 0; i < 4U; i++)
+        out[3U - i] = (uint8_t)(v >> (i * 8U));
+}
+
 static sm2_pki_error_t pki_client_cache_mix(
     uint8_t digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN], const void *data,
     size_t data_len)
@@ -405,6 +412,169 @@ static sm2_pki_error_t pki_client_cache_mix_byte(
     uint8_t digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN], uint8_t v)
 {
     return pki_client_cache_mix(digest, &v, sizeof(v));
+}
+
+static bool pki_client_bytes_equal_ct(
+    const uint8_t *a, const uint8_t *b, size_t len)
+{
+    if (!a || !b)
+        return false;
+
+    uint8_t diff = 0;
+    for (size_t i = 0; i < len; i++)
+        diff |= (uint8_t)(a[i] ^ b[i]);
+    return diff == 0;
+}
+
+static sm2_pki_error_t pki_client_hmac_sm3(const uint8_t *key, size_t key_len,
+    const uint8_t *data, size_t data_len,
+    uint8_t out[SM2_PKI_EPOCH_ROOT_DIGEST_LEN])
+{
+    if (!key || key_len == 0 || (!data && data_len > 0U) || !out)
+        return SM2_PKI_ERR_PARAM;
+    if (data_len > SIZE_MAX - SM2_PKI_SM3_BLOCK_LEN)
+        return SM2_PKI_ERR_MEMORY;
+
+    uint8_t key_block[SM2_PKI_SM3_BLOCK_LEN];
+    uint8_t key_hash[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
+    uint8_t inner_hash[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
+    uint8_t outer[SM2_PKI_SM3_BLOCK_LEN + SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
+    memset(key_block, 0, sizeof(key_block));
+    memset(key_hash, 0, sizeof(key_hash));
+    memset(inner_hash, 0, sizeof(inner_hash));
+    memset(outer, 0, sizeof(outer));
+
+    sm2_pki_error_t ret = SM2_PKI_SUCCESS;
+    if (key_len > SM2_PKI_SM3_BLOCK_LEN)
+    {
+        ret = sm2_pki_sm3_hash(key, key_len, key_hash);
+        if (ret != SM2_PKI_SUCCESS)
+            goto cleanup_stack;
+        memcpy(key_block, key_hash, sizeof(key_hash));
+    }
+    else
+    {
+        memcpy(key_block, key, key_len);
+    }
+
+    size_t inner_len = SM2_PKI_SM3_BLOCK_LEN + data_len;
+    uint8_t *inner = (uint8_t *)malloc(inner_len);
+    if (!inner)
+    {
+        ret = SM2_PKI_ERR_MEMORY;
+        goto cleanup_stack;
+    }
+
+    for (size_t i = 0; i < SM2_PKI_SM3_BLOCK_LEN; i++)
+        inner[i] = (uint8_t)(key_block[i] ^ 0x36U);
+    if (data_len > 0U)
+        memcpy(inner + SM2_PKI_SM3_BLOCK_LEN, data, data_len);
+    ret = sm2_pki_sm3_hash(inner, inner_len, inner_hash);
+    sm2_secure_memzero(inner, inner_len);
+    free(inner);
+    if (ret != SM2_PKI_SUCCESS)
+        goto cleanup_stack;
+
+    for (size_t i = 0; i < SM2_PKI_SM3_BLOCK_LEN; i++)
+        outer[i] = (uint8_t)(key_block[i] ^ 0x5CU);
+    memcpy(outer + SM2_PKI_SM3_BLOCK_LEN, inner_hash, sizeof(inner_hash));
+    ret = sm2_pki_sm3_hash(outer, sizeof(outer), out);
+
+cleanup_stack:
+    sm2_secure_memzero(key_block, sizeof(key_block));
+    sm2_secure_memzero(key_hash, sizeof(key_hash));
+    sm2_secure_memzero(inner_hash, sizeof(inner_hash));
+    sm2_secure_memzero(outer, sizeof(outer));
+    return ret;
+}
+
+static sm2_pki_error_t pki_client_persisted_state_shape_valid(
+    const sm2_pki_client_persisted_state_t *state)
+{
+    if (!state)
+        return SM2_PKI_ERR_PARAM;
+    if (state->format_version != SM2_PKI_CLIENT_PERSISTED_STATE_VERSION
+        || state->record_count > SM2_PKI_CLIENT_PERSISTED_STATE_MAX_AUTHORITIES)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+    for (size_t i = 0; i < state->record_count; i++)
+    {
+        const sm2_pki_client_persisted_authority_state_t *record
+            = &state->records[i];
+        if (!pki_client_authority_id_valid(
+                record->authority_id, record->authority_id_len))
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+    }
+    return SM2_PKI_SUCCESS;
+}
+
+static sm2_pki_error_t pki_client_persisted_storage_slot_tag(
+    const sm2_pki_client_persisted_storage_slot_t *slot,
+    const uint8_t *device_secret, size_t device_secret_len,
+    uint8_t tag[SM2_PKI_CLIENT_PERSISTED_STORAGE_TAG_LEN])
+{
+    static const uint8_t domain[] = "TinyPKI persisted storage slot v1";
+    if (!slot || !tag)
+        return SM2_PKI_ERR_PARAM;
+
+    size_t auth_len = sizeof(domain) - 1U + 4U + 4U + 8U + sizeof(slot->state);
+    uint8_t *auth = (uint8_t *)malloc(auth_len);
+    if (!auth)
+        return SM2_PKI_ERR_MEMORY;
+
+    size_t off = 0;
+    memcpy(auth + off, domain, sizeof(domain) - 1U);
+    off += sizeof(domain) - 1U;
+    pki_client_cache_u32_to_be(slot->magic, auth + off);
+    off += 4U;
+    pki_client_cache_u32_to_be(slot->format_version, auth + off);
+    off += 4U;
+    pki_client_cache_u64_to_be(slot->sequence, auth + off);
+    off += 8U;
+    memcpy(auth + off, &slot->state, sizeof(slot->state));
+    off += sizeof(slot->state);
+
+    sm2_pki_error_t ret = off == auth_len
+        ? pki_client_hmac_sm3(
+              device_secret, device_secret_len, auth, auth_len, tag)
+        : SM2_PKI_ERR_STATE;
+    sm2_secure_memzero(auth, auth_len);
+    free(auth);
+    return ret;
+}
+
+static bool pki_client_persisted_storage_slot_valid(
+    const sm2_pki_client_persisted_storage_slot_t *slot,
+    const uint8_t *device_secret, size_t device_secret_len)
+{
+    if (!slot || !device_secret || device_secret_len == 0)
+        return false;
+    if (slot->magic != SM2_PKI_CLIENT_PERSISTED_STORAGE_MAGIC
+        || slot->format_version != SM2_PKI_CLIENT_PERSISTED_STORAGE_VERSION
+        || slot->sequence == 0)
+    {
+        return false;
+    }
+    if (pki_client_persisted_state_shape_valid(&slot->state) != SM2_PKI_SUCCESS)
+    {
+        return false;
+    }
+
+    uint8_t expected[SM2_PKI_CLIENT_PERSISTED_STORAGE_TAG_LEN];
+    memset(expected, 0, sizeof(expected));
+    sm2_pki_error_t ret = pki_client_persisted_storage_slot_tag(
+        slot, device_secret, device_secret_len, expected);
+    if (ret != SM2_PKI_SUCCESS)
+    {
+        sm2_secure_memzero(expected, sizeof(expected));
+        return false;
+    }
+    bool ok = pki_client_bytes_equal_ct(expected, slot->tag, sizeof(expected));
+    sm2_secure_memzero(expected, sizeof(expected));
+    return ok;
 }
 
 static sm2_pki_error_t pki_client_evidence_proof_digest(
@@ -1552,6 +1722,101 @@ sm2_pki_error_t sm2_pki_client_import_persisted_state(sm2_pki_client_ctx_t *ctx,
     }
 
     pki_client_cache_reset(state);
+    return SM2_PKI_SUCCESS;
+}
+
+void sm2_pki_client_persisted_storage_init(
+    sm2_pki_client_persisted_storage_t *storage)
+{
+    if (!storage)
+        return;
+    memset(storage, 0, sizeof(*storage));
+}
+
+sm2_pki_error_t sm2_pki_client_persisted_storage_store(
+    sm2_pki_client_persisted_storage_t *storage,
+    const sm2_pki_client_persisted_state_t *state, const uint8_t *device_secret,
+    size_t device_secret_len)
+{
+    if (!storage || !state || !device_secret || device_secret_len == 0)
+        return SM2_PKI_ERR_PARAM;
+
+    sm2_pki_error_t ret = pki_client_persisted_state_shape_valid(state);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+
+    bool valid[SM2_PKI_CLIENT_PERSISTED_STORAGE_SLOT_COUNT];
+    memset(valid, 0, sizeof(valid));
+    uint64_t highest_sequence = 0;
+    for (size_t i = 0; i < SM2_PKI_CLIENT_PERSISTED_STORAGE_SLOT_COUNT; i++)
+    {
+        valid[i] = pki_client_persisted_storage_slot_valid(
+            &storage->slots[i], device_secret, device_secret_len);
+        if (valid[i] && storage->slots[i].sequence > highest_sequence)
+            highest_sequence = storage->slots[i].sequence;
+    }
+    if (highest_sequence == UINT64_MAX)
+        return SM2_PKI_ERR_STATE;
+
+    size_t target = 0;
+    if (!valid[0])
+        target = 0;
+    else if (!valid[1])
+        target = 1;
+    else
+        target
+            = storage->slots[0].sequence <= storage->slots[1].sequence ? 0 : 1;
+
+    sm2_pki_client_persisted_storage_slot_t candidate;
+    memset(&candidate, 0, sizeof(candidate));
+    candidate.magic = SM2_PKI_CLIENT_PERSISTED_STORAGE_MAGIC;
+    candidate.format_version = SM2_PKI_CLIENT_PERSISTED_STORAGE_VERSION;
+    candidate.sequence = highest_sequence + 1U;
+    candidate.state = *state;
+
+    ret = pki_client_persisted_storage_slot_tag(
+        &candidate, device_secret, device_secret_len, candidate.tag);
+    if (ret != SM2_PKI_SUCCESS)
+    {
+        sm2_secure_memzero(&candidate, sizeof(candidate));
+        return ret;
+    }
+
+    storage->slots[target] = candidate;
+    sm2_secure_memzero(&candidate, sizeof(candidate));
+    return SM2_PKI_SUCCESS;
+}
+
+sm2_pki_error_t sm2_pki_client_persisted_storage_load(
+    const sm2_pki_client_persisted_storage_t *storage,
+    sm2_pki_client_persisted_state_t *state, const uint8_t *device_secret,
+    size_t device_secret_len, uint64_t *selected_sequence)
+{
+    if (!storage || !state || !device_secret || device_secret_len == 0)
+        return SM2_PKI_ERR_PARAM;
+
+    size_t selected = SM2_PKI_CLIENT_PERSISTED_STORAGE_SLOT_COUNT;
+    uint64_t highest_sequence = 0;
+    for (size_t i = 0; i < SM2_PKI_CLIENT_PERSISTED_STORAGE_SLOT_COUNT; i++)
+    {
+        if (!pki_client_persisted_storage_slot_valid(
+                &storage->slots[i], device_secret, device_secret_len))
+        {
+            continue;
+        }
+        if (selected == SM2_PKI_CLIENT_PERSISTED_STORAGE_SLOT_COUNT
+            || storage->slots[i].sequence > highest_sequence)
+        {
+            selected = i;
+            highest_sequence = storage->slots[i].sequence;
+        }
+    }
+    if (selected == SM2_PKI_CLIENT_PERSISTED_STORAGE_SLOT_COUNT)
+        return SM2_PKI_ERR_NOT_FOUND;
+
+    *state = storage->slots[selected].state;
+    if (selected_sequence)
+        *selected_sequence = storage->slots[selected].sequence;
     return SM2_PKI_SUCCESS;
 }
 

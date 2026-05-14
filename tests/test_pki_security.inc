@@ -1379,6 +1379,171 @@ static void test_phase137_offline_checkpoint_export_syncs_peer_state()
     TEST_PASS();
 }
 
+static void test_phase137_persisted_storage_double_slot_recovery()
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P137_STORAGE_CA";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 32, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+
+    const uint8_t identity[] = "P137_STORAGE_NODE";
+    TEST_ASSERT(sm2_pki_identity_register(service, identity,
+                    sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Identity Register");
+
+    sm2_ic_cert_request_t req;
+    sm2_private_key_t temp_priv;
+    sm2_ic_cert_result_t cert_res;
+    TEST_ASSERT(
+        pki_create_and_authorize_request(service, identity,
+            sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE, &req, &temp_priv),
+        "Create Request");
+    TEST_ASSERT(
+        test_pki_issue_cert(service, &req, &cert_res) == SM2_PKI_SUCCESS,
+        "Issue Cert");
+
+    sm2_ec_point_t ca_pub;
+    TEST_ASSERT(
+        sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
+        "Get CA Pub");
+
+    sm2_pki_client_ctx_t *signer = NULL;
+    sm2_pki_client_ctx_t *verifier = NULL;
+    sm2_pki_client_ctx_t *restarted = NULL;
+    TEST_ASSERT(
+        sm2_pki_client_create(&signer, &ca_pub, service) == SM2_PKI_SUCCESS,
+        "Signer Init");
+    TEST_ASSERT(
+        sm2_pki_client_import_cert(signer, &cert_res, &temp_priv, &ca_pub)
+            == SM2_PKI_SUCCESS,
+        "Signer Import");
+    TEST_ASSERT(
+        sm2_pki_client_create(&verifier, &ca_pub, NULL) == SM2_PKI_SUCCESS,
+        "Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Verifier Witness Policy");
+
+    const uint8_t msg[] = "P137_STORAGE_STATE";
+    uint64_t auth_now = test_cert_now(&cert_res.cert);
+    sm2_auth_signature_t sig_initial;
+    sm2_auth_signature_t sig_refreshed;
+    sm2_pki_evidence_bundle_t evidence_initial;
+    sm2_pki_evidence_bundle_t evidence_refreshed;
+    sm2_pki_verify_request_t request_initial;
+    sm2_pki_verify_request_t request_refreshed;
+    TEST_ASSERT(
+        pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1, auth_now,
+            &sig_initial, &evidence_initial, &request_initial),
+        "Build Initial Request");
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, signer, auth_now, NULL),
+        "Verifier Imports Initial Checkpoint");
+
+    sm2_pki_client_persisted_state_t state_initial;
+    memset(&state_initial, 0, sizeof(state_initial));
+    TEST_ASSERT(sm2_pki_client_export_persisted_state(verifier, &state_initial)
+            == SM2_PKI_SUCCESS,
+        "Export Initial State");
+
+    sm2_pki_client_persisted_storage_t storage;
+    sm2_pki_client_persisted_storage_init(&storage);
+    const uint8_t device_secret[] = "P137_STORAGE_DEVICE_SECRET";
+    const uint8_t wrong_secret[] = "P137_STORAGE_WRONG_SECRET";
+    TEST_ASSERT(sm2_pki_client_persisted_storage_store(&storage, &state_initial,
+                    device_secret, sizeof(device_secret) - 1)
+            == SM2_PKI_SUCCESS,
+        "Store Initial State");
+
+    TEST_ASSERT(
+        sm2_pki_service_refresh_root(service, auth_now + 10) == SM2_PKI_SUCCESS,
+        "Refresh Epoch Root");
+    TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
+                    auth_now + 10, &sig_refreshed, &evidence_refreshed,
+                    &request_refreshed),
+        "Build Refreshed Request");
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, signer, auth_now + 10, NULL),
+        "Verifier Imports Refreshed Checkpoint");
+
+    sm2_pki_client_persisted_state_t state_refreshed;
+    memset(&state_refreshed, 0, sizeof(state_refreshed));
+    TEST_ASSERT(
+        sm2_pki_client_export_persisted_state(verifier, &state_refreshed)
+            == SM2_PKI_SUCCESS,
+        "Export Refreshed State");
+    TEST_ASSERT(state_refreshed.records[0].highest_seen_epoch_version
+            > state_initial.records[0].highest_seen_epoch_version,
+        "Refreshed State Advanced");
+    TEST_ASSERT(sm2_pki_client_persisted_storage_store(&storage,
+                    &state_refreshed, device_secret, sizeof(device_secret) - 1)
+            == SM2_PKI_SUCCESS,
+        "Store Refreshed State");
+
+    sm2_pki_client_persisted_state_t loaded;
+    memset(&loaded, 0, sizeof(loaded));
+    uint64_t selected_sequence = 0;
+    TEST_ASSERT(
+        sm2_pki_client_persisted_storage_load(&storage, &loaded, device_secret,
+            sizeof(device_secret) - 1, &selected_sequence)
+            == SM2_PKI_SUCCESS,
+        "Load Latest State");
+    TEST_ASSERT(selected_sequence == 2, "Latest Sequence Selected");
+    TEST_ASSERT(loaded.records[0].highest_seen_epoch_version
+            == state_refreshed.records[0].highest_seen_epoch_version,
+        "Loaded Refreshed State");
+
+    TEST_ASSERT(
+        sm2_pki_client_create(&restarted, &ca_pub, NULL) == SM2_PKI_SUCCESS,
+        "Restarted Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(restarted),
+        "Restarted Witness Policy");
+    TEST_ASSERT(
+        sm2_pki_client_import_persisted_state(restarted, &loaded, auth_now + 10)
+            == SM2_PKI_SUCCESS,
+        "Import Loaded State");
+    size_t matched = 0;
+    TEST_ASSERT(
+        sm2_pki_verify(restarted, &request_refreshed, auth_now + 10, &matched)
+            == SM2_PKI_SUCCESS,
+        "Loaded State Restores Verify");
+
+    size_t latest_slot
+        = storage.slots[0].sequence > storage.slots[1].sequence ? 0U : 1U;
+    size_t older_slot = latest_slot == 0U ? 1U : 0U;
+    storage.slots[latest_slot].state.records[0].epoch_digest[0] ^= 0x40U;
+    memset(&loaded, 0, sizeof(loaded));
+    selected_sequence = 0;
+    TEST_ASSERT(
+        sm2_pki_client_persisted_storage_load(&storage, &loaded, device_secret,
+            sizeof(device_secret) - 1, &selected_sequence)
+            == SM2_PKI_SUCCESS,
+        "Load Falls Back From Tampered Latest Slot");
+    TEST_ASSERT(selected_sequence == 1, "Fallback Sequence Selected");
+    TEST_ASSERT(loaded.records[0].highest_seen_epoch_version
+            == state_initial.records[0].highest_seen_epoch_version,
+        "Fallback Loaded Initial State");
+
+    TEST_ASSERT(sm2_pki_client_persisted_storage_load(&storage, &loaded,
+                    wrong_secret, sizeof(wrong_secret) - 1, NULL)
+            == SM2_PKI_ERR_NOT_FOUND,
+        "Wrong Device Secret Rejects Storage");
+    storage.slots[older_slot].tag[0] ^= 0x01U;
+    TEST_ASSERT(sm2_pki_client_persisted_storage_load(&storage, &loaded,
+                    device_secret, sizeof(device_secret) - 1, NULL)
+            == SM2_PKI_ERR_NOT_FOUND,
+        "All Invalid Slots Reject");
+
+    sm2_pki_client_destroy(&restarted);
+    sm2_pki_client_destroy(&verifier);
+    sm2_pki_client_destroy(&signer);
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
 static void test_phase138_service_binding_tracks_newer_root_versions()
 {
     sm2_pki_service_ctx_t *service = NULL;

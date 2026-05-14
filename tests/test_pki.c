@@ -384,6 +384,7 @@ void run_test_pki_suite(void)
     RUN_TEST(test_phase137_persisted_highwater_blocks_restart_rollback);
     RUN_TEST(test_phase137_persisted_checkpoint_restores_offline_verify);
     RUN_TEST(test_phase137_offline_checkpoint_export_syncs_peer_state);
+    RUN_TEST(test_phase137_persisted_storage_double_slot_recovery);
     RUN_TEST(test_phase138_service_binding_tracks_newer_root_versions);
     RUN_TEST(test_phase140_epoch_bundle_requires_matching_checkpoint);
     RUN_TEST(test_phase141_issuance_transparency_required_and_threshold);

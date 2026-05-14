@@ -46,6 +46,10 @@ extern "C"
 
 #define SM2_PKI_CLIENT_PERSISTED_STATE_VERSION 1U
 #define SM2_PKI_CLIENT_PERSISTED_STATE_MAX_AUTHORITIES 16U
+#define SM2_PKI_CLIENT_PERSISTED_STORAGE_VERSION 1U
+#define SM2_PKI_CLIENT_PERSISTED_STORAGE_MAGIC 0x54504B53U
+#define SM2_PKI_CLIENT_PERSISTED_STORAGE_SLOT_COUNT 2U
+#define SM2_PKI_CLIENT_PERSISTED_STORAGE_TAG_LEN SM2_PKI_EPOCH_ROOT_DIGEST_LEN
 
     typedef struct
     {
@@ -69,6 +73,21 @@ extern "C"
         sm2_pki_client_persisted_authority_state_t
             records[SM2_PKI_CLIENT_PERSISTED_STATE_MAX_AUTHORITIES];
     } sm2_pki_client_persisted_state_t;
+
+    typedef struct
+    {
+        uint32_t magic;
+        uint32_t format_version;
+        uint64_t sequence;
+        sm2_pki_client_persisted_state_t state;
+        uint8_t tag[SM2_PKI_CLIENT_PERSISTED_STORAGE_TAG_LEN];
+    } sm2_pki_client_persisted_storage_slot_t;
+
+    typedef struct
+    {
+        sm2_pki_client_persisted_storage_slot_t
+            slots[SM2_PKI_CLIENT_PERSISTED_STORAGE_SLOT_COUNT];
+    } sm2_pki_client_persisted_storage_t;
 
     typedef struct
     {
@@ -128,6 +147,19 @@ extern "C"
     sm2_pki_error_t sm2_pki_client_import_persisted_state(
         sm2_pki_client_ctx_t *ctx,
         const sm2_pki_client_persisted_state_t *state, uint64_t now_ts);
+
+    void sm2_pki_client_persisted_storage_init(
+        sm2_pki_client_persisted_storage_t *storage);
+
+    sm2_pki_error_t sm2_pki_client_persisted_storage_store(
+        sm2_pki_client_persisted_storage_t *storage,
+        const sm2_pki_client_persisted_state_t *state,
+        const uint8_t *device_secret, size_t device_secret_len);
+
+    sm2_pki_error_t sm2_pki_client_persisted_storage_load(
+        const sm2_pki_client_persisted_storage_t *storage,
+        sm2_pki_client_persisted_state_t *state, const uint8_t *device_secret,
+        size_t device_secret_len, uint64_t *selected_sequence);
 
     sm2_pki_error_t sm2_pki_client_get_cert(
         const sm2_pki_client_ctx_t *ctx, const sm2_implicit_cert_t **cert);
