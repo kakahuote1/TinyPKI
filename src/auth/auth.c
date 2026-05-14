@@ -100,9 +100,9 @@ static sm2_ic_error_t utils_public_key_validate(
         public_key, group, bn_ctx, point);
 
 cleanup:
-    EC_POINT_free(point);
+    EC_POINT_clear_free(point);
     BN_CTX_free(bn_ctx);
-    EC_GROUP_free(group);
+    EC_GROUP_clear_free(group);
     return ret;
 }
 
