@@ -200,6 +200,9 @@ static int pki_default_transparency_policy_init(void)
     memcpy(
         g_pki_default_witness.witness_id, witness_id, sizeof(witness_id) - 1);
     g_pki_default_witness.witness_id_len = sizeof(witness_id) - 1;
+    g_pki_default_witness.key_version = SM2_PKI_WITNESS_KEY_DEFAULT_VERSION;
+    g_pki_default_witness.valid_from = 0;
+    g_pki_default_witness.valid_until = SM2_PKI_WITNESS_KEY_VALID_UNTIL_OPEN;
     g_pki_default_witness.public_key = g_pki_default_witness_pub;
     g_pki_default_transparency_policy.witnesses = &g_pki_default_witness;
     g_pki_default_transparency_policy.witness_count = 1;

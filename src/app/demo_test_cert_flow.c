@@ -111,6 +111,9 @@ int main(void)
     const uint8_t witness_id[] = "demo-witness-0";
     memcpy(witness.witness_id, witness_id, sizeof(witness_id) - 1);
     witness.witness_id_len = sizeof(witness_id) - 1;
+    witness.key_version = SM2_PKI_WITNESS_KEY_DEFAULT_VERSION;
+    witness.valid_from = 0;
+    witness.valid_until = SM2_PKI_WITNESS_KEY_VALID_UNTIL_OPEN;
     witness.public_key = witness_pub;
     transparency_policy.witnesses = &witness;
     transparency_policy.witness_count = 1;

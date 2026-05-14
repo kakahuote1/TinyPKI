@@ -923,6 +923,13 @@ static bool pki_client_trust_store_contains_ca(
     return pki_client_find_trusted_ca_index(state, ca_public_key, NULL);
 }
 
+static bool pki_client_witness_active_at(
+    const sm2_pki_transparency_witness_t *witness, uint64_t now_ts)
+{
+    return witness && witness->key_version != 0 && witness->valid_until != 0
+        && witness->valid_from <= now_ts && now_ts <= witness->valid_until;
+}
+
 static sm2_pki_error_t pki_client_validate_transparency_policy(
     const sm2_pki_transparency_policy_t *policy)
 {
@@ -939,6 +946,11 @@ static sm2_pki_error_t pki_client_validate_transparency_policy(
         const sm2_pki_transparency_witness_t *witness = &policy->witnesses[i];
         if (!pki_client_witness_id_valid(
                 witness->witness_id, witness->witness_id_len))
+        {
+            return SM2_PKI_ERR_PARAM;
+        }
+        if (witness->key_version == 0 || witness->valid_until == 0
+            || witness->valid_until < witness->valid_from)
         {
             return SM2_PKI_ERR_PARAM;
         }
@@ -973,7 +985,8 @@ sm2_ic_error_t sm2_pki_transparency_policy_digest(
 
     size_t need = sizeof(tag) - 1U + 8U + 8U;
     for (size_t i = 0; i < policy->witness_count; i++)
-        need += 8U + policy->witnesses[i].witness_id_len + SM2_KEY_LEN * 2U;
+        need += (8U * 4U) + policy->witnesses[i].witness_id_len
+            + SM2_KEY_LEN * 2U;
 
     uint8_t *auth = (uint8_t *)malloc(need);
     if (!auth)
@@ -994,6 +1007,12 @@ sm2_ic_error_t sm2_pki_transparency_policy_digest(
         off += 8U;
         memcpy(auth + off, witness->witness_id, witness->witness_id_len);
         off += witness->witness_id_len;
+        pki_client_cache_u64_to_be(witness->key_version, auth + off);
+        off += 8U;
+        pki_client_cache_u64_to_be(witness->valid_from, auth + off);
+        off += 8U;
+        pki_client_cache_u64_to_be(witness->valid_until, auth + off);
+        off += 8U;
         memcpy(auth + off, witness->public_key.x, SM2_KEY_LEN);
         off += SM2_KEY_LEN;
         memcpy(auth + off, witness->public_key.y, SM2_KEY_LEN);
@@ -1078,12 +1097,14 @@ static sm2_pki_error_t pki_client_check_epoch_policy_binding(
 static sm2_pki_error_t pki_client_verify_witness_signature_set(
     const uint8_t *payload, size_t payload_len,
     const sm2_pki_transparency_witness_signature_t *signatures,
-    size_t signature_count, const sm2_pki_transparency_policy_t *policy);
+    size_t signature_count, const sm2_pki_transparency_policy_t *policy,
+    uint64_t now_ts);
 
 static sm2_pki_error_t pki_client_verify_witness_signature_set(
     const uint8_t *payload, size_t payload_len,
     const sm2_pki_transparency_witness_signature_t *signatures,
-    size_t signature_count, const sm2_pki_transparency_policy_t *policy)
+    size_t signature_count, const sm2_pki_transparency_policy_t *policy,
+    uint64_t now_ts)
 {
     bool used[SM2_PKI_TRANSPARENCY_MAX_WITNESSES];
     size_t valid_count = 0;
@@ -1127,6 +1148,8 @@ static sm2_pki_error_t pki_client_verify_witness_signature_set(
             {
                 continue;
             }
+            if (!pki_client_witness_active_at(witness, now_ts))
+                continue;
 
             sm2_auth_signature_t sig;
             memset(&sig, 0, sizeof(sig));
@@ -1150,7 +1173,8 @@ static sm2_pki_error_t pki_client_verify_witness_signature_set(
 static sm2_pki_error_t pki_client_verify_epoch_witness_threshold(
     const sm2_pki_epoch_root_record_t *root_record,
     const sm2_pki_transparency_witness_signature_t *signatures,
-    size_t signature_count, const sm2_pki_transparency_policy_t *policy)
+    size_t signature_count, const sm2_pki_transparency_policy_t *policy,
+    uint64_t now_ts)
 {
     uint8_t payload[SM2_PKI_WITNESS_PAYLOAD_MAX];
     size_t payload_len = 0;
@@ -1161,7 +1185,7 @@ static sm2_pki_error_t pki_client_verify_epoch_witness_threshold(
     if (ic_ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ic_ret);
     return pki_client_verify_witness_signature_set(
-        payload, payload_len, signatures, signature_count, policy);
+        payload, payload_len, signatures, signature_count, policy, now_ts);
 }
 
 static sm2_pki_error_t pki_client_verify_revocation_proof_with_epoch(
@@ -1470,7 +1494,7 @@ static sm2_pki_error_t pki_client_validate_epoch_checkpoint(
 
     return pki_client_verify_epoch_witness_threshold(
         &checkpoint->epoch_root_record, checkpoint->witness_signatures,
-        checkpoint->witness_signature_count, policy);
+        checkpoint->witness_signature_count, policy, now_ts);
 }
 
 sm2_pki_error_t sm2_pki_client_import_epoch_checkpoint(

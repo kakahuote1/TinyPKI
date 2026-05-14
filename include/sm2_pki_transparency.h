@@ -29,6 +29,8 @@ extern "C"
 #define SM2_PKI_POLICY_DIGEST_LEN SM2_PKI_EPOCH_ROOT_DIGEST_LEN
 #define SM2_PKI_DEFAULT_WITNESS_POLICY_VERSION 1U
 #define SM2_PKI_DEFAULT_SYNC_POLICY_VERSION 1U
+#define SM2_PKI_WITNESS_KEY_DEFAULT_VERSION 1U
+#define SM2_PKI_WITNESS_KEY_VALID_UNTIL_OPEN UINT64_MAX
 
     typedef uint8_t
         sm2_pki_issuance_commitment_t[SM2_PKI_ISSUANCE_COMMITMENT_LEN];
@@ -57,6 +59,9 @@ extern "C"
     {
         uint8_t witness_id[SM2_PKI_TRANSPARENCY_WITNESS_ID_MAX_LEN];
         size_t witness_id_len;
+        uint64_t key_version;
+        uint64_t valid_from;
+        uint64_t valid_until;
         sm2_ec_point_t public_key;
     } sm2_pki_transparency_witness_t;
 

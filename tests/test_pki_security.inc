@@ -1883,6 +1883,10 @@ static void test_phase141_issuance_transparency_required_and_threshold()
     widened_witnesses[0] = g_pki_default_witness;
     memcpy(widened_witnesses[1].witness_id, "extra-policy", 12);
     widened_witnesses[1].witness_id_len = 12;
+    widened_witnesses[1].key_version = SM2_PKI_WITNESS_KEY_DEFAULT_VERSION;
+    widened_witnesses[1].valid_from = 0;
+    widened_witnesses[1].valid_until
+        = SM2_PKI_WITNESS_KEY_VALID_UNTIL_OPEN;
     widened_witnesses[1].public_key = extra_policy_pub;
     sm2_pki_transparency_policy_t widened_policy
         = { widened_witnesses, 2, 1 };
@@ -1896,6 +1900,51 @@ static void test_phase141_issuance_transparency_required_and_threshold()
         "Witness Policy Digest Mismatch Reject");
     TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
         "Restore Default Witness Policy");
+
+    sm2_pki_transparency_witness_t expired_witness = g_pki_default_witness;
+    expired_witness.valid_until = auth_now > 0 ? auth_now - 1U : 0U;
+    sm2_pki_transparency_policy_t expired_policy = { &expired_witness, 1, 1 };
+    TEST_ASSERT(
+        sm2_pki_client_set_transparency_policy(verifier, &expired_policy)
+            == SM2_PKI_SUCCESS,
+        "Set Expired Witness Policy");
+    TEST_ASSERT(pki_bind_service_epoch_policy(service, &expired_policy),
+        "Bind Expired Witness Policy");
+    sm2_pki_epoch_checkpoint_t expired_checkpoint;
+    memset(&expired_checkpoint, 0, sizeof(expired_checkpoint));
+    TEST_ASSERT(sm2_pki_service_get_epoch_root_record(
+                    service, &expired_checkpoint.epoch_root_record)
+            == SM2_PKI_SUCCESS,
+        "Read Expired Witness Root");
+    sm2_pki_issuance_commitment_t lifecycle_commitments[8];
+    size_t lifecycle_commitment_count = 0;
+    TEST_ASSERT(sm2_pki_service_export_issuance_commitments(service, 0,
+                    lifecycle_commitments, 8, &lifecycle_commitment_count)
+            == SM2_PKI_SUCCESS,
+        "Export Lifecycle Commitments");
+    sm2_pki_epoch_witness_state_t expired_witness_state;
+    sm2_pki_epoch_witness_state_init(&expired_witness_state);
+    TEST_ASSERT(sm2_pki_epoch_witness_sign_append_only(&expired_witness_state,
+                    &expired_checkpoint.epoch_root_record, &ca_pub,
+                    expired_checkpoint.epoch_root_record.valid_from,
+                    lifecycle_commitments, lifecycle_commitment_count,
+                    g_pki_default_witness.witness_id,
+                    g_pki_default_witness.witness_id_len,
+                    &g_pki_default_witness_priv,
+                    &expired_checkpoint.witness_signatures[0])
+            == SM2_PKI_SUCCESS,
+        "Sign Expired Witness Root");
+    sm2_pki_epoch_witness_state_cleanup(&expired_witness_state);
+    expired_checkpoint.witness_signature_count = 1;
+    TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
+                    verifier, &expired_checkpoint, auth_now)
+            == SM2_PKI_ERR_VERIFY,
+        "Expired Witness Key Reject");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Restore Default Witness Policy After Expiry");
+    TEST_ASSERT(pki_bind_service_epoch_policy(
+                    service, &g_pki_default_transparency_policy),
+        "Restore Default Witness Policy Binding");
 
     sm2_pki_epoch_checkpoint_t no_witness = default_checkpoint;
     no_witness.witness_signature_count = 0;
@@ -1940,6 +1989,9 @@ static void test_phase141_issuance_transparency_required_and_threshold()
             "Generate Witness Key");
         memcpy(witnesses[i].witness_id, wids[i], wid_lens[i]);
         witnesses[i].witness_id_len = wid_lens[i];
+        witnesses[i].key_version = SM2_PKI_WITNESS_KEY_DEFAULT_VERSION;
+        witnesses[i].valid_from = 0;
+        witnesses[i].valid_until = SM2_PKI_WITNESS_KEY_VALID_UNTIL_OPEN;
         witnesses[i].public_key = witness_pub[i];
     }
     sm2_pki_transparency_witness_t duplicate_key_witnesses[2];

@@ -228,6 +228,9 @@ static int bench_transparency_policy_init(void)
     memset(&g_bench_witness, 0, sizeof(g_bench_witness));
     memcpy(g_bench_witness.witness_id, witness_id, sizeof(witness_id) - 1U);
     g_bench_witness.witness_id_len = sizeof(witness_id) - 1U;
+    g_bench_witness.key_version = SM2_PKI_WITNESS_KEY_DEFAULT_VERSION;
+    g_bench_witness.valid_from = 0;
+    g_bench_witness.valid_until = SM2_PKI_WITNESS_KEY_VALID_UNTIL_OPEN;
     g_bench_witness.public_key = g_bench_witness_pub;
     g_bench_transparency_policy.witnesses = &g_bench_witness;
     g_bench_transparency_policy.witness_count = 1U;

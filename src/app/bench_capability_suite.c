@@ -826,6 +826,9 @@ static int build_flow(capability_flow_ctx_t *ctx)
     }
     memcpy(ctx->witness.witness_id, witness_id, sizeof(witness_id) - 1U);
     ctx->witness.witness_id_len = sizeof(witness_id) - 1U;
+    ctx->witness.key_version = SM2_PKI_WITNESS_KEY_DEFAULT_VERSION;
+    ctx->witness.valid_from = 0;
+    ctx->witness.valid_until = SM2_PKI_WITNESS_KEY_VALID_UNTIL_OPEN;
     ctx->witness.public_key = ctx->witness_public_key;
     ctx->policy.witnesses = &ctx->witness;
     ctx->policy.witness_count = 1U;
