@@ -450,11 +450,25 @@ static sm2_ic_error_t service_prepare_epoch_root_from_records(
     if (next_epoch_version == 0)
         return SM2_IC_ERR_VERIFY;
 
+    static const uint8_t empty_policy_hash[SM2_PKI_POLICY_DIGEST_LEN] = { 0 };
+    uint64_t witness_policy_version = state->epoch_policy_binding_ready
+        ? state->witness_policy_version
+        : 0U;
+    const uint8_t *witness_policy_hash = state->epoch_policy_binding_ready
+        ? state->witness_policy_hash
+        : empty_policy_hash;
+    uint64_t sync_policy_version
+        = state->epoch_policy_binding_ready ? state->sync_policy_version : 0U;
+    const uint8_t *sync_policy_hash = state->epoch_policy_binding_ready
+        ? state->sync_policy_hash
+        : empty_policy_hash;
+
     sm2_ic_error_t ret = sm2_pki_epoch_root_sign(state->issuer_id,
         state->issuer_id_len, next_epoch_version, rev_root_record->root_version,
         rev_root_record->root_hash, issuance_root_record->root_version,
-        issuance_root_record->root_hash, valid_from, valid_until,
-        service_merkle_sign_cb, ctx, epoch_root);
+        issuance_root_record->root_hash, witness_policy_version,
+        witness_policy_hash, sync_policy_version, sync_policy_hash, valid_from,
+        valid_until, service_merkle_sign_cb, ctx, epoch_root);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
@@ -877,6 +891,46 @@ sm2_pki_error_t sm2_pki_service_validate_ca_key_material(
         : SM2_PKI_ERR_VERIFY;
 }
 
+sm2_pki_error_t sm2_pki_service_set_epoch_policy_binding(
+    sm2_pki_service_ctx_t *ctx, uint64_t witness_policy_version,
+    const uint8_t witness_policy_hash[SM2_PKI_POLICY_DIGEST_LEN],
+    uint64_t sync_policy_version,
+    const uint8_t sync_policy_hash[SM2_PKI_POLICY_DIGEST_LEN], uint64_t now_ts)
+{
+    sm2_pki_service_state_t *state = service_state(ctx);
+    if (!ctx || !ctx->initialized || !state || witness_policy_version == 0
+        || sync_policy_version == 0 || !witness_policy_hash
+        || !sync_policy_hash)
+    {
+        return SM2_PKI_ERR_PARAM;
+    }
+
+    bool changed = !state->epoch_policy_binding_ready
+        || state->witness_policy_version != witness_policy_version
+        || state->sync_policy_version != sync_policy_version
+        || memcmp(state->witness_policy_hash, witness_policy_hash,
+               SM2_PKI_POLICY_DIGEST_LEN)
+            != 0
+        || memcmp(state->sync_policy_hash, sync_policy_hash,
+               SM2_PKI_POLICY_DIGEST_LEN)
+            != 0;
+    if (!changed)
+        return SM2_PKI_SUCCESS;
+
+    state->witness_policy_version = witness_policy_version;
+    memcpy(state->witness_policy_hash, witness_policy_hash,
+        SM2_PKI_POLICY_DIGEST_LEN);
+    state->sync_policy_version = sync_policy_version;
+    memcpy(
+        state->sync_policy_hash, sync_policy_hash, SM2_PKI_POLICY_DIGEST_LEN);
+    state->epoch_policy_binding_ready = true;
+
+    if (!state->revocation_state_ready || !state->issuance_state_ready)
+        return SM2_PKI_SUCCESS;
+
+    sm2_ic_error_t ic_ret = service_publish_epoch_root(ctx, now_ts);
+    return sm2_pki_error_from_ic(ic_ret);
+}
 sm2_pki_error_t sm2_pki_service_get_root_record(
     const sm2_pki_service_ctx_t *ctx, sm2_rev_root_record_t *root_record)
 {

@@ -1,4 +1,4 @@
-﻿/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 /*
  * Demo Test 1:
@@ -45,6 +45,8 @@ int main(void)
     sm2_auth_signature_t sig;
     sm2_pki_evidence_bundle_t evidence;
     sm2_pki_epoch_checkpoint_t checkpoint;
+    uint8_t witness_policy_digest[SM2_PKI_POLICY_DIGEST_LEN];
+    uint8_t sync_policy_digest[SM2_PKI_POLICY_DIGEST_LEN];
     size_t matched_idx = 0;
     sm2_pki_verify_request_t auth_req;
     const sm2_implicit_cert_t *cli_cert = NULL;
@@ -66,6 +68,8 @@ int main(void)
     memset(&sig, 0, sizeof(sig));
     memset(&evidence, 0, sizeof(evidence));
     memset(&checkpoint, 0, sizeof(checkpoint));
+    memset(witness_policy_digest, 0, sizeof(witness_policy_digest));
+    memset(sync_policy_digest, 0, sizeof(sync_policy_digest));
     memset(&auth_req, 0, sizeof(auth_req));
 
     /* 1) Initialize in-memory CA/RA service */
@@ -113,6 +117,20 @@ int main(void)
     transparency_policy.threshold = 1;
     err = sm2_pki_client_set_transparency_policy(cli, &transparency_policy);
     if (!check_pki(err, "Configure Witness Policy"))
+        goto cleanup;
+    if (sm2_pki_transparency_policy_digest(
+            &transparency_policy, witness_policy_digest)
+            != SM2_IC_SUCCESS
+        || sm2_pki_default_sync_policy_digest(sync_policy_digest)
+            != SM2_IC_SUCCESS)
+    {
+        printf("[FAIL] Bind Epoch Policy Digest\n");
+        goto cleanup;
+    }
+    err = sm2_pki_service_set_epoch_policy_binding(svc,
+        SM2_PKI_DEFAULT_WITNESS_POLICY_VERSION, witness_policy_digest,
+        SM2_PKI_DEFAULT_SYNC_POLICY_VERSION, sync_policy_digest, 0);
+    if (!check_pki(err, "Bind Epoch Policy"))
         goto cleanup;
 
     err = sm2_pki_client_import_cert(cli, &cert_res, &temp_priv, &ca_pub);

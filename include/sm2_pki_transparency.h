@@ -26,10 +26,14 @@ extern "C"
 #define SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH 64
 #define SM2_PKI_ISSUANCE_MAX_PEAKS 64
 #define SM2_PKI_EPOCH_ROOT_DIGEST_LEN SM2_REV_MERKLE_HASH_LEN
+#define SM2_PKI_POLICY_DIGEST_LEN SM2_PKI_EPOCH_ROOT_DIGEST_LEN
+#define SM2_PKI_DEFAULT_WITNESS_POLICY_VERSION 1U
+#define SM2_PKI_DEFAULT_SYNC_POLICY_VERSION 1U
 
     typedef uint8_t
         sm2_pki_issuance_commitment_t[SM2_PKI_ISSUANCE_COMMITMENT_LEN];
 
+    /* Unified system-state root for roots and policy digests. */
     typedef struct
     {
         uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
@@ -39,6 +43,10 @@ extern "C"
         uint8_t revocation_root_hash[SM2_REV_MERKLE_HASH_LEN];
         uint64_t issuance_root_version;
         uint8_t issuance_root_hash[SM2_REV_MERKLE_HASH_LEN];
+        uint64_t witness_policy_version;
+        uint8_t witness_policy_hash[SM2_PKI_POLICY_DIGEST_LEN];
+        uint64_t sync_policy_version;
+        uint8_t sync_policy_hash[SM2_PKI_POLICY_DIGEST_LEN];
         uint64_t valid_from;
         uint64_t valid_until;
         uint8_t signature[SM2_REV_SYNC_MAX_SIG_LEN];

@@ -35,6 +35,10 @@ sm2_ic_error_t sm2_pki_epoch_root_sign(const uint8_t *authority_id,
     const uint8_t revocation_root_hash[SM2_REV_MERKLE_HASH_LEN],
     uint64_t issuance_root_version,
     const uint8_t issuance_root_hash[SM2_REV_MERKLE_HASH_LEN],
+    uint64_t witness_policy_version,
+    const uint8_t witness_policy_hash[SM2_PKI_POLICY_DIGEST_LEN],
+    uint64_t sync_policy_version,
+    const uint8_t sync_policy_hash[SM2_PKI_POLICY_DIGEST_LEN],
     uint64_t valid_from, uint64_t valid_until, sm2_rev_sync_sign_fn sign_fn,
     void *sign_user_ctx, sm2_pki_epoch_root_record_t *root_record);
 sm2_ic_error_t sm2_pki_epoch_root_verify(
@@ -192,6 +196,11 @@ struct sm2_pki_service_ctx_st
     uint64_t epoch_version;
     sm2_pki_epoch_root_record_t epoch_root_record;
     bool epoch_state_ready;
+    bool epoch_policy_binding_ready;
+    uint64_t witness_policy_version;
+    uint8_t witness_policy_hash[SM2_PKI_POLICY_DIGEST_LEN];
+    uint64_t sync_policy_version;
+    uint8_t sync_policy_hash[SM2_PKI_POLICY_DIGEST_LEN];
 
     size_t revocation_binding_refs;
     bool revocation_binding_retired;

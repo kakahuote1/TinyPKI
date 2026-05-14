@@ -244,11 +244,32 @@ static int bench_configure_transparency_verifier(sm2_pki_client_ctx_t *client)
         == SM2_PKI_SUCCESS;
 }
 
-static int bench_build_epoch_checkpoint(const sm2_pki_service_ctx_t *service,
+static int bench_bind_service_epoch_policy(sm2_pki_service_ctx_t *service)
+{
+    uint8_t witness_digest[SM2_PKI_POLICY_DIGEST_LEN];
+    uint8_t sync_digest[SM2_PKI_POLICY_DIGEST_LEN];
+    if (!service || !bench_transparency_policy_init())
+        return 0;
+    if (sm2_pki_transparency_policy_digest(
+            &g_bench_transparency_policy, witness_digest)
+            != SM2_IC_SUCCESS
+        || sm2_pki_default_sync_policy_digest(sync_digest) != SM2_IC_SUCCESS)
+    {
+        return 0;
+    }
+    return sm2_pki_service_set_epoch_policy_binding(service,
+               SM2_PKI_DEFAULT_WITNESS_POLICY_VERSION, witness_digest,
+               SM2_PKI_DEFAULT_SYNC_POLICY_VERSION, sync_digest, 0)
+        == SM2_PKI_SUCCESS;
+}
+
+static int bench_build_epoch_checkpoint(sm2_pki_service_ctx_t *service,
     const sm2_ec_point_t *ca_public_key, sm2_pki_epoch_checkpoint_t *checkpoint)
 {
     if (!service || !ca_public_key || !checkpoint
         || !bench_transparency_policy_init())
+        return 0;
+    if (!bench_bind_service_epoch_policy(service))
         return 0;
     memset(checkpoint, 0, sizeof(*checkpoint));
     if (sm2_pki_service_get_epoch_root_record(
@@ -309,7 +330,7 @@ static int bench_import_epoch_checkpoint(sm2_pki_client_ctx_t *client,
         == SM2_PKI_SUCCESS;
 }
 
-static int build_signed_verify_request(const sm2_pki_service_ctx_t *service,
+static int build_signed_verify_request(sm2_pki_service_ctx_t *service,
     const sm2_ec_point_t *ca_public_key, sm2_pki_client_ctx_t *signer,
     const uint8_t *message, size_t message_len, uint64_t now_ts,
     sm2_auth_signature_t *signature, sm2_pki_evidence_bundle_t *evidence,
@@ -323,6 +344,8 @@ static int build_signed_verify_request(const sm2_pki_service_ctx_t *service,
     {
         return 0;
     }
+    if (!bench_bind_service_epoch_policy(service))
+        return 0;
 
     if (sm2_pki_sign(signer, message, message_len, signature)
         != SM2_PKI_SUCCESS)
@@ -361,8 +384,9 @@ static size_t epoch_root_wire_size(
 {
     if (!root_record)
         return 0U;
-    return root_record->authority_id_len + (6U * sizeof(uint64_t))
-        + (2U * SM2_REV_MERKLE_HASH_LEN) + root_record->signature_len;
+    return root_record->authority_id_len + (8U * sizeof(uint64_t))
+        + (2U * SM2_REV_MERKLE_HASH_LEN) + (2U * SM2_PKI_POLICY_DIGEST_LEN)
+        + root_record->signature_len;
 }
 
 static size_t issuance_proof_wire_size(
@@ -424,6 +448,8 @@ static int build_flow_context(bench_flow_ctx_t *ctx)
         return 0;
     }
     if (!bench_configure_transparency_verifier(ctx->verifier))
+        return 0;
+    if (!bench_bind_service_epoch_policy(ctx->service))
         return 0;
     if (sm2_pki_client_import_cert(ctx->client, &ctx->cert_result,
             &ctx->temp_private_key, &ctx->ca_pub)
@@ -511,6 +537,8 @@ static int build_session_context(bench_session_ctx_t *ctx)
     {
         return 0;
     }
+    if (!bench_bind_service_epoch_policy(ctx->service))
+        return 0;
     if (sm2_pki_client_import_cert(
             ctx->client_a, &cert_a, &temp_a, &ctx->ca_pub)
             != SM2_PKI_SUCCESS

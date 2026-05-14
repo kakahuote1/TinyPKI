@@ -683,9 +683,29 @@ static int get_identity_material(sm2_pki_client_ctx_t *client,
         && sm2_pki_client_get_public_key(client, public_key) == SM2_PKI_SUCCESS;
 }
 
+static int bind_epoch_policy(capability_flow_ctx_t *ctx)
+{
+    uint8_t witness_digest[SM2_PKI_POLICY_DIGEST_LEN];
+    uint8_t sync_digest[SM2_PKI_POLICY_DIGEST_LEN];
+    if (!ctx || !ctx->service)
+        return 0;
+    if (sm2_pki_transparency_policy_digest(&ctx->policy, witness_digest)
+            != SM2_IC_SUCCESS
+        || sm2_pki_default_sync_policy_digest(sync_digest) != SM2_IC_SUCCESS)
+    {
+        return 0;
+    }
+    return sm2_pki_service_set_epoch_policy_binding(ctx->service,
+               SM2_PKI_DEFAULT_WITNESS_POLICY_VERSION, witness_digest,
+               SM2_PKI_DEFAULT_SYNC_POLICY_VERSION, sync_digest, 0)
+        == SM2_PKI_SUCCESS;
+}
+
 static int build_epoch_checkpoint(capability_flow_ctx_t *ctx)
 {
     if (!ctx)
+        return 0;
+    if (!bind_epoch_policy(ctx))
         return 0;
     memset(&ctx->checkpoint, 0, sizeof(ctx->checkpoint));
     if (sm2_pki_service_get_epoch_root_record(
@@ -815,6 +835,8 @@ static int build_flow(capability_flow_ctx_t *ctx)
     {
         return 0;
     }
+    if (!bind_epoch_policy(ctx))
+        return 0;
 
     ctx->auth_now = ctx->cert_result.cert.valid_from != 0
         ? ctx->cert_result.cert.valid_from
@@ -858,8 +880,9 @@ static size_t epoch_root_bytes(const sm2_pki_epoch_root_record_t *root)
 {
     if (!root)
         return 0U;
-    return root->authority_id_len + (6U * sizeof(uint64_t))
-        + (2U * SM2_REV_MERKLE_HASH_LEN) + root->signature_len;
+    return root->authority_id_len + (8U * sizeof(uint64_t))
+        + (2U * SM2_REV_MERKLE_HASH_LEN) + (2U * SM2_PKI_POLICY_DIGEST_LEN)
+        + root->signature_len;
 }
 
 static size_t issuance_proof_bytes(const sm2_pki_issuance_member_proof_t *proof)

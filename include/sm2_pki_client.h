@@ -190,6 +190,13 @@ extern "C"
         const sm2_pki_epoch_root_record_t *root_record,
         uint8_t digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN]);
 
+    sm2_ic_error_t sm2_pki_transparency_policy_digest(
+        const sm2_pki_transparency_policy_t *policy,
+        uint8_t digest[SM2_PKI_POLICY_DIGEST_LEN]);
+
+    sm2_ic_error_t sm2_pki_default_sync_policy_digest(
+        uint8_t digest[SM2_PKI_POLICY_DIGEST_LEN]);
+
     sm2_pki_error_t sm2_pki_epoch_witness_sign_append_only(
         sm2_pki_epoch_witness_state_t *state,
         const sm2_pki_epoch_root_record_t *root_record,
