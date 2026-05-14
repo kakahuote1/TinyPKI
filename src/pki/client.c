@@ -1197,11 +1197,11 @@ static sm2_pki_error_t pki_client_require_handshake_binding(
         return SM2_PKI_ERR_PARAM;
     }
 
-    sm2_ic_error_t ic_ret = sm2_auth_build_handshake_binding(
+    sm2_pki_error_t ret = sm2_pki_secure_session_build_binding(
         peer_ephemeral_public_key, local_ephemeral_public_key, transcript,
         transcript_len, NULL, &expected_len);
-    if (ic_ret != SM2_IC_SUCCESS)
-        return sm2_pki_error_from_ic(ic_ret);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
     if (peer_request->message_len != expected_len)
         return SM2_PKI_ERR_VERIFY;
 
@@ -1210,17 +1210,16 @@ static sm2_pki_error_t pki_client_require_handshake_binding(
         return SM2_PKI_ERR_MEMORY;
 
     size_t out_len = expected_len;
-    ic_ret = sm2_auth_build_handshake_binding(peer_ephemeral_public_key,
+    ret = sm2_pki_secure_session_build_binding(peer_ephemeral_public_key,
         local_ephemeral_public_key, transcript, transcript_len, expected,
         &out_len);
-    if (ic_ret != SM2_IC_SUCCESS)
+    if (ret != SM2_PKI_SUCCESS)
     {
         free(expected);
-        return sm2_pki_error_from_ic(ic_ret);
+        return ret;
     }
 
-    sm2_pki_error_t ret
-        = memcmp(peer_request->message, expected, expected_len) == 0
+    ret = memcmp(peer_request->message, expected, expected_len) == 0
         ? SM2_PKI_SUCCESS
         : SM2_PKI_ERR_VERIFY;
     free(expected);
@@ -2357,6 +2356,16 @@ sm2_pki_error_t sm2_pki_generate_ephemeral_keypair(
 {
     return sm2_pki_error_from_ic(sm2_auth_generate_ephemeral_keypair(
         ephemeral_private_key, ephemeral_public_key));
+}
+
+sm2_pki_error_t sm2_pki_secure_session_build_binding(
+    const sm2_ec_point_t *local_ephemeral_public_key,
+    const sm2_ec_point_t *peer_ephemeral_public_key, const uint8_t *transcript,
+    size_t transcript_len, uint8_t *output, size_t *output_len)
+{
+    return sm2_pki_error_from_ic(sm2_auth_build_handshake_binding(
+        local_ephemeral_public_key, peer_ephemeral_public_key, transcript,
+        transcript_len, output, output_len));
 }
 
 sm2_pki_error_t sm2_pki_key_agreement(sm2_pki_client_ctx_t *ctx,

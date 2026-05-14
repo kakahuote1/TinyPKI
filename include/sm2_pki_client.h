@@ -228,6 +228,13 @@ extern "C"
         sm2_private_key_t *ephemeral_private_key,
         sm2_ec_point_t *ephemeral_public_key);
 
+    /* Builds the message signed before secure session establishment. */
+    sm2_pki_error_t sm2_pki_secure_session_build_binding(
+        const sm2_ec_point_t *local_ephemeral_public_key,
+        const sm2_ec_point_t *peer_ephemeral_public_key,
+        const uint8_t *transcript, size_t transcript_len, uint8_t *output,
+        size_t *output_len);
+
     /* Establishes a session after peer evidence and handshake verification. */
     sm2_pki_error_t sm2_pki_secure_session_establish(sm2_pki_client_ctx_t *ctx,
         const sm2_private_key_t *local_ephemeral_private_key,

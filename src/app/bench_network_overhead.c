@@ -18,7 +18,6 @@
 
 #include "sm2_pki_service.h"
 #include "sm2_pki_client.h"
-#include "../auth/auth_internal.h"
 #include "../revoke/revoke_internal.h"
 
 #define BENCH_BASELINE_X509_BITS 2048
@@ -219,9 +218,9 @@ static int bench_transparency_policy_init(void)
     static const uint8_t witness_id[] = "bench-witness-0";
     if (g_bench_witness_ready)
         return 1;
-    if (sm2_auth_generate_ephemeral_keypair(
+    if (sm2_pki_generate_ephemeral_keypair(
             &g_bench_witness_priv, &g_bench_witness_pub)
-        != SM2_IC_SUCCESS)
+        != SM2_PKI_SUCCESS)
     {
         return 0;
     }
@@ -873,12 +872,12 @@ static double measure_secure_session_median(void)
                 != SM2_PKI_SUCCESS
             || sm2_pki_generate_ephemeral_keypair(&eph_priv_b, &eph_pub_b)
                 != SM2_PKI_SUCCESS
-            || sm2_auth_build_handshake_binding(&eph_pub_a, &eph_pub_b,
+            || sm2_pki_secure_session_build_binding(&eph_pub_a, &eph_pub_b,
                    transcript, sizeof(transcript) - 1, bind_a, &bind_a_len)
-                != SM2_IC_SUCCESS
-            || sm2_auth_build_handshake_binding(&eph_pub_b, &eph_pub_a,
+                != SM2_PKI_SUCCESS
+            || sm2_pki_secure_session_build_binding(&eph_pub_b, &eph_pub_a,
                    transcript, sizeof(transcript) - 1, bind_b, &bind_b_len)
-                != SM2_IC_SUCCESS
+                != SM2_PKI_SUCCESS
             || sm2_pki_sign(ctx.client_a, bind_a, bind_a_len, &sig_a)
                 != SM2_PKI_SUCCESS
             || sm2_pki_sign(ctx.client_b, bind_b, bind_b_len, &sig_b)

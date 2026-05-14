@@ -533,13 +533,13 @@ static void test_phase13_secure_pki_session_default_api()
     uint8_t bind_b[256];
     size_t bind_a_len = sizeof(bind_a);
     size_t bind_b_len = sizeof(bind_b);
-    TEST_ASSERT(sm2_auth_build_handshake_binding(&eph_pub_a, &eph_pub_b,
+    TEST_ASSERT(sm2_pki_secure_session_build_binding(&eph_pub_a, &eph_pub_b,
                     transcript, sizeof(transcript) - 1, bind_a, &bind_a_len)
-            == SM2_IC_SUCCESS,
+            == SM2_PKI_SUCCESS,
         "Build Bind A");
-    TEST_ASSERT(sm2_auth_build_handshake_binding(&eph_pub_b, &eph_pub_a,
+    TEST_ASSERT(sm2_pki_secure_session_build_binding(&eph_pub_b, &eph_pub_a,
                     transcript, sizeof(transcript) - 1, bind_b, &bind_b_len)
-            == SM2_IC_SUCCESS,
+            == SM2_PKI_SUCCESS,
         "Build Bind B");
 
     sm2_auth_signature_t sig_a;

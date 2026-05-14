@@ -2,8 +2,7 @@
 
 /**
  * @file sm2_auth.h
- * @brief High-throughput unified authentication based on SM2 implicit
- * certificates.
+ * @brief Shared authentication wire types.
  */
 
 #ifndef SM2_AUTH_H

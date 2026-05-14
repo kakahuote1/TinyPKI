@@ -3,6 +3,12 @@
 #ifndef SM2_AUTH_INTERNAL_H
 #define SM2_AUTH_INTERNAL_H
 
+/*
+ * Internal authentication primitives. Production callers should enter through
+ * sm2_pki_client.h so certificate status, epoch evidence and witness policy are
+ * checked together with the raw signature.
+ */
+
 #include "sm2_auth.h"
 #include "sm2_implicit_cert.h"
 #include "sm2_revocation.h"

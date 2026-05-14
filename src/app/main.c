@@ -14,7 +14,7 @@
 #include <windows.h>
 #endif
 #include "sm2_implicit_cert.h"
-#include "../auth/auth_internal.h"
+#include "sm2_pki_client.h"
 
 /* ANSI Color Codes */
 #define CLR_RESET "\033[0m"
@@ -70,8 +70,8 @@ int main()
     sm2_ec_point_t ca_pub;
     uint64_t issue_now = (uint64_t)time(NULL);
 
-    if (sm2_auth_generate_ephemeral_keypair(&ca_priv, &ca_pub)
-        != SM2_IC_SUCCESS)
+    if (sm2_pki_generate_ephemeral_keypair(&ca_priv, &ca_pub)
+        != SM2_PKI_SUCCESS)
     {
         fprintf(stderr, "%s[ERROR] Failed to generate CA keys.\n%s", CLR_RED,
             CLR_RESET);
