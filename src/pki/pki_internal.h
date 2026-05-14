@@ -111,6 +111,9 @@ typedef struct
     size_t authority_id_len;
     size_t pinned_ca_index;
     sm2_pki_epoch_root_record_t epoch_record;
+    sm2_pki_transparency_witness_signature_t
+        witness_signatures[SM2_PKI_TRANSPARENCY_MAX_WITNESSES];
+    size_t witness_signature_count;
     uint8_t epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
     uint64_t highest_seen_epoch_version;
     uint64_t highest_seen_revocation_root_version;

@@ -1110,7 +1110,8 @@ static void test_phase137_persisted_highwater_blocks_restart_rollback()
     TEST_ASSERT(
         sm2_pki_client_create(&restarted, &ca_pub, NULL) == SM2_PKI_SUCCESS,
         "Restarted Verifier Init");
-    TEST_ASSERT(sm2_pki_client_import_persisted_state(restarted, &persisted)
+    TEST_ASSERT(sm2_pki_client_import_persisted_state(
+                    restarted, &persisted, auth_now + 10)
             == SM2_PKI_SUCCESS,
         "Import Persisted State");
     TEST_ASSERT(pki_configure_default_transparency_policy(restarted),
@@ -1135,6 +1136,122 @@ static void test_phase137_persisted_highwater_blocks_restart_rollback()
             == SM2_PKI_SUCCESS,
         "Restarted Verifier Accepts Fresh Evidence");
 
+    sm2_pki_client_destroy(&restarted);
+    sm2_pki_client_destroy(&verifier);
+    sm2_pki_client_destroy(&signer);
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
+static void test_phase137_persisted_checkpoint_restores_offline_verify()
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P137_PERSIST_RECOVER_CA";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 32, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+
+    const uint8_t identity[] = "P137_PERSIST_RECOVER_NODE";
+    TEST_ASSERT(sm2_pki_identity_register(service, identity,
+                    sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Identity Register");
+
+    sm2_ic_cert_request_t req;
+    sm2_private_key_t temp_priv;
+    sm2_ic_cert_result_t cert_res;
+    TEST_ASSERT(
+        pki_create_and_authorize_request(service, identity,
+            sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE, &req, &temp_priv),
+        "Create Request");
+    TEST_ASSERT(
+        test_pki_issue_cert(service, &req, &cert_res) == SM2_PKI_SUCCESS,
+        "Issue Cert");
+
+    sm2_ec_point_t ca_pub;
+    TEST_ASSERT(
+        sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
+        "Get CA Pub");
+
+    sm2_pki_client_ctx_t *signer = NULL;
+    sm2_pki_client_ctx_t *verifier = NULL;
+    sm2_pki_client_ctx_t *restarted = NULL;
+    sm2_pki_client_ctx_t *tampered_client = NULL;
+    TEST_ASSERT(
+        sm2_pki_client_create(&signer, &ca_pub, service) == SM2_PKI_SUCCESS,
+        "Signer Init");
+    TEST_ASSERT(
+        sm2_pki_client_import_cert(signer, &cert_res, &temp_priv, &ca_pub)
+            == SM2_PKI_SUCCESS,
+        "Signer Import");
+    TEST_ASSERT(
+        sm2_pki_client_create(&verifier, &ca_pub, NULL) == SM2_PKI_SUCCESS,
+        "Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Verifier Witness Policy");
+
+    const uint8_t msg[] = "P137_PERSIST_CHECKPOINT";
+    uint64_t auth_now = test_cert_now(&cert_res.cert);
+    sm2_auth_signature_t sig_refreshed;
+    sm2_pki_evidence_bundle_t evidence_refreshed;
+    sm2_pki_verify_request_t request_refreshed;
+    sm2_pki_epoch_checkpoint_t checkpoint_refreshed;
+
+    TEST_ASSERT(
+        sm2_pki_service_refresh_root(service, auth_now + 10) == SM2_PKI_SUCCESS,
+        "Refresh Epoch Root");
+    TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
+                    auth_now + 10, &sig_refreshed, &evidence_refreshed,
+                    &request_refreshed),
+        "Build Refreshed Request");
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, signer, auth_now + 10, &checkpoint_refreshed),
+        "Verifier Imports Refreshed Checkpoint");
+
+    sm2_pki_client_persisted_state_t persisted;
+    memset(&persisted, 0, sizeof(persisted));
+    TEST_ASSERT(sm2_pki_client_export_persisted_state(verifier, &persisted)
+            == SM2_PKI_SUCCESS,
+        "Export Persisted State");
+    TEST_ASSERT(persisted.record_count == 1, "Persisted Record Count");
+    TEST_ASSERT(persisted.records[0].has_checkpoint,
+        "Persisted State Carries Checkpoint");
+
+    sm2_pki_client_persisted_state_t tampered = persisted;
+    TEST_ASSERT(tampered.records[0].checkpoint.witness_signature_count > 0,
+        "Tamper Has Witness Signature");
+    tampered.records[0].checkpoint.witness_signatures[0].signature[0] ^= 0x01U;
+
+    TEST_ASSERT(
+        sm2_pki_client_create(&restarted, &ca_pub, NULL) == SM2_PKI_SUCCESS,
+        "Restarted Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(restarted),
+        "Restarted Witness Policy");
+    TEST_ASSERT(sm2_pki_client_import_persisted_state(
+                    restarted, &persisted, auth_now + 10)
+            == SM2_PKI_SUCCESS,
+        "Import Persisted State");
+
+    size_t matched = 0;
+    TEST_ASSERT(
+        sm2_pki_verify(restarted, &request_refreshed, auth_now + 10, &matched)
+            == SM2_PKI_SUCCESS,
+        "Persisted Checkpoint Restores Offline Verify");
+
+    TEST_ASSERT(
+        sm2_pki_client_create(&tampered_client, &ca_pub, NULL)
+            == SM2_PKI_SUCCESS,
+        "Tampered Client Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(tampered_client),
+        "Tampered Client Witness Policy");
+    TEST_ASSERT(sm2_pki_client_import_persisted_state(
+                    tampered_client, &tampered, auth_now + 10)
+            == SM2_PKI_ERR_VERIFY,
+        "Tampered Persisted Checkpoint Rejects");
+
+    sm2_pki_client_destroy(&tampered_client);
     sm2_pki_client_destroy(&restarted);
     sm2_pki_client_destroy(&verifier);
     sm2_pki_client_destroy(&signer);

@@ -58,6 +58,8 @@ extern "C"
         uint8_t latest_revocation_root_hash[SM2_REV_MERKLE_HASH_LEN];
         uint64_t highest_seen_issuance_root_version;
         uint8_t latest_issuance_root_hash[SM2_REV_MERKLE_HASH_LEN];
+        bool has_checkpoint;
+        sm2_pki_epoch_checkpoint_t checkpoint;
     } sm2_pki_client_persisted_authority_state_t;
 
     typedef struct
@@ -120,7 +122,7 @@ extern "C"
 
     sm2_pki_error_t sm2_pki_client_import_persisted_state(
         sm2_pki_client_ctx_t *ctx,
-        const sm2_pki_client_persisted_state_t *state);
+        const sm2_pki_client_persisted_state_t *state, uint64_t now_ts);
 
     sm2_pki_error_t sm2_pki_client_get_cert(
         const sm2_pki_client_ctx_t *ctx, const sm2_implicit_cert_t **cert);
