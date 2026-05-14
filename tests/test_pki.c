@@ -217,6 +217,25 @@ static int pki_configure_default_transparency_policy(
         == SM2_PKI_SUCCESS;
 }
 
+static int pki_bind_service_epoch_policy(
+    sm2_pki_service_ctx_t *service, const sm2_pki_transparency_policy_t *policy)
+{
+    uint8_t witness_digest[SM2_PKI_POLICY_DIGEST_LEN];
+    uint8_t sync_digest[SM2_PKI_POLICY_DIGEST_LEN];
+    if (!service || !policy)
+        return 0;
+    if (sm2_pki_transparency_policy_digest(policy, witness_digest)
+            != SM2_IC_SUCCESS
+        || sm2_pki_default_sync_policy_digest(sync_digest) != SM2_IC_SUCCESS)
+    {
+        return 0;
+    }
+    return sm2_pki_service_set_epoch_policy_binding(service,
+               SM2_PKI_DEFAULT_WITNESS_POLICY_VERSION, witness_digest,
+               SM2_PKI_DEFAULT_SYNC_POLICY_VERSION, sync_digest, 0)
+        == SM2_PKI_SUCCESS;
+}
+
 static int pki_build_default_epoch_checkpoint(
     sm2_pki_client_ctx_t *signer, sm2_pki_epoch_checkpoint_t *checkpoint)
 {
@@ -224,8 +243,14 @@ static int pki_build_default_epoch_checkpoint(
     if (!state || !state->revocation_service || state->trust_store.count == 0
         || !checkpoint || !pki_default_transparency_policy_init())
         return 0;
-    const sm2_pki_service_ctx_t *service = state->revocation_service;
+    sm2_pki_service_ctx_t *service = state->revocation_service;
     const sm2_ec_point_t *ca_public_key = &state->trust_store.ca_pub_keys[0];
+
+    if (!pki_bind_service_epoch_policy(
+            service, &g_pki_default_transparency_policy))
+    {
+        return 0;
+    }
 
     memset(checkpoint, 0, sizeof(*checkpoint));
     if (sm2_pki_service_get_epoch_root_record(
@@ -319,6 +344,13 @@ static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
 
     if (sm2_pki_sign(signer, message, message_len, signature)
         != SM2_PKI_SUCCESS)
+        return 0;
+    if (!pki_configure_default_transparency_policy(signer))
+        return 0;
+    sm2_pki_client_state_t *state = signer;
+    if (!state
+        || !pki_bind_service_epoch_policy(
+            state->revocation_service, &g_pki_default_transparency_policy))
         return 0;
     if (!pki_client_get_identity_material(signer, &cert, &public_key))
         return 0;

@@ -504,6 +504,9 @@ static void test_phase13_secure_pki_session_default_api()
         "Client A Witness Policy");
     TEST_ASSERT(pki_configure_default_transparency_policy(client_b),
         "Client B Witness Policy");
+    TEST_ASSERT(pki_bind_service_epoch_policy(
+                    service, &g_pki_default_transparency_policy),
+        "Bind Secure Session Witness Policy");
     TEST_ASSERT(sm2_pki_client_import_cert(client_a, &cert_a, &temp_a, &ca_pub)
             == SM2_PKI_SUCCESS,
         "Import A");
@@ -1867,6 +1870,33 @@ static void test_phase141_issuance_transparency_required_and_threshold()
     sm2_pki_epoch_checkpoint_t default_checkpoint;
     TEST_ASSERT(pki_build_default_epoch_checkpoint(signer, &default_checkpoint),
         "Build Default Checkpoint");
+
+    sm2_private_key_t extra_policy_priv;
+    sm2_ec_point_t extra_policy_pub;
+    sm2_pki_transparency_witness_t widened_witnesses[2];
+    memset(&extra_policy_priv, 0, sizeof(extra_policy_priv));
+    memset(&extra_policy_pub, 0, sizeof(extra_policy_pub));
+    memset(widened_witnesses, 0, sizeof(widened_witnesses));
+    TEST_ASSERT(test_generate_sm2_keypair(
+                    &extra_policy_priv, &extra_policy_pub),
+        "Generate Extra Policy Witness");
+    widened_witnesses[0] = g_pki_default_witness;
+    memcpy(widened_witnesses[1].witness_id, "extra-policy", 12);
+    widened_witnesses[1].witness_id_len = 12;
+    widened_witnesses[1].public_key = extra_policy_pub;
+    sm2_pki_transparency_policy_t widened_policy
+        = { widened_witnesses, 2, 1 };
+    TEST_ASSERT(sm2_pki_client_set_transparency_policy(
+                    verifier, &widened_policy)
+            == SM2_PKI_SUCCESS,
+        "Set Mismatched Witness Policy");
+    TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
+                    verifier, &default_checkpoint, auth_now)
+            == SM2_PKI_ERR_VERIFY,
+        "Witness Policy Digest Mismatch Reject");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Restore Default Witness Policy");
+
     sm2_pki_epoch_checkpoint_t no_witness = default_checkpoint;
     no_witness.witness_signature_count = 0;
     TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
@@ -1927,6 +1957,12 @@ static void test_phase141_issuance_transparency_required_and_threshold()
     TEST_ASSERT(sm2_pki_client_set_transparency_policy(verifier, &policy)
             == SM2_PKI_SUCCESS,
         "Set Verifier Witness Policy");
+    TEST_ASSERT(pki_bind_service_epoch_policy(service, &policy),
+        "Bind Threshold Witness Policy");
+    TEST_ASSERT(sm2_pki_client_export_epoch_evidence(
+                    signer, auth_now, &rev_evidence)
+            == SM2_PKI_SUCCESS,
+        "Export Threshold Policy Evidence");
 
     size_t threshold_commitment_count = 0;
     TEST_ASSERT(sm2_pki_service_get_issuance_commitment_count(

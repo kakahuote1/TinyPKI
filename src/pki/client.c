@@ -961,6 +961,120 @@ static sm2_pki_error_t pki_client_validate_transparency_policy(
     return SM2_PKI_SUCCESS;
 }
 
+sm2_ic_error_t sm2_pki_transparency_policy_digest(
+    const sm2_pki_transparency_policy_t *policy,
+    uint8_t digest[SM2_PKI_POLICY_DIGEST_LEN])
+{
+    static const uint8_t tag[] = "SM2PKI_WITNESS_POLICY_V1";
+    if (!digest)
+        return SM2_IC_ERR_PARAM;
+    if (pki_client_validate_transparency_policy(policy) != SM2_PKI_SUCCESS)
+        return SM2_IC_ERR_PARAM;
+
+    size_t need = sizeof(tag) - 1U + 8U + 8U;
+    for (size_t i = 0; i < policy->witness_count; i++)
+        need += 8U + policy->witnesses[i].witness_id_len + SM2_KEY_LEN * 2U;
+
+    uint8_t *auth = (uint8_t *)malloc(need);
+    if (!auth)
+        return SM2_IC_ERR_MEMORY;
+
+    size_t off = 0;
+    memcpy(auth + off, tag, sizeof(tag) - 1U);
+    off += sizeof(tag) - 1U;
+    pki_client_cache_u64_to_be((uint64_t)policy->threshold, auth + off);
+    off += 8U;
+    pki_client_cache_u64_to_be((uint64_t)policy->witness_count, auth + off);
+    off += 8U;
+    for (size_t i = 0; i < policy->witness_count; i++)
+    {
+        const sm2_pki_transparency_witness_t *witness = &policy->witnesses[i];
+        pki_client_cache_u64_to_be(
+            (uint64_t)witness->witness_id_len, auth + off);
+        off += 8U;
+        memcpy(auth + off, witness->witness_id, witness->witness_id_len);
+        off += witness->witness_id_len;
+        memcpy(auth + off, witness->public_key.x, SM2_KEY_LEN);
+        off += SM2_KEY_LEN;
+        memcpy(auth + off, witness->public_key.y, SM2_KEY_LEN);
+        off += SM2_KEY_LEN;
+    }
+
+    sm2_ic_error_t ret
+        = off == need ? sm2_ic_sm3_hash(auth, off, digest) : SM2_IC_ERR_PARAM;
+    sm2_secure_memzero(auth, need);
+    free(auth);
+    return ret;
+}
+
+sm2_ic_error_t sm2_pki_default_sync_policy_digest(
+    uint8_t digest[SM2_PKI_POLICY_DIGEST_LEN])
+{
+    static const uint8_t tag[] = "SM2PKI_SYNC_POLICY_V1";
+    if (!digest)
+        return SM2_IC_ERR_PARAM;
+
+    sm2_rev_sync_policy_t policy;
+    sm2_ic_error_t ret = sm2_rev_sync_policy_init(&policy);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    uint8_t auth[(sizeof(tag) - 1U) + 8U * 7U];
+    size_t off = 0;
+    memcpy(auth + off, tag, sizeof(tag) - 1U);
+    off += sizeof(tag) - 1U;
+    pki_client_cache_u64_to_be(policy.t_base_sec, auth + off);
+    off += 8U;
+    pki_client_cache_u64_to_be(policy.fast_poll_sec, auth + off);
+    off += 8U;
+    pki_client_cache_u64_to_be(policy.max_backoff_sec, auth + off);
+    off += 8U;
+    pki_client_cache_u64_to_be(policy.propagation_delay_sec, auth + off);
+    off += 8U;
+    pki_client_cache_u64_to_be(policy.full_checkpoint_interval_sec, auth + off);
+    off += 8U;
+    pki_client_cache_u64_to_be(
+        (uint64_t)policy.max_delta_chain_len, auth + off);
+    off += 8U;
+    pki_client_cache_u64_to_be(policy.urgent_delta_grace_sec, auth + off);
+    off += 8U;
+
+    return off == sizeof(auth) ? sm2_ic_sm3_hash(auth, off, digest)
+                               : SM2_IC_ERR_PARAM;
+}
+
+static sm2_pki_error_t pki_client_check_epoch_policy_binding(
+    const sm2_pki_client_state_t *state,
+    const sm2_pki_epoch_root_record_t *root_record)
+{
+    if (!state || !root_record || !state->has_transparency_policy)
+        return SM2_PKI_ERR_VERIFY;
+    if (root_record->witness_policy_version
+            != SM2_PKI_DEFAULT_WITNESS_POLICY_VERSION
+        || root_record->sync_policy_version
+            != SM2_PKI_DEFAULT_SYNC_POLICY_VERSION)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+
+    uint8_t witness_digest[SM2_PKI_POLICY_DIGEST_LEN];
+    uint8_t sync_digest[SM2_PKI_POLICY_DIGEST_LEN];
+    sm2_ic_error_t ic_ret = sm2_pki_transparency_policy_digest(
+        &state->transparency_policy, witness_digest);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+    ic_ret = sm2_pki_default_sync_policy_digest(sync_digest);
+    if (ic_ret != SM2_IC_SUCCESS)
+        return sm2_pki_error_from_ic(ic_ret);
+
+    bool ok = pki_client_bytes_equal_ct(root_record->witness_policy_hash,
+                  witness_digest, sizeof(witness_digest))
+        && pki_client_bytes_equal_ct(
+            root_record->sync_policy_hash, sync_digest, sizeof(sync_digest));
+    sm2_secure_memzero(witness_digest, sizeof(witness_digest));
+    sm2_secure_memzero(sync_digest, sizeof(sync_digest));
+    return ok ? SM2_PKI_SUCCESS : SM2_PKI_ERR_VERIFY;
+}
 static sm2_pki_error_t pki_client_verify_witness_signature_set(
     const uint8_t *payload, size_t payload_len,
     const sm2_pki_transparency_witness_signature_t *signatures,
@@ -1346,6 +1460,11 @@ static sm2_pki_error_t pki_client_validate_epoch_checkpoint(
 
     ret = pki_client_match_epoch_root_ca(
         state, &checkpoint->epoch_root_record, now_ts, matched_ca_index);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+
+    ret = pki_client_check_epoch_policy_binding(
+        state, &checkpoint->epoch_root_record);
     if (ret != SM2_PKI_SUCCESS)
         return ret;
 

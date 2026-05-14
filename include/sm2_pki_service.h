@@ -58,6 +58,13 @@ extern "C"
         const sm2_pki_service_ctx_t *ctx,
         sm2_pki_epoch_root_record_t *root_record);
 
+    sm2_pki_error_t sm2_pki_service_set_epoch_policy_binding(
+        sm2_pki_service_ctx_t *ctx, uint64_t witness_policy_version,
+        const uint8_t witness_policy_hash[SM2_PKI_POLICY_DIGEST_LEN],
+        uint64_t sync_policy_version,
+        const uint8_t sync_policy_hash[SM2_PKI_POLICY_DIGEST_LEN],
+        uint64_t now_ts);
+
     sm2_pki_error_t sm2_pki_service_get_issuance_commitment_count(
         const sm2_pki_service_ctx_t *ctx, size_t *commitment_count);
 
