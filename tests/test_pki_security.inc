@@ -1259,6 +1259,126 @@ static void test_phase137_persisted_checkpoint_restores_offline_verify()
     TEST_PASS();
 }
 
+static void test_phase137_offline_checkpoint_export_syncs_peer_state()
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P137_OFFLINE_SYNC_CA";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 32, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+
+    const uint8_t identity[] = "P137_OFFLINE_SYNC_NODE";
+    TEST_ASSERT(sm2_pki_identity_register(service, identity,
+                    sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Identity Register");
+
+    sm2_ic_cert_request_t req;
+    sm2_private_key_t temp_priv;
+    sm2_ic_cert_result_t cert_res;
+    TEST_ASSERT(
+        pki_create_and_authorize_request(service, identity,
+            sizeof(identity) - 1, SM2_KU_DIGITAL_SIGNATURE, &req, &temp_priv),
+        "Create Request");
+    TEST_ASSERT(
+        test_pki_issue_cert(service, &req, &cert_res) == SM2_PKI_SUCCESS,
+        "Issue Cert");
+
+    sm2_ec_point_t ca_pub;
+    TEST_ASSERT(
+        sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
+        "Get CA Pub");
+
+    sm2_pki_client_ctx_t *signer = NULL;
+    sm2_pki_client_ctx_t *receiver = NULL;
+    sm2_pki_client_ctx_t *tampered_receiver = NULL;
+    TEST_ASSERT(
+        sm2_pki_client_create(&signer, &ca_pub, service) == SM2_PKI_SUCCESS,
+        "Signer Init");
+    TEST_ASSERT(
+        sm2_pki_client_import_cert(signer, &cert_res, &temp_priv, &ca_pub)
+            == SM2_PKI_SUCCESS,
+        "Signer Import");
+    TEST_ASSERT(
+        sm2_pki_client_create(&receiver, &ca_pub, NULL) == SM2_PKI_SUCCESS,
+        "Receiver Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(receiver),
+        "Receiver Witness Policy");
+
+    const uint8_t msg[] = "P137_OFFLINE_CHECKPOINT_SYNC";
+    uint64_t auth_now = test_cert_now(&cert_res.cert);
+    sm2_auth_signature_t sig_initial;
+    sm2_auth_signature_t sig_refreshed;
+    sm2_pki_evidence_bundle_t evidence_initial;
+    sm2_pki_evidence_bundle_t evidence_refreshed;
+    sm2_pki_verify_request_t request_initial;
+    sm2_pki_verify_request_t request_refreshed;
+    sm2_pki_epoch_checkpoint_t checkpoint_initial;
+    sm2_pki_epoch_checkpoint_t exported_checkpoint;
+
+    TEST_ASSERT(
+        pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1, auth_now,
+            &sig_initial, &evidence_initial, &request_initial),
+        "Build Initial Request");
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    receiver, signer, auth_now, &checkpoint_initial),
+        "Receiver Imports Initial Checkpoint");
+
+    TEST_ASSERT(
+        sm2_pki_service_refresh_root(service, auth_now + 10) == SM2_PKI_SUCCESS,
+        "Refresh Epoch Root");
+    TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
+                    auth_now + 10, &sig_refreshed, &evidence_refreshed,
+                    &request_refreshed),
+        "Build Refreshed Request");
+
+    size_t matched = 0;
+    TEST_ASSERT(
+        sm2_pki_verify(receiver, &request_refreshed, auth_now + 10, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Receiver Rejects New Evidence Before Sync");
+
+    TEST_ASSERT(
+        sm2_pki_client_export_epoch_checkpoint(signer, cert_res.cert.issuer_id,
+            cert_res.cert.issuer_id_len, &exported_checkpoint)
+            == SM2_PKI_SUCCESS,
+        "Signer Exports Cached Checkpoint");
+    TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
+                    receiver, &exported_checkpoint, auth_now + 10)
+            == SM2_PKI_SUCCESS,
+        "Receiver Imports Offline Checkpoint");
+    TEST_ASSERT(
+        sm2_pki_verify(receiver, &request_refreshed, auth_now + 10, &matched)
+            == SM2_PKI_SUCCESS,
+        "Offline Checkpoint Sync Restores Verify");
+    TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
+                    receiver, &checkpoint_initial, auth_now + 10)
+            == SM2_PKI_ERR_VERIFY,
+        "Receiver Rejects Older Offline Checkpoint");
+
+    sm2_pki_epoch_checkpoint_t tampered = exported_checkpoint;
+    TEST_ASSERT(tampered.witness_signature_count > 0,
+        "Tampered Checkpoint Has Witness");
+    tampered.witness_signatures[0].signature[0] ^= 0x01U;
+    TEST_ASSERT(sm2_pki_client_create(&tampered_receiver, &ca_pub, NULL)
+            == SM2_PKI_SUCCESS,
+        "Tampered Receiver Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(tampered_receiver),
+        "Tampered Receiver Witness Policy");
+    TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
+                    tampered_receiver, &tampered, auth_now + 10)
+            == SM2_PKI_ERR_VERIFY,
+        "Tampered Offline Checkpoint Rejects");
+
+    sm2_pki_client_destroy(&tampered_receiver);
+    sm2_pki_client_destroy(&receiver);
+    sm2_pki_client_destroy(&signer);
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
 static void test_phase138_service_binding_tracks_newer_root_versions()
 {
     sm2_pki_service_ctx_t *service = NULL;

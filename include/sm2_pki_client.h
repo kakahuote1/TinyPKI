@@ -111,10 +111,15 @@ extern "C"
         sm2_pki_client_ctx_t *ctx, const sm2_pki_epoch_checkpoint_t *checkpoint,
         uint64_t now_ts);
 
+    sm2_pki_error_t sm2_pki_client_export_epoch_checkpoint(
+        const sm2_pki_client_ctx_t *ctx, const uint8_t *authority_id,
+        size_t authority_id_len, sm2_pki_epoch_checkpoint_t *checkpoint);
+
     /*
-     * Exports/imports local anti-rollback high-water marks for durable storage.
-     * Imported high-water marks reject stale checkpoints but are not accepted
-     * as cached checkpoints for evidence verification.
+     * Exports/imports local anti-rollback high-water marks for durable
+     * storage.
+     * Imported high-water marks reject stale checkpoints but
+     * are not accepted as cached checkpoints for evidence verification.
      */
     sm2_pki_error_t sm2_pki_client_export_persisted_state(
         const sm2_pki_client_ctx_t *ctx,

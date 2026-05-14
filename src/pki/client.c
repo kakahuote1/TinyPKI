@@ -103,6 +103,27 @@ static sm2_pki_epoch_cache_entry_t *pki_client_find_epoch_root_cache_entry(
     return NULL;
 }
 
+static const sm2_pki_epoch_cache_entry_t *
+pki_client_find_epoch_root_cache_entry_const(
+    const sm2_pki_client_state_t *state, const uint8_t *authority_id,
+    size_t authority_id_len)
+{
+    if (!state
+        || !pki_client_authority_id_valid(authority_id, authority_id_len))
+        return NULL;
+
+    for (size_t i = 0; i < SM2_AUTH_MAX_CA_STORE; i++)
+    {
+        const sm2_pki_epoch_cache_entry_t *entry = &state->epoch_root_cache[i];
+        if (!entry->used || entry->authority_id_len != authority_id_len)
+            continue;
+        if (memcmp(entry->authority_id, authority_id, authority_id_len) == 0)
+            return entry;
+    }
+
+    return NULL;
+}
+
 static sm2_pki_epoch_cache_entry_t *pki_client_ensure_epoch_root_cache_entry(
     sm2_pki_client_state_t *state, const uint8_t *authority_id,
     size_t authority_id_len)
@@ -1181,6 +1202,33 @@ sm2_pki_error_t sm2_pki_client_import_epoch_checkpoint(
     return pki_client_accept_epoch_root_record(state,
         &checkpoint->epoch_root_record, now_ts, matched_ca_index,
         checkpoint->witness_signatures, checkpoint->witness_signature_count);
+}
+
+sm2_pki_error_t sm2_pki_client_export_epoch_checkpoint(
+    const sm2_pki_client_ctx_t *ctx, const uint8_t *authority_id,
+    size_t authority_id_len, sm2_pki_epoch_checkpoint_t *checkpoint)
+{
+    const sm2_pki_client_state_t *state = pki_client_state_const(ctx);
+    if (!ctx || !ctx->initialized || !state || !checkpoint
+        || !pki_client_authority_id_valid(authority_id, authority_id_len))
+    {
+        return SM2_PKI_ERR_PARAM;
+    }
+
+    const sm2_pki_epoch_cache_entry_t *entry
+        = pki_client_find_epoch_root_cache_entry_const(
+            state, authority_id, authority_id_len);
+    if (!entry || !entry->has_epoch_record
+        || entry->witness_signature_count == 0)
+        return SM2_PKI_ERR_NOT_FOUND;
+
+    memset(checkpoint, 0, sizeof(*checkpoint));
+    checkpoint->epoch_root_record = entry->epoch_record;
+    memcpy(checkpoint->witness_signatures, entry->witness_signatures,
+        entry->witness_signature_count
+            * sizeof(checkpoint->witness_signatures[0]));
+    checkpoint->witness_signature_count = entry->witness_signature_count;
+    return SM2_PKI_SUCCESS;
 }
 
 sm2_pki_error_t sm2_pki_client_export_persisted_state(
