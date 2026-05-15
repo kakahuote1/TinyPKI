@@ -380,6 +380,31 @@ static void pki_client_cache_u32_to_be(uint32_t v, uint8_t out[4])
         out[3U - i] = (uint8_t)(v >> (i * 8U));
 }
 
+static void pki_client_cache_u16_to_be(uint16_t v, uint8_t out[2])
+{
+    out[0] = (uint8_t)(v >> 8U);
+    out[1] = (uint8_t)v;
+}
+
+static uint16_t pki_client_be_to_u16(const uint8_t in[2])
+{
+    return (uint16_t)(((uint16_t)in[0] << 8U) | (uint16_t)in[1]);
+}
+
+static uint32_t pki_client_be_to_u32(const uint8_t in[4])
+{
+    return ((uint32_t)in[0] << 24U) | ((uint32_t)in[1] << 16U)
+        | ((uint32_t)in[2] << 8U) | (uint32_t)in[3];
+}
+
+static uint64_t pki_client_be_to_u64(const uint8_t in[8])
+{
+    uint64_t v = 0;
+    for (size_t i = 0; i < 8U; i++)
+        v = (v << 8U) | (uint64_t)in[i];
+    return v;
+}
+
 static sm2_pki_error_t pki_client_cache_mix(
     uint8_t digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN], const void *data,
     size_t data_len)
@@ -577,6 +602,509 @@ static bool pki_client_persisted_storage_slot_valid(
     return ok;
 }
 
+enum
+{
+    SM2_PKI_EVIDENCE_WIRE_SECTION_ISSUANCE = 1,
+    SM2_PKI_EVIDENCE_WIRE_SECTION_REVOCATION_ABSENCE = 2,
+    SM2_PKI_EVIDENCE_WIRE_SECTION_CRITICAL = 1,
+    SM2_PKI_EVIDENCE_REVOCATION_SECTION_CAP = 16384U
+};
+
+static const uint8_t pki_evidence_wire_magic[8]
+    = { 'T', 'P', 'K', 'I', 'E', 'V', '1', 0 };
+
+static bool pki_evidence_sections_supported(uint32_t section_flags)
+{
+    return (section_flags & ~SM2_PKI_EVIDENCE_SECTIONS_SUPPORTED) == 0U;
+}
+
+sm2_pki_error_t sm2_pki_evidence_bundle_require_sections(
+    const sm2_pki_evidence_bundle_t *evidence, uint32_t required_sections)
+{
+    if (!evidence || !pki_evidence_sections_supported(required_sections))
+        return SM2_PKI_ERR_PARAM;
+    if (!pki_evidence_sections_supported(evidence->section_flags)
+        || !pki_client_authority_id_valid(
+            evidence->authority_id, evidence->authority_id_len))
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+    return (evidence->section_flags & required_sections) == required_sections
+        ? SM2_PKI_SUCCESS
+        : SM2_PKI_ERR_VERIFY;
+}
+
+static sm2_pki_error_t pki_wire_put(uint8_t *output, size_t output_cap,
+    size_t *offset, const void *data, size_t data_len)
+{
+    if (!output || !offset || (!data && data_len > 0U))
+        return SM2_PKI_ERR_PARAM;
+    if (*offset > output_cap || data_len > output_cap - *offset)
+        return SM2_PKI_ERR_MEMORY;
+    if (data_len > 0U)
+        memcpy(output + *offset, data, data_len);
+    *offset += data_len;
+    return SM2_PKI_SUCCESS;
+}
+
+static sm2_pki_error_t pki_wire_put_u8(
+    uint8_t *output, size_t output_cap, size_t *offset, uint8_t value)
+{
+    return pki_wire_put(output, output_cap, offset, &value, sizeof(value));
+}
+
+static sm2_pki_error_t pki_wire_put_u16(
+    uint8_t *output, size_t output_cap, size_t *offset, uint16_t value)
+{
+    uint8_t be[2];
+    pki_client_cache_u16_to_be(value, be);
+    return pki_wire_put(output, output_cap, offset, be, sizeof(be));
+}
+
+static sm2_pki_error_t pki_wire_put_u32(
+    uint8_t *output, size_t output_cap, size_t *offset, uint32_t value)
+{
+    uint8_t be[4];
+    pki_client_cache_u32_to_be(value, be);
+    return pki_wire_put(output, output_cap, offset, be, sizeof(be));
+}
+
+static sm2_pki_error_t pki_wire_put_u64(
+    uint8_t *output, size_t output_cap, size_t *offset, uint64_t value)
+{
+    uint8_t be[8];
+    pki_client_cache_u64_to_be(value, be);
+    return pki_wire_put(output, output_cap, offset, be, sizeof(be));
+}
+
+static sm2_pki_error_t pki_wire_get(const uint8_t *input, size_t input_len,
+    size_t *offset, void *out, size_t out_len)
+{
+    if (!input || !offset || (!out && out_len > 0U))
+        return SM2_PKI_ERR_PARAM;
+    if (*offset > input_len || out_len > input_len - *offset)
+        return SM2_PKI_ERR_VERIFY;
+    if (out_len > 0U)
+        memcpy(out, input + *offset, out_len);
+    *offset += out_len;
+    return SM2_PKI_SUCCESS;
+}
+
+static sm2_pki_error_t pki_wire_get_u8(
+    const uint8_t *input, size_t input_len, size_t *offset, uint8_t *value)
+{
+    return pki_wire_get(input, input_len, offset, value, sizeof(*value));
+}
+
+static sm2_pki_error_t pki_wire_get_u16(
+    const uint8_t *input, size_t input_len, size_t *offset, uint16_t *value)
+{
+    uint8_t be[2];
+    sm2_pki_error_t ret
+        = pki_wire_get(input, input_len, offset, be, sizeof(be));
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    *value = pki_client_be_to_u16(be);
+    return SM2_PKI_SUCCESS;
+}
+
+static sm2_pki_error_t pki_wire_get_u32(
+    const uint8_t *input, size_t input_len, size_t *offset, uint32_t *value)
+{
+    uint8_t be[4];
+    sm2_pki_error_t ret
+        = pki_wire_get(input, input_len, offset, be, sizeof(be));
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    *value = pki_client_be_to_u32(be);
+    return SM2_PKI_SUCCESS;
+}
+
+static sm2_pki_error_t pki_wire_get_u64(
+    const uint8_t *input, size_t input_len, size_t *offset, uint64_t *value)
+{
+    uint8_t be[8];
+    sm2_pki_error_t ret
+        = pki_wire_get(input, input_len, offset, be, sizeof(be));
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    *value = pki_client_be_to_u64(be);
+    return SM2_PKI_SUCCESS;
+}
+
+static sm2_pki_error_t pki_issuance_proof_wire_len(
+    const sm2_pki_issuance_member_proof_t *proof, size_t *wire_len)
+{
+    if (!proof || !wire_len)
+        return SM2_PKI_ERR_PARAM;
+    if (proof->leaf_count == 0 || proof->leaf_index >= proof->leaf_count
+        || proof->sibling_count > SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH
+        || proof->peak_count == 0
+        || proof->peak_count > SM2_PKI_ISSUANCE_MAX_PEAKS
+        || proof->peak_index >= proof->peak_count)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+
+    *wire_len = SM2_PKI_ISSUANCE_COMMITMENT_LEN + 8U + 8U + 2U
+        + proof->sibling_count * (SM2_REV_MERKLE_HASH_LEN + 1U) + 8U + 2U
+        + proof->peak_count * SM2_REV_MERKLE_HASH_LEN;
+    return SM2_PKI_SUCCESS;
+}
+
+static sm2_pki_error_t pki_issuance_proof_encode_value(
+    const sm2_pki_issuance_member_proof_t *proof, uint8_t *output,
+    size_t output_cap, size_t *offset)
+{
+    size_t wire_len = 0;
+    sm2_pki_error_t ret = pki_issuance_proof_wire_len(proof, &wire_len);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+
+    ret = pki_wire_put(output, output_cap, offset, proof->cert_commitment,
+        sizeof(proof->cert_commitment));
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    ret = pki_wire_put_u64(
+        output, output_cap, offset, (uint64_t)proof->leaf_index);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    ret = pki_wire_put_u64(
+        output, output_cap, offset, (uint64_t)proof->leaf_count);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    ret = pki_wire_put_u16(
+        output, output_cap, offset, (uint16_t)proof->sibling_count);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    for (size_t i = 0; i < proof->sibling_count; i++)
+    {
+        ret = pki_wire_put(output, output_cap, offset, proof->sibling_hashes[i],
+            sizeof(proof->sibling_hashes[i]));
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+        if (proof->sibling_on_left[i] > 1U)
+            return SM2_PKI_ERR_VERIFY;
+        ret = pki_wire_put_u8(
+            output, output_cap, offset, proof->sibling_on_left[i]);
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+    }
+    ret = pki_wire_put_u64(
+        output, output_cap, offset, (uint64_t)proof->peak_index);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    ret = pki_wire_put_u16(
+        output, output_cap, offset, (uint16_t)proof->peak_count);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    for (size_t i = 0; i < proof->peak_count; i++)
+    {
+        ret = pki_wire_put(output, output_cap, offset, proof->peak_hashes[i],
+            sizeof(proof->peak_hashes[i]));
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+    }
+    return SM2_PKI_SUCCESS;
+}
+
+static sm2_pki_error_t pki_issuance_proof_decode_value(
+    sm2_pki_issuance_member_proof_t *proof, const uint8_t *input,
+    size_t input_len)
+{
+    if (!proof || !input)
+        return SM2_PKI_ERR_PARAM;
+
+    memset(proof, 0, sizeof(*proof));
+    size_t off = 0;
+    sm2_pki_error_t ret = pki_wire_get(input, input_len, &off,
+        proof->cert_commitment, sizeof(proof->cert_commitment));
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+
+    uint64_t v64 = 0;
+    ret = pki_wire_get_u64(input, input_len, &off, &v64);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    if (v64 > SIZE_MAX)
+        return SM2_PKI_ERR_VERIFY;
+    proof->leaf_index = (size_t)v64;
+    ret = pki_wire_get_u64(input, input_len, &off, &v64);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    if (v64 == 0 || v64 > SIZE_MAX)
+        return SM2_PKI_ERR_VERIFY;
+    proof->leaf_count = (size_t)v64;
+
+    uint16_t v16 = 0;
+    ret = pki_wire_get_u16(input, input_len, &off, &v16);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    if (v16 > SM2_PKI_ISSUANCE_MAX_PROOF_DEPTH)
+        return SM2_PKI_ERR_VERIFY;
+    proof->sibling_count = (size_t)v16;
+    for (size_t i = 0; i < proof->sibling_count; i++)
+    {
+        ret = pki_wire_get(input, input_len, &off, proof->sibling_hashes[i],
+            sizeof(proof->sibling_hashes[i]));
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+        ret = pki_wire_get_u8(
+            input, input_len, &off, &proof->sibling_on_left[i]);
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+        if (proof->sibling_on_left[i] > 1U)
+            return SM2_PKI_ERR_VERIFY;
+    }
+
+    ret = pki_wire_get_u64(input, input_len, &off, &v64);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    if (v64 > SIZE_MAX)
+        return SM2_PKI_ERR_VERIFY;
+    proof->peak_index = (size_t)v64;
+    ret = pki_wire_get_u16(input, input_len, &off, &v16);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    if (v16 == 0 || v16 > SM2_PKI_ISSUANCE_MAX_PEAKS)
+        return SM2_PKI_ERR_VERIFY;
+    proof->peak_count = (size_t)v16;
+    if (proof->peak_index >= proof->peak_count)
+        return SM2_PKI_ERR_VERIFY;
+    for (size_t i = 0; i < proof->peak_count; i++)
+    {
+        ret = pki_wire_get(input, input_len, &off, proof->peak_hashes[i],
+            sizeof(proof->peak_hashes[i]));
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+    }
+    return off == input_len ? SM2_PKI_SUCCESS : SM2_PKI_ERR_VERIFY;
+}
+
+static sm2_pki_error_t pki_evidence_put_section_header(uint8_t *output,
+    size_t output_cap, size_t *offset, uint16_t type, uint32_t payload_len)
+{
+    sm2_pki_error_t ret = pki_wire_put_u16(output, output_cap, offset, type);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    ret = pki_wire_put_u8(
+        output, output_cap, offset, SM2_PKI_EVIDENCE_WIRE_SECTION_CRITICAL);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    return pki_wire_put_u32(output, output_cap, offset, payload_len);
+}
+
+sm2_pki_error_t sm2_pki_evidence_bundle_encode(
+    const sm2_pki_evidence_bundle_t *evidence, uint8_t *output,
+    size_t *output_len)
+{
+    if (!evidence || !output || !output_len)
+        return SM2_PKI_ERR_PARAM;
+    if (!pki_evidence_sections_supported(evidence->section_flags)
+        || evidence->section_flags == 0U
+        || !pki_client_authority_id_valid(
+            evidence->authority_id, evidence->authority_id_len))
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+
+    size_t output_cap = *output_len;
+    size_t off = 0;
+    uint16_t section_count = 0;
+    size_t issuance_len = 0;
+    uint8_t revocation_buf[SM2_PKI_EVIDENCE_REVOCATION_SECTION_CAP];
+    size_t revocation_len = 0;
+
+    if ((evidence->section_flags & SM2_PKI_EVIDENCE_SECTION_ISSUANCE_PROOF)
+        != 0U)
+    {
+        sm2_pki_error_t ret = pki_issuance_proof_wire_len(
+            &evidence->issuance_proof.member_proof, &issuance_len);
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+        section_count++;
+    }
+    if ((evidence->section_flags
+            & SM2_PKI_EVIDENCE_SECTION_REVOCATION_ABSENCE_PROOF)
+        != 0U)
+    {
+        revocation_len = sizeof(revocation_buf);
+        sm2_ic_error_t ic_ret = sm2_rev_absence_proof_encode(
+            &evidence->revocation_proof.absence_proof, revocation_buf,
+            &revocation_len);
+        if (ic_ret != SM2_IC_SUCCESS)
+            return sm2_pki_error_from_ic(ic_ret);
+        section_count++;
+    }
+
+    sm2_pki_error_t ret = pki_wire_put(output, output_cap, &off,
+        pki_evidence_wire_magic, sizeof(pki_evidence_wire_magic));
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    ret = pki_wire_put_u16(
+        output, output_cap, &off, (uint16_t)evidence->authority_id_len);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    ret = pki_wire_put(output, output_cap, &off, evidence->authority_id,
+        evidence->authority_id_len);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    ret = pki_wire_put(output, output_cap, &off, evidence->epoch_digest,
+        sizeof(evidence->epoch_digest));
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    ret = pki_wire_put_u16(output, output_cap, &off, section_count);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+
+    if ((evidence->section_flags & SM2_PKI_EVIDENCE_SECTION_ISSUANCE_PROOF)
+        != 0U)
+    {
+        if (issuance_len > UINT32_MAX)
+            return SM2_PKI_ERR_MEMORY;
+        ret = pki_evidence_put_section_header(output, output_cap, &off,
+            SM2_PKI_EVIDENCE_WIRE_SECTION_ISSUANCE, (uint32_t)issuance_len);
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+        ret = pki_issuance_proof_encode_value(
+            &evidence->issuance_proof.member_proof, output, output_cap, &off);
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+    }
+    if ((evidence->section_flags
+            & SM2_PKI_EVIDENCE_SECTION_REVOCATION_ABSENCE_PROOF)
+        != 0U)
+    {
+        if (revocation_len > UINT32_MAX)
+            return SM2_PKI_ERR_MEMORY;
+        ret = pki_evidence_put_section_header(output, output_cap, &off,
+            SM2_PKI_EVIDENCE_WIRE_SECTION_REVOCATION_ABSENCE,
+            (uint32_t)revocation_len);
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+        ret = pki_wire_put(
+            output, output_cap, &off, revocation_buf, revocation_len);
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+    }
+
+    *output_len = off;
+    return SM2_PKI_SUCCESS;
+}
+
+sm2_pki_error_t sm2_pki_evidence_bundle_decode(
+    sm2_pki_evidence_bundle_t *evidence, const uint8_t *input, size_t input_len)
+{
+    if (!evidence || !input)
+        return SM2_PKI_ERR_PARAM;
+
+    sm2_pki_evidence_bundle_t decoded;
+    memset(&decoded, 0, sizeof(decoded));
+    size_t off = 0;
+    uint8_t magic[sizeof(pki_evidence_wire_magic)];
+    sm2_pki_error_t ret
+        = pki_wire_get(input, input_len, &off, magic, sizeof(magic));
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    if (memcmp(magic, pki_evidence_wire_magic, sizeof(magic)) != 0)
+        return SM2_PKI_ERR_VERIFY;
+
+    uint16_t authority_id_len = 0;
+    ret = pki_wire_get_u16(input, input_len, &off, &authority_id_len);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    if (authority_id_len == 0
+        || authority_id_len > SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+    decoded.authority_id_len = authority_id_len;
+    ret = pki_wire_get(
+        input, input_len, &off, decoded.authority_id, decoded.authority_id_len);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    ret = pki_wire_get(input, input_len, &off, decoded.epoch_digest,
+        sizeof(decoded.epoch_digest));
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+
+    uint16_t section_count = 0;
+    ret = pki_wire_get_u16(input, input_len, &off, &section_count);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    if (section_count == 0 || section_count > 16U)
+        return SM2_PKI_ERR_VERIFY;
+
+    uint16_t previous_type = 0;
+    for (size_t i = 0; i < section_count; i++)
+    {
+        uint16_t section_type = 0;
+        uint8_t critical = 0;
+        uint32_t payload_len = 0;
+        ret = pki_wire_get_u16(input, input_len, &off, &section_type);
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+        ret = pki_wire_get_u8(input, input_len, &off, &critical);
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+        ret = pki_wire_get_u32(input, input_len, &off, &payload_len);
+        if (ret != SM2_PKI_SUCCESS)
+            return ret;
+        if (critical > 1U || section_type <= previous_type
+            || payload_len > input_len - off)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
+
+        const uint8_t *payload = input + off;
+        switch (section_type)
+        {
+            case SM2_PKI_EVIDENCE_WIRE_SECTION_ISSUANCE:
+                if ((decoded.section_flags
+                        & SM2_PKI_EVIDENCE_SECTION_ISSUANCE_PROOF)
+                    != 0U)
+                {
+                    return SM2_PKI_ERR_VERIFY;
+                }
+                ret = pki_issuance_proof_decode_value(
+                    &decoded.issuance_proof.member_proof, payload, payload_len);
+                if (ret != SM2_PKI_SUCCESS)
+                    return ret;
+                decoded.section_flags
+                    |= SM2_PKI_EVIDENCE_SECTION_ISSUANCE_PROOF;
+                break;
+            case SM2_PKI_EVIDENCE_WIRE_SECTION_REVOCATION_ABSENCE:
+                if ((decoded.section_flags
+                        & SM2_PKI_EVIDENCE_SECTION_REVOCATION_ABSENCE_PROOF)
+                    != 0U)
+                {
+                    return SM2_PKI_ERR_VERIFY;
+                }
+                if (sm2_rev_absence_proof_decode(
+                        &decoded.revocation_proof.absence_proof, payload,
+                        payload_len)
+                    != SM2_IC_SUCCESS)
+                {
+                    return SM2_PKI_ERR_VERIFY;
+                }
+                decoded.section_flags
+                    |= SM2_PKI_EVIDENCE_SECTION_REVOCATION_ABSENCE_PROOF;
+                break;
+            default:
+                if (critical == SM2_PKI_EVIDENCE_WIRE_SECTION_CRITICAL)
+                    return SM2_PKI_ERR_VERIFY;
+                break;
+        }
+        off += payload_len;
+        previous_type = section_type;
+    }
+    if (off != input_len || decoded.section_flags == 0U)
+        return SM2_PKI_ERR_VERIFY;
+
+    *evidence = decoded;
+    return SM2_PKI_SUCCESS;
+}
+
 static sm2_pki_error_t pki_client_evidence_proof_digest(
     const sm2_pki_evidence_bundle_t *evidence,
     uint8_t digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN])
@@ -597,6 +1125,9 @@ static sm2_pki_error_t pki_client_evidence_proof_digest(
 
     static const uint8_t tag[] = "SM2PKI_EVIDENCE_CACHE_V1";
     sm2_pki_error_t ret = sm2_pki_sm3_hash(tag, sizeof(tag) - 1U, digest);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    ret = pki_client_cache_mix_u64(digest, (uint64_t)evidence->section_flags);
     if (ret != SM2_PKI_SUCCESS)
         return ret;
     ret = pki_client_cache_mix(
@@ -1236,9 +1767,26 @@ static sm2_pki_error_t pki_client_verify_epoch_evidence_bundle(
     if (!state || !cert || !evidence)
         return SM2_PKI_ERR_PARAM;
 
+    sm2_pki_error_t ret = sm2_pki_evidence_bundle_require_sections(
+        evidence, SM2_PKI_EVIDENCE_SECTIONS_AUTHENTICATION);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+
+    const uint8_t *authority_id = NULL;
+    size_t authority_id_len = 0;
+    ret = pki_client_expected_authority_from_cert(
+        cert, &authority_id, &authority_id_len);
+    if (ret != SM2_PKI_SUCCESS)
+        return ret;
+    if (evidence->authority_id_len != authority_id_len
+        || memcmp(evidence->authority_id, authority_id, authority_id_len) != 0)
+    {
+        return SM2_PKI_ERR_VERIFY;
+    }
+
     const sm2_pki_epoch_root_record_t *cached_epoch = NULL;
 
-    sm2_pki_error_t ret = pki_client_get_cached_epoch_root(
+    ret = pki_client_get_cached_epoch_root(
         state, cert, now_ts, matched_ca_index, &cached_epoch);
     if (ret != SM2_PKI_SUCCESS)
         return ret;
@@ -2055,6 +2603,10 @@ sm2_pki_error_t sm2_pki_client_export_epoch_evidence(sm2_pki_client_ctx_t *ctx,
     ic_ret = sm2_pki_epoch_root_digest(epoch, evidence->epoch_digest);
     if (ic_ret != SM2_IC_SUCCESS)
         return sm2_pki_error_from_ic(ic_ret);
+    evidence->section_flags = SM2_PKI_EVIDENCE_SECTIONS_AUTHENTICATION;
+    memcpy(
+        evidence->authority_id, epoch->authority_id, epoch->authority_id_len);
+    evidence->authority_id_len = epoch->authority_id_len;
 
     ret = pki_client_verify_revocation_proof_with_epoch(
         &state->cert, epoch, &evidence->revocation_proof);

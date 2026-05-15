@@ -914,8 +914,10 @@ static int collect_size_metrics(
 {
     uint8_t cert_buf[1024];
     uint8_t absence_buf[16384];
+    uint8_t evidence_buf[32768];
     size_t cert_len = sizeof(cert_buf);
     size_t absence_len = sizeof(absence_buf);
+    size_t evidence_len = sizeof(evidence_buf);
 
     if (!ctx || !metrics)
         return 0;
@@ -933,6 +935,12 @@ static int collect_size_metrics(
     {
         return 0;
     }
+    if (sm2_pki_evidence_bundle_encode(
+            &ctx->evidence, evidence_buf, &evidence_len)
+        != SM2_PKI_SUCCESS)
+    {
+        return 0;
+    }
 
     metrics->cert_bytes = cert_len;
     metrics->signature_bytes = ctx->signature.der_len;
@@ -942,8 +950,7 @@ static int collect_size_metrics(
     metrics->issuance_proof_bytes
         = issuance_proof_bytes(&ctx->evidence.issuance_proof.member_proof);
     metrics->witness_signature_bytes = witness_bytes(&ctx->checkpoint);
-    metrics->evidence_bundle_bytes = SM2_PKI_EPOCH_ROOT_DIGEST_LEN
-        + metrics->revocation_proof_bytes + metrics->issuance_proof_bytes;
+    metrics->evidence_bundle_bytes = evidence_len;
     metrics->authentication_bundle_bytes = metrics->cert_bytes
         + metrics->signature_bytes + metrics->evidence_bundle_bytes;
     return 1;

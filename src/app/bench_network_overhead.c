@@ -392,15 +392,6 @@ static size_t epoch_root_wire_size(
         + root_record->signature_len;
 }
 
-static size_t issuance_proof_wire_size(
-    const sm2_pki_issuance_member_proof_t *proof)
-{
-    if (!proof)
-        return 0U;
-    return SM2_PKI_ISSUANCE_COMMITMENT_LEN + (3U * sizeof(size_t))
-        + proof->sibling_count * (SM2_REV_MERKLE_HASH_LEN + 1U);
-}
-
 static int encode_absence_len(
     const sm2_rev_absence_proof_t *proof, uint8_t *buf, size_t cap, size_t *len)
 {
@@ -576,10 +567,11 @@ static int compute_payload_metrics(
     bench_flow_ctx_t flow;
     uint8_t cert_buf[1024];
     uint8_t absence_buf[16384];
+    uint8_t evidence_buf[32768];
     size_t cert_len = 0;
     size_t root_len = 0;
     size_t absence_len = 0;
-    size_t issuance_len = 0;
+    size_t evidence_len = 0;
     size_t witness_len = 0;
     int x509_der_len = 0;
 
@@ -605,8 +597,6 @@ static int compute_payload_metrics(
             &flow.cert_result.cert, cert_buf, sizeof(cert_buf), &cert_len))
         goto fail;
     root_len = epoch_root_wire_size(&flow.checkpoint.epoch_root_record);
-    issuance_len
-        = issuance_proof_wire_size(&flow.evidence.issuance_proof.member_proof);
     for (size_t i = 0; i < flow.checkpoint.witness_signature_count; i++)
     {
         witness_len += flow.checkpoint.witness_signatures[i].witness_id_len
@@ -615,6 +605,13 @@ static int compute_payload_metrics(
     if (!encode_absence_len(&flow.evidence.revocation_proof.absence_proof,
             absence_buf, sizeof(absence_buf), &absence_len))
         goto fail;
+    evidence_len = sizeof(evidence_buf);
+    if (sm2_pki_evidence_bundle_encode(
+            &flow.evidence, evidence_buf, &evidence_len)
+        != SM2_PKI_SUCCESS)
+    {
+        goto fail;
+    }
 
     revoked = (uint64_t *)calloc(revoked_n, sizeof(uint64_t));
     if (!revoked)
@@ -643,8 +640,7 @@ static int compute_payload_metrics(
     metrics[3].name = "Merkle Absence Proof";
     metrics[3].bytes = absence_len;
     metrics[4].name = "Epoch Evidence Bundle";
-    metrics[4].bytes
-        = SM2_PKI_EPOCH_ROOT_DIGEST_LEN + absence_len + issuance_len;
+    metrics[4].bytes = evidence_len;
     metrics[5].name = "Authentication Bundle";
     metrics[5].bytes = cert_len + flow.signature.der_len + metrics[4].bytes;
     metrics[6].name = "Merkle Multiproof (16)";

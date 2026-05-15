@@ -36,6 +36,14 @@ extern "C"
         sm2_pki_issuance_member_proof_t member_proof;
     } sm2_pki_epoch_issuance_proof_t;
 
+#define SM2_PKI_EVIDENCE_SECTION_ISSUANCE_PROOF 0x00000001U
+#define SM2_PKI_EVIDENCE_SECTION_REVOCATION_ABSENCE_PROOF 0x00000002U
+#define SM2_PKI_EVIDENCE_SECTIONS_AUTHENTICATION                               \
+    (SM2_PKI_EVIDENCE_SECTION_ISSUANCE_PROOF                                   \
+        | SM2_PKI_EVIDENCE_SECTION_REVOCATION_ABSENCE_PROOF)
+#define SM2_PKI_EVIDENCE_SECTIONS_SUPPORTED                                    \
+    SM2_PKI_EVIDENCE_SECTIONS_AUTHENTICATION
+
     typedef struct
     {
         sm2_pki_epoch_root_record_t epoch_root_record;
@@ -91,6 +99,9 @@ extern "C"
 
     typedef struct
     {
+        uint32_t section_flags;
+        uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
+        size_t authority_id_len;
         uint8_t epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
         sm2_pki_epoch_revocation_proof_t revocation_proof;
         sm2_pki_epoch_issuance_proof_t issuance_proof;
@@ -180,6 +191,17 @@ extern "C"
     sm2_pki_error_t sm2_pki_client_export_epoch_evidence(
         sm2_pki_client_ctx_t *ctx, uint64_t now_ts,
         sm2_pki_evidence_bundle_t *evidence);
+
+    sm2_pki_error_t sm2_pki_evidence_bundle_require_sections(
+        const sm2_pki_evidence_bundle_t *evidence, uint32_t required_sections);
+
+    sm2_pki_error_t sm2_pki_evidence_bundle_encode(
+        const sm2_pki_evidence_bundle_t *evidence, uint8_t *output,
+        size_t *output_len);
+
+    sm2_pki_error_t sm2_pki_evidence_bundle_decode(
+        sm2_pki_evidence_bundle_t *evidence, const uint8_t *input,
+        size_t input_len);
 
     void sm2_pki_epoch_witness_state_init(sm2_pki_epoch_witness_state_t *state);
 

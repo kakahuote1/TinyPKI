@@ -593,13 +593,11 @@ static void test_phase13_secure_pki_session_default_api()
     req_b_to_a.message_len = bind_b_len;
     req_b_to_a.signature = &sig_b;
     req_b_to_a.evidence_bundle = &evidence_b;
-    TEST_ASSERT(
-        pki_import_epoch_checkpoint_from_signer(client_a, client_b,
-            auth_now, NULL),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    client_a, client_b, auth_now, NULL),
         "Client A Imports Peer Checkpoint");
-    TEST_ASSERT(
-        pki_import_epoch_checkpoint_from_signer(client_b, client_a,
-            auth_now, NULL),
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    client_b, client_a, auth_now, NULL),
         "Client B Imports Peer Checkpoint");
 
     uint8_t sk_a[16];
@@ -959,14 +957,15 @@ static void test_phase137_epoch_cache_survives_local_cert_import()
 
     sm2_pki_client_ctx_t *peer = NULL;
     sm2_pki_client_ctx_t *verifier = NULL;
-    TEST_ASSERT(sm2_pki_client_create(&peer, &ca_pub, service)
-            == SM2_PKI_SUCCESS,
+    TEST_ASSERT(
+        sm2_pki_client_create(&peer, &ca_pub, service) == SM2_PKI_SUCCESS,
         "Peer Init");
-    TEST_ASSERT(sm2_pki_client_import_cert(peer, &peer_cert, &peer_temp, &ca_pub)
+    TEST_ASSERT(
+        sm2_pki_client_import_cert(peer, &peer_cert, &peer_temp, &ca_pub)
             == SM2_PKI_SUCCESS,
         "Peer Import");
-    TEST_ASSERT(sm2_pki_client_create(&verifier, &ca_pub, NULL)
-            == SM2_PKI_SUCCESS,
+    TEST_ASSERT(
+        sm2_pki_client_create(&verifier, &ca_pub, NULL) == SM2_PKI_SUCCESS,
         "Verifier Init");
     TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
         "Verifier Witness Policy");
@@ -983,8 +982,8 @@ static void test_phase137_epoch_cache_survives_local_cert_import()
         pki_build_signed_verify_request(peer, msg, sizeof(msg) - 1, auth_now,
             &sig_initial, &evidence_initial, &request_initial),
         "Build Initial Request");
-    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
-                    verifier, peer, auth_now, NULL),
+    TEST_ASSERT(
+        pki_import_epoch_checkpoint_from_signer(verifier, peer, auth_now, NULL),
         "Verifier Imports Initial Checkpoint");
 
     size_t matched = 0;
@@ -1243,8 +1242,7 @@ static void test_phase137_persisted_checkpoint_restores_offline_verify()
             == SM2_PKI_SUCCESS,
         "Persisted Checkpoint Restores Offline Verify");
 
-    TEST_ASSERT(
-        sm2_pki_client_create(&tampered_client, &ca_pub, NULL)
+    TEST_ASSERT(sm2_pki_client_create(&tampered_client, &ca_pub, NULL)
             == SM2_PKI_SUCCESS,
         "Tampered Client Init");
     TEST_ASSERT(pki_configure_default_transparency_policy(tampered_client),
@@ -1641,8 +1639,7 @@ static void test_phase138_service_binding_tracks_newer_root_versions()
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now + 20, &matched)
             == SM2_PKI_SUCCESS,
         "Verify With Updated Epoch");
-    TEST_ASSERT(
-        checkpoint_updated.epoch_root_record.revocation_root_version
+    TEST_ASSERT(checkpoint_updated.epoch_root_record.revocation_root_version
             > initial_version,
         "Epoch Revocation Root Advanced");
 
@@ -1877,21 +1874,19 @@ static void test_phase141_issuance_transparency_required_and_threshold()
     memset(&extra_policy_priv, 0, sizeof(extra_policy_priv));
     memset(&extra_policy_pub, 0, sizeof(extra_policy_pub));
     memset(widened_witnesses, 0, sizeof(widened_witnesses));
-    TEST_ASSERT(test_generate_sm2_keypair(
-                    &extra_policy_priv, &extra_policy_pub),
+    TEST_ASSERT(
+        test_generate_sm2_keypair(&extra_policy_priv, &extra_policy_pub),
         "Generate Extra Policy Witness");
     widened_witnesses[0] = g_pki_default_witness;
     memcpy(widened_witnesses[1].witness_id, "extra-policy", 12);
     widened_witnesses[1].witness_id_len = 12;
     widened_witnesses[1].key_version = SM2_PKI_WITNESS_KEY_DEFAULT_VERSION;
     widened_witnesses[1].valid_from = 0;
-    widened_witnesses[1].valid_until
-        = SM2_PKI_WITNESS_KEY_VALID_UNTIL_OPEN;
+    widened_witnesses[1].valid_until = SM2_PKI_WITNESS_KEY_VALID_UNTIL_OPEN;
     widened_witnesses[1].public_key = extra_policy_pub;
-    sm2_pki_transparency_policy_t widened_policy
-        = { widened_witnesses, 2, 1 };
-    TEST_ASSERT(sm2_pki_client_set_transparency_policy(
-                    verifier, &widened_policy)
+    sm2_pki_transparency_policy_t widened_policy = { widened_witnesses, 2, 1 };
+    TEST_ASSERT(
+        sm2_pki_client_set_transparency_policy(verifier, &widened_policy)
             == SM2_PKI_SUCCESS,
         "Set Mismatched Witness Policy");
     TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
@@ -1924,14 +1919,14 @@ static void test_phase141_issuance_transparency_required_and_threshold()
         "Export Lifecycle Commitments");
     sm2_pki_epoch_witness_state_t expired_witness_state;
     sm2_pki_epoch_witness_state_init(&expired_witness_state);
-    TEST_ASSERT(sm2_pki_epoch_witness_sign_append_only(&expired_witness_state,
-                    &expired_checkpoint.epoch_root_record, &ca_pub,
-                    expired_checkpoint.epoch_root_record.valid_from,
-                    lifecycle_commitments, lifecycle_commitment_count,
-                    g_pki_default_witness.witness_id,
-                    g_pki_default_witness.witness_id_len,
-                    &g_pki_default_witness_priv,
-                    &expired_checkpoint.witness_signatures[0])
+    TEST_ASSERT(
+        sm2_pki_epoch_witness_sign_append_only(&expired_witness_state,
+            &expired_checkpoint.epoch_root_record, &ca_pub,
+            expired_checkpoint.epoch_root_record.valid_from,
+            lifecycle_commitments, lifecycle_commitment_count,
+            g_pki_default_witness.witness_id,
+            g_pki_default_witness.witness_id_len, &g_pki_default_witness_priv,
+            &expired_checkpoint.witness_signatures[0])
             == SM2_PKI_SUCCESS,
         "Sign Expired Witness Root");
     sm2_pki_epoch_witness_state_cleanup(&expired_witness_state);
@@ -1948,8 +1943,8 @@ static void test_phase141_issuance_transparency_required_and_threshold()
 
     sm2_pki_epoch_checkpoint_t no_witness = default_checkpoint;
     no_witness.witness_signature_count = 0;
-    TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
-                    verifier, &no_witness, auth_now)
+    TEST_ASSERT(
+        sm2_pki_client_import_epoch_checkpoint(verifier, &no_witness, auth_now)
             != SM2_PKI_SUCCESS,
         "Missing Mandatory Witness Signature Reject");
 
@@ -2011,8 +2006,8 @@ static void test_phase141_issuance_transparency_required_and_threshold()
         "Set Verifier Witness Policy");
     TEST_ASSERT(pki_bind_service_epoch_policy(service, &policy),
         "Bind Threshold Witness Policy");
-    TEST_ASSERT(sm2_pki_client_export_epoch_evidence(
-                    signer, auth_now, &rev_evidence)
+    TEST_ASSERT(
+        sm2_pki_client_export_epoch_evidence(signer, auth_now, &rev_evidence)
             == SM2_PKI_SUCCESS,
         "Export Threshold Policy Evidence");
 
@@ -2328,8 +2323,8 @@ static void test_phase143_epoch_bundle_binds_roots_and_witnesses()
                     verifier, &missing_witness, auth_now)
             != SM2_PKI_SUCCESS,
         "Epoch Missing Witness Reject");
-    TEST_ASSERT(sm2_pki_client_import_epoch_checkpoint(
-                    verifier, &checkpoint, auth_now)
+    TEST_ASSERT(
+        sm2_pki_client_import_epoch_checkpoint(verifier, &checkpoint, auth_now)
             == SM2_PKI_SUCCESS,
         "Verifier Imports Epoch Checkpoint");
     TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
@@ -2426,6 +2421,137 @@ static void test_phase143_epoch_bundle_binds_roots_and_witnesses()
         "Epoch Witness Accepts Rev-Only Advance");
 
     sm2_pki_epoch_witness_state_cleanup(&witness_state);
+    sm2_pki_client_destroy(&verifier);
+    sm2_pki_client_destroy(&signer);
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
+static void test_phase144_evidence_bundle_standard_wire_sections()
+{
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P144_WIRE_CA";
+    const uint8_t signer_id[] = "P144_SIGNER";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 32, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+    TEST_ASSERT(sm2_pki_identity_register(service, signer_id,
+                    sizeof(signer_id) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Signer Register");
+
+    sm2_ic_cert_result_t cert;
+    sm2_private_key_t temp;
+    memset(&cert, 0, sizeof(cert));
+    memset(&temp, 0, sizeof(temp));
+    TEST_ASSERT(
+        pki_issue_identity_cert(service, signer_id, sizeof(signer_id) - 1,
+            SM2_KU_DIGITAL_SIGNATURE, &cert, &temp),
+        "Issue Signer");
+
+    sm2_ec_point_t ca_pub;
+    TEST_ASSERT(
+        sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
+        "Get CA Pub");
+
+    sm2_pki_client_ctx_t *signer = NULL;
+    sm2_pki_client_ctx_t *verifier = NULL;
+    TEST_ASSERT(
+        sm2_pki_client_create(&signer, &ca_pub, service) == SM2_PKI_SUCCESS,
+        "Signer Init");
+    TEST_ASSERT(
+        sm2_pki_client_create(&verifier, &ca_pub, NULL) == SM2_PKI_SUCCESS,
+        "Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Verifier Witness Policy");
+    TEST_ASSERT(sm2_pki_client_import_cert(signer, &cert, &temp, &ca_pub)
+            == SM2_PKI_SUCCESS,
+        "Signer Import");
+
+    const uint8_t msg[] = "P144_EVIDENCE_WIRE";
+    uint64_t auth_now = test_cert_now(&cert.cert);
+    sm2_auth_signature_t sig;
+    sm2_pki_evidence_bundle_t bundle;
+    sm2_pki_verify_request_t request;
+    memset(&sig, 0, sizeof(sig));
+    memset(&bundle, 0, sizeof(bundle));
+    memset(&request, 0, sizeof(request));
+    TEST_ASSERT(pki_build_signed_verify_request(signer, msg, sizeof(msg) - 1,
+                    auth_now, &sig, &bundle, &request),
+        "Build Verify Request");
+    TEST_ASSERT(
+        bundle.section_flags == SM2_PKI_EVIDENCE_SECTIONS_AUTHENTICATION,
+        "Exported Evidence Has Authentication Sections");
+    TEST_ASSERT(bundle.authority_id_len == cert.cert.issuer_id_len
+            && memcmp(bundle.authority_id, cert.cert.issuer_id,
+                   cert.cert.issuer_id_len)
+                == 0,
+        "Evidence Authority Bound");
+
+    sm2_pki_epoch_checkpoint_t checkpoint;
+    TEST_ASSERT(pki_build_default_epoch_checkpoint(signer, &checkpoint),
+        "Build Checkpoint");
+    TEST_ASSERT(
+        sm2_pki_client_import_epoch_checkpoint(verifier, &checkpoint, auth_now)
+            == SM2_PKI_SUCCESS,
+        "Import Checkpoint");
+
+    uint8_t wire[32768];
+    size_t wire_len = sizeof(wire);
+    TEST_ASSERT(sm2_pki_evidence_bundle_encode(&bundle, wire, &wire_len)
+            == SM2_PKI_SUCCESS,
+        "Encode Evidence Wire");
+    TEST_ASSERT(wire_len < sizeof(wire), "Wire Length Bounded");
+
+    sm2_pki_evidence_bundle_t decoded;
+    memset(&decoded, 0, sizeof(decoded));
+    TEST_ASSERT(sm2_pki_evidence_bundle_decode(&decoded, wire, wire_len)
+            == SM2_PKI_SUCCESS,
+        "Decode Evidence Wire");
+    request.evidence_bundle = &decoded;
+    size_t matched = 0;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Decoded Evidence Authenticates");
+
+    sm2_pki_evidence_bundle_t rev_only = bundle;
+    rev_only.section_flags = SM2_PKI_EVIDENCE_SECTION_REVOCATION_ABSENCE_PROOF;
+    wire_len = sizeof(wire);
+    TEST_ASSERT(sm2_pki_evidence_bundle_encode(&rev_only, wire, &wire_len)
+            == SM2_PKI_SUCCESS,
+        "Encode Revocation-Only Wire");
+    memset(&decoded, 0, sizeof(decoded));
+    TEST_ASSERT(sm2_pki_evidence_bundle_decode(&decoded, wire, wire_len)
+            == SM2_PKI_SUCCESS,
+        "Decode Revocation-Only Wire");
+    TEST_ASSERT(sm2_pki_evidence_bundle_require_sections(
+                    &decoded, SM2_PKI_EVIDENCE_SECTION_REVOCATION_ABSENCE_PROOF)
+            == SM2_PKI_SUCCESS,
+        "Revocation-Only Profile Accepts");
+    TEST_ASSERT(sm2_pki_evidence_bundle_require_sections(
+                    &decoded, SM2_PKI_EVIDENCE_SECTIONS_AUTHENTICATION)
+            == SM2_PKI_ERR_VERIFY,
+        "Authentication Profile Requires Issuance");
+    request.evidence_bundle = &decoded;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Full Verify Rejects Revocation-Only Evidence");
+
+    sm2_pki_evidence_bundle_t wrong_authority = bundle;
+    wrong_authority.authority_id[0] ^= 0x01U;
+    request.evidence_bundle = &wrong_authority;
+    TEST_ASSERT(sm2_pki_verify(verifier, &request, auth_now, &matched)
+            == SM2_PKI_ERR_VERIFY,
+        "Wrong Evidence Authority Reject");
+
+    wire[0] ^= 0x55U;
+    memset(&decoded, 0, sizeof(decoded));
+    TEST_ASSERT(sm2_pki_evidence_bundle_decode(&decoded, wire, wire_len)
+            == SM2_PKI_ERR_VERIFY,
+        "Bad Wire Magic Reject");
+
     sm2_pki_client_destroy(&verifier);
     sm2_pki_client_destroy(&signer);
     sm2_pki_service_destroy(&service);
