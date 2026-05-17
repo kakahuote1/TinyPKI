@@ -117,9 +117,29 @@ extern "C"
         const sm2_pki_evidence_bundle_t *evidence_bundle;
     } sm2_pki_verify_request_t;
 
+#define SM2_PKI_EVIDENCE_CACHE_DEFAULT_CAPACITY 8U
+#define SM2_PKI_EVIDENCE_CACHE_MAX_CAPACITY 64U
+
+    typedef struct
+    {
+        size_t capacity;
+        size_t protected_capacity;
+        size_t probationary_capacity;
+        size_t used_count;
+        size_t protected_count;
+        size_t probationary_count;
+        uint64_t hit_count;
+        uint64_t miss_count;
+        uint64_t store_count;
+        uint64_t promotion_count;
+        uint64_t eviction_count;
+        uint64_t expiration_count;
+    } sm2_pki_evidence_cache_stats_t;
+
     /*
      * Opaque owning handle.
-     * Instances must be created/destroyed via the API below.
+     * Instances must be created/destroyed
+     * via the API below.
      */
     sm2_pki_error_t sm2_pki_client_create(sm2_pki_client_ctx_t **ctx,
         const sm2_ec_point_t *default_ca_public_key,
@@ -177,6 +197,12 @@ extern "C"
 
     sm2_pki_error_t sm2_pki_client_get_public_key(
         const sm2_pki_client_ctx_t *ctx, const sm2_ec_point_t **public_key);
+
+    sm2_pki_error_t sm2_pki_client_configure_evidence_cache(
+        sm2_pki_client_ctx_t *ctx, size_t capacity);
+
+    sm2_pki_error_t sm2_pki_client_get_evidence_cache_stats(
+        const sm2_pki_client_ctx_t *ctx, sm2_pki_evidence_cache_stats_t *stats);
 
     bool sm2_pki_client_is_sign_pool_enabled(const sm2_pki_client_ctx_t *ctx);
 

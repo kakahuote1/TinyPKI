@@ -1767,8 +1767,8 @@ static void test_phase140_epoch_bundle_requires_matching_checkpoint()
         sm2_pki_verify(verifier, &request_updated, auth_now + 20, &matched)
             == SM2_PKI_SUCCESS,
         "Verify Updated Evidence");
-    TEST_ASSERT(pki_client_evidence_cache_count(verifier) == 2,
-        "Updated Evidence Cached Separately");
+    TEST_ASSERT(pki_client_evidence_cache_count(verifier) == 1,
+        "Updated Evidence Replaces Same Cert Cache");
     TEST_ASSERT(
         sm2_pki_verify(verifier, &request_initial, auth_now + 20, &matched)
             == SM2_PKI_ERR_VERIFY,
@@ -1776,6 +1776,172 @@ static void test_phase140_epoch_bundle_requires_matching_checkpoint()
 
     sm2_pki_client_destroy(&verifier);
     sm2_pki_client_destroy(&signer);
+    sm2_pki_service_destroy(&service);
+    TEST_PASS();
+}
+
+static void test_phase145_evidence_cache_capacity_and_pollution_bounds()
+{
+    enum
+    {
+        NOISE_SIGNERS = 4
+    };
+
+    sm2_pki_service_ctx_t *service = NULL;
+    const uint8_t issuer[] = "P145_CA";
+    uint64_t base_now = test_now_unix();
+    TEST_ASSERT(sm2_pki_service_create(
+                    &service, issuer, sizeof(issuer) - 1, 64, 300, base_now)
+            == SM2_PKI_SUCCESS,
+        "Service Init");
+
+    sm2_ec_point_t ca_pub;
+    TEST_ASSERT(
+        sm2_pki_service_get_ca_public_key(service, &ca_pub) == SM2_PKI_SUCCESS,
+        "Get CA Pub");
+
+    sm2_ic_cert_result_t stable_cert;
+    sm2_private_key_t stable_temp;
+    const uint8_t stable_id[] = "P145_STABLE";
+    TEST_ASSERT(sm2_pki_identity_register(service, stable_id,
+                    sizeof(stable_id) - 1, SM2_KU_DIGITAL_SIGNATURE)
+            == SM2_PKI_SUCCESS,
+        "Stable Identity Register");
+    TEST_ASSERT(
+        pki_issue_identity_cert(service, stable_id, sizeof(stable_id) - 1,
+            SM2_KU_DIGITAL_SIGNATURE, &stable_cert, &stable_temp),
+        "Stable Cert Issue");
+
+    sm2_ic_cert_result_t noise_certs[NOISE_SIGNERS];
+    sm2_private_key_t noise_temps[NOISE_SIGNERS];
+    memset(noise_certs, 0, sizeof(noise_certs));
+    memset(noise_temps, 0, sizeof(noise_temps));
+    for (size_t i = 0; i < NOISE_SIGNERS; i++)
+    {
+        uint8_t noise_id[] = "P145_N0";
+        noise_id[6] = (uint8_t)('0' + i);
+        TEST_ASSERT(sm2_pki_identity_register(service, noise_id,
+                        sizeof(noise_id) - 1, SM2_KU_DIGITAL_SIGNATURE)
+                == SM2_PKI_SUCCESS,
+            "Noise Identity Register");
+        TEST_ASSERT(
+            pki_issue_identity_cert(service, noise_id, sizeof(noise_id) - 1,
+                SM2_KU_DIGITAL_SIGNATURE, &noise_certs[i], &noise_temps[i]),
+            "Noise Cert Issue");
+    }
+
+    sm2_pki_client_ctx_t *stable_signer = NULL;
+    sm2_pki_client_ctx_t *verifier = NULL;
+    sm2_pki_client_ctx_t *noise_signers[NOISE_SIGNERS] = { 0 };
+    TEST_ASSERT(sm2_pki_client_create(&stable_signer, &ca_pub, service)
+            == SM2_PKI_SUCCESS,
+        "Stable Signer Init");
+    TEST_ASSERT(
+        sm2_pki_client_create(&verifier, &ca_pub, NULL) == SM2_PKI_SUCCESS,
+        "Verifier Init");
+    TEST_ASSERT(pki_configure_default_transparency_policy(verifier),
+        "Verifier Witness Policy");
+    TEST_ASSERT(sm2_pki_client_import_cert(
+                    stable_signer, &stable_cert, &stable_temp, &ca_pub)
+            == SM2_PKI_SUCCESS,
+        "Stable Cert Import");
+    for (size_t i = 0; i < NOISE_SIGNERS; i++)
+    {
+        TEST_ASSERT(sm2_pki_client_create(&noise_signers[i], &ca_pub, service)
+                == SM2_PKI_SUCCESS,
+            "Noise Signer Init");
+        TEST_ASSERT(sm2_pki_client_import_cert(noise_signers[i],
+                        &noise_certs[i], &noise_temps[i], &ca_pub)
+                == SM2_PKI_SUCCESS,
+            "Noise Cert Import");
+    }
+
+    uint64_t auth_now = test_cert_now(&stable_cert.cert);
+    const uint8_t stable_msg[] = "P145_STABLE_MESSAGE";
+    sm2_auth_signature_t stable_sig;
+    sm2_pki_evidence_bundle_t stable_evidence;
+    sm2_pki_verify_request_t stable_req;
+    TEST_ASSERT(pki_build_signed_verify_request(stable_signer, stable_msg,
+                    sizeof(stable_msg) - 1, auth_now, &stable_sig,
+                    &stable_evidence, &stable_req),
+        "Build Stable Request");
+    TEST_ASSERT(pki_import_epoch_checkpoint_from_signer(
+                    verifier, stable_signer, auth_now, NULL),
+        "Verifier Imports Checkpoint");
+
+    size_t matched = 0;
+    TEST_ASSERT(
+        sm2_pki_client_configure_evidence_cache(verifier, 0) == SM2_PKI_SUCCESS,
+        "Disable Evidence Cache");
+    TEST_ASSERT(sm2_pki_verify(verifier, &stable_req, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Verify Stable No Cache First");
+    TEST_ASSERT(sm2_pki_verify(verifier, &stable_req, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Verify Stable No Cache Second");
+    sm2_pki_evidence_cache_stats_t stats;
+    memset(&stats, 0, sizeof(stats));
+    TEST_ASSERT(sm2_pki_client_get_evidence_cache_stats(verifier, &stats)
+            == SM2_PKI_SUCCESS,
+        "Get Disabled Cache Stats");
+    TEST_ASSERT(stats.capacity == 0 && stats.used_count == 0,
+        "Disabled Cache Stores Nothing");
+    TEST_ASSERT(
+        stats.hit_count == 0 && stats.miss_count == 2, "Disabled Cache Misses");
+
+    TEST_ASSERT(
+        sm2_pki_client_configure_evidence_cache(verifier, 4) == SM2_PKI_SUCCESS,
+        "Small Evidence Cache");
+    TEST_ASSERT(sm2_pki_verify(verifier, &stable_req, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Verify Stable Cache Store");
+    TEST_ASSERT(sm2_pki_verify(verifier, &stable_req, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Verify Stable Cache Promote");
+    memset(&stats, 0, sizeof(stats));
+    TEST_ASSERT(sm2_pki_client_get_evidence_cache_stats(verifier, &stats)
+            == SM2_PKI_SUCCESS,
+        "Get Promoted Cache Stats");
+    TEST_ASSERT(stats.capacity == 4 && stats.protected_capacity == 3
+            && stats.probationary_capacity == 1,
+        "Small Cache Layout");
+    TEST_ASSERT(stats.used_count == 1 && stats.protected_count == 1,
+        "Stable Evidence Protected");
+    TEST_ASSERT(stats.hit_count == 1 && stats.promotion_count == 1,
+        "Stable Evidence Hit Promotes");
+
+    const uint8_t noise_msg[] = "P145_NOISE_MESSAGE";
+    for (size_t i = 0; i < NOISE_SIGNERS; i++)
+    {
+        sm2_auth_signature_t noise_sig;
+        sm2_pki_evidence_bundle_t noise_evidence;
+        sm2_pki_verify_request_t noise_req;
+        TEST_ASSERT(pki_build_signed_verify_request(noise_signers[i], noise_msg,
+                        sizeof(noise_msg) - 1, auth_now, &noise_sig,
+                        &noise_evidence, &noise_req),
+            "Build Noise Request");
+        TEST_ASSERT(sm2_pki_verify(verifier, &noise_req, auth_now, &matched)
+                == SM2_PKI_SUCCESS,
+            "Verify Noise Request");
+    }
+
+    TEST_ASSERT(sm2_pki_verify(verifier, &stable_req, auth_now, &matched)
+            == SM2_PKI_SUCCESS,
+        "Protected Stable Survives Pollution");
+    memset(&stats, 0, sizeof(stats));
+    TEST_ASSERT(sm2_pki_client_get_evidence_cache_stats(verifier, &stats)
+            == SM2_PKI_SUCCESS,
+        "Get Pollution Cache Stats");
+    TEST_ASSERT(stats.used_count <= 4 && stats.protected_count >= 1
+            && stats.probationary_count <= 1,
+        "Pollution Bound Holds");
+    TEST_ASSERT(stats.hit_count >= 2 && stats.eviction_count >= 1,
+        "Pollution Evicts Candidates Only");
+
+    for (size_t i = 0; i < NOISE_SIGNERS; i++)
+        sm2_pki_client_destroy(&noise_signers[i]);
+    sm2_pki_client_destroy(&verifier);
+    sm2_pki_client_destroy(&stable_signer);
     sm2_pki_service_destroy(&service);
     TEST_PASS();
 }

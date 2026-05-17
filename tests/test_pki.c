@@ -378,16 +378,14 @@ static int pki_build_signed_verify_request(sm2_pki_client_ctx_t *signer,
 
 static size_t pki_client_evidence_cache_count(sm2_pki_client_ctx_t *client)
 {
-    const sm2_pki_client_state_t *state = client;
-    size_t count = 0;
-    if (!state)
-        return 0;
-    for (size_t i = 0; i < SM2_PKI_VERIFIED_EVIDENCE_CACHE_CAPACITY; i++)
+    sm2_pki_evidence_cache_stats_t stats;
+    memset(&stats, 0, sizeof(stats));
+    if (sm2_pki_client_get_evidence_cache_stats(client, &stats)
+        != SM2_PKI_SUCCESS)
     {
-        if (state->evidence_cache[i].used)
-            count++;
+        return 0;
     }
-    return count;
+    return stats.used_count;
 }
 
 /* Split by theme to keep PKI tests focused on flow, revocation and security
@@ -422,6 +420,7 @@ void run_test_pki_suite(void)
     RUN_TEST(test_phase137_persisted_storage_double_slot_recovery);
     RUN_TEST(test_phase138_service_binding_tracks_newer_root_versions);
     RUN_TEST(test_phase140_epoch_bundle_requires_matching_checkpoint);
+    RUN_TEST(test_phase145_evidence_cache_capacity_and_pollution_bounds);
     RUN_TEST(test_phase141_issuance_transparency_required_and_threshold);
     RUN_TEST(test_phase142_epoch_witness_append_only_and_quorum);
     RUN_TEST(test_phase143_epoch_bundle_binds_roots_and_witnesses);

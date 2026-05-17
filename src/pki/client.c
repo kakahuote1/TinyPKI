@@ -352,8 +352,225 @@ static void pki_client_cache_reset(sm2_pki_client_state_t *state)
 {
     if (!state)
         return;
-    memset(state->evidence_cache, 0, sizeof(state->evidence_cache));
+    if (state->evidence_cache && state->evidence_cache_capacity > 0)
+    {
+        memset(state->evidence_cache, 0,
+            state->evidence_cache_capacity * sizeof(*state->evidence_cache));
+    }
     state->evidence_cache_counter = 0;
+}
+
+static void pki_client_cache_release(sm2_pki_client_state_t *state)
+{
+    if (!state || !state->evidence_cache)
+        return;
+    sm2_secure_memzero(state->evidence_cache,
+        state->evidence_cache_capacity * sizeof(*state->evidence_cache));
+    free(state->evidence_cache);
+    state->evidence_cache = NULL;
+    state->evidence_cache_capacity = 0;
+    state->evidence_cache_protected_capacity = 0;
+    state->evidence_cache_counter = 0;
+    memset(
+        &state->evidence_cache_stats, 0, sizeof(state->evidence_cache_stats));
+}
+
+static size_t pki_client_cache_default_protected_capacity(size_t capacity)
+{
+    if (capacity <= 1U)
+        return 0;
+    size_t protected_capacity = (capacity * 3U) / 4U;
+    if (protected_capacity == 0)
+        protected_capacity = 1U;
+    if (protected_capacity >= capacity)
+        protected_capacity = capacity - 1U;
+    return protected_capacity;
+}
+
+static size_t pki_client_cache_probationary_capacity(
+    const sm2_pki_client_state_t *state)
+{
+    if (!state || state->evidence_cache_capacity == 0
+        || state->evidence_cache_protected_capacity
+            >= state->evidence_cache_capacity)
+    {
+        return 0;
+    }
+    return state->evidence_cache_capacity
+        - state->evidence_cache_protected_capacity;
+}
+
+static sm2_pki_error_t pki_client_cache_configure(
+    sm2_pki_client_state_t *state, size_t capacity)
+{
+    if (!state || capacity > SM2_PKI_EVIDENCE_CACHE_MAX_CAPACITY)
+        return SM2_PKI_ERR_PARAM;
+
+    sm2_pki_verified_evidence_cache_entry_t *entries = NULL;
+    if (capacity > 0)
+    {
+        entries = (sm2_pki_verified_evidence_cache_entry_t *)calloc(
+            capacity, sizeof(*entries));
+        if (!entries)
+            return SM2_PKI_ERR_MEMORY;
+    }
+
+    pki_client_cache_release(state);
+    state->evidence_cache = entries;
+    state->evidence_cache_capacity = capacity;
+    state->evidence_cache_protected_capacity
+        = pki_client_cache_default_protected_capacity(capacity);
+    state->evidence_cache_counter = 0;
+    memset(
+        &state->evidence_cache_stats, 0, sizeof(state->evidence_cache_stats));
+    return SM2_PKI_SUCCESS;
+}
+
+static size_t pki_client_cache_count_tier(
+    const sm2_pki_client_state_t *state, bool protected_tier)
+{
+    if (!state || !state->evidence_cache)
+        return 0;
+    size_t count = 0;
+    for (size_t i = 0; i < state->evidence_cache_capacity; i++)
+    {
+        const sm2_pki_verified_evidence_cache_entry_t *entry
+            = &state->evidence_cache[i];
+        if (entry->used && entry->protected_tier == protected_tier)
+            count++;
+    }
+    return count;
+}
+
+static sm2_pki_verified_evidence_cache_entry_t *pki_client_cache_lru_entry(
+    sm2_pki_client_state_t *state, bool require_tier, bool protected_tier,
+    const sm2_pki_verified_evidence_cache_entry_t *skip)
+{
+    if (!state || !state->evidence_cache)
+        return NULL;
+    sm2_pki_verified_evidence_cache_entry_t *slot = NULL;
+    for (size_t i = 0; i < state->evidence_cache_capacity; i++)
+    {
+        sm2_pki_verified_evidence_cache_entry_t *entry
+            = &state->evidence_cache[i];
+        if (!entry->used || entry == skip)
+            continue;
+        if (require_tier && entry->protected_tier != protected_tier)
+            continue;
+        if (!slot || entry->last_used_counter < slot->last_used_counter)
+            slot = entry;
+    }
+    return slot;
+}
+
+static void pki_client_cache_evict_entry(sm2_pki_client_state_t *state,
+    sm2_pki_verified_evidence_cache_entry_t *entry)
+{
+    if (!state || !entry || !entry->used)
+        return;
+    memset(entry, 0, sizeof(*entry));
+    state->evidence_cache_stats.eviction_count++;
+}
+
+static void pki_client_cache_prune_expired(
+    sm2_pki_client_state_t *state, uint64_t now_ts)
+{
+    if (!state || !state->evidence_cache)
+        return;
+    for (size_t i = 0; i < state->evidence_cache_capacity; i++)
+    {
+        sm2_pki_verified_evidence_cache_entry_t *entry
+            = &state->evidence_cache[i];
+        if (!entry->used || entry->valid_until >= now_ts)
+            continue;
+        memset(entry, 0, sizeof(*entry));
+        state->evidence_cache_stats.expiration_count++;
+    }
+}
+
+static sm2_pki_verified_evidence_cache_entry_t *pki_client_cache_unused_entry(
+    sm2_pki_client_state_t *state)
+{
+    if (!state || !state->evidence_cache)
+        return NULL;
+    for (size_t i = 0; i < state->evidence_cache_capacity; i++)
+    {
+        if (!state->evidence_cache[i].used)
+            return &state->evidence_cache[i];
+    }
+    return NULL;
+}
+
+static void pki_client_cache_promote(sm2_pki_client_state_t *state,
+    sm2_pki_verified_evidence_cache_entry_t *entry)
+{
+    if (!state || !entry || entry->protected_tier
+        || state->evidence_cache_protected_capacity == 0)
+    {
+        return;
+    }
+
+    size_t protected_count = pki_client_cache_count_tier(state, true);
+    if (protected_count >= state->evidence_cache_protected_capacity)
+    {
+        sm2_pki_verified_evidence_cache_entry_t *victim
+            = pki_client_cache_lru_entry(state, true, true, entry);
+        pki_client_cache_evict_entry(state, victim);
+    }
+    entry->protected_tier = true;
+    state->evidence_cache_stats.promotion_count++;
+}
+
+static sm2_pki_verified_evidence_cache_entry_t *
+pki_client_cache_select_store_slot(sm2_pki_client_state_t *state,
+    const sm2_implicit_cert_t *cert, const sm2_pki_epoch_root_record_t *epoch,
+    size_t matched_ca_index, uint64_t now_ts)
+{
+    if (!state || !cert || !epoch || !state->evidence_cache
+        || state->evidence_cache_capacity == 0)
+    {
+        return NULL;
+    }
+
+    pki_client_cache_prune_expired(state, now_ts);
+    for (size_t i = 0; i < state->evidence_cache_capacity; i++)
+    {
+        sm2_pki_verified_evidence_cache_entry_t *entry
+            = &state->evidence_cache[i];
+        if (!entry->used || entry->serial_number != cert->serial_number
+            || entry->pinned_ca_index != matched_ca_index
+            || entry->authority_id_len != epoch->authority_id_len)
+        {
+            continue;
+        }
+        if (memcmp(entry->authority_id, epoch->authority_id,
+                epoch->authority_id_len)
+            == 0)
+        {
+            return entry;
+        }
+    }
+
+    size_t probationary_capacity
+        = pki_client_cache_probationary_capacity(state);
+    if (probationary_capacity == 0)
+        return pki_client_cache_unused_entry(state);
+
+    size_t probationary_count = pki_client_cache_count_tier(state, false);
+    if (probationary_count < probationary_capacity)
+    {
+        sm2_pki_verified_evidence_cache_entry_t *unused
+            = pki_client_cache_unused_entry(state);
+        if (unused)
+            return unused;
+    }
+
+    sm2_pki_verified_evidence_cache_entry_t *victim
+        = pki_client_cache_lru_entry(state, true, false, NULL);
+    if (!victim)
+        victim = pki_client_cache_lru_entry(state, false, false, NULL);
+    pki_client_cache_evict_entry(state, victim);
+    return victim;
 }
 
 static void pki_client_epoch_cache_drop_checkpoints(
@@ -1241,11 +1458,18 @@ static bool pki_client_evidence_cache_hit(sm2_pki_client_state_t *state,
         return false;
     }
 
-    for (size_t i = 0; i < SM2_PKI_VERIFIED_EVIDENCE_CACHE_CAPACITY; i++)
+    pki_client_cache_prune_expired(state, now_ts);
+    if (!state->evidence_cache || state->evidence_cache_capacity == 0)
+    {
+        state->evidence_cache_stats.miss_count++;
+        return false;
+    }
+
+    for (size_t i = 0; i < state->evidence_cache_capacity; i++)
     {
         sm2_pki_verified_evidence_cache_entry_t *entry
             = &state->evidence_cache[i];
-        if (!entry->used || entry->valid_until < now_ts)
+        if (!entry->used)
             continue;
         if (entry->serial_number != cert->serial_number
             || entry->pinned_ca_index != matched_ca_index
@@ -1282,8 +1506,11 @@ static bool pki_client_evidence_cache_hit(sm2_pki_client_state_t *state,
         }
         state->evidence_cache_counter++;
         entry->last_used_counter = state->evidence_cache_counter;
+        state->evidence_cache_stats.hit_count++;
+        pki_client_cache_promote(state, entry);
         return true;
     }
+    state->evidence_cache_stats.miss_count++;
     return false;
 }
 
@@ -1292,7 +1519,7 @@ static void pki_client_evidence_cache_store(sm2_pki_client_state_t *state,
     const uint8_t epoch_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN],
     const uint8_t cert_commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN],
     const uint8_t proof_digest[SM2_PKI_EPOCH_ROOT_DIGEST_LEN],
-    size_t matched_ca_index)
+    size_t matched_ca_index, uint64_t now_ts)
 {
     if (!state || !cert || !epoch || !epoch_digest || !cert_commitment
         || !proof_digest)
@@ -1308,27 +1535,19 @@ static void pki_client_evidence_cache_store(sm2_pki_client_state_t *state,
         return;
     if (state->evidence_cache_counter == UINT64_MAX)
         pki_client_cache_reset(state);
+    if (!state->evidence_cache || state->evidence_cache_capacity == 0)
+        return;
 
-    sm2_pki_verified_evidence_cache_entry_t *slot = NULL;
-    for (size_t i = 0; i < SM2_PKI_VERIFIED_EVIDENCE_CACHE_CAPACITY; i++)
-    {
-        if (!state->evidence_cache[i].used)
-        {
-            slot = &state->evidence_cache[i];
-            break;
-        }
-        if (!slot
-            || state->evidence_cache[i].last_used_counter
-                < slot->last_used_counter)
-        {
-            slot = &state->evidence_cache[i];
-        }
-    }
+    sm2_pki_verified_evidence_cache_entry_t *slot
+        = pki_client_cache_select_store_slot(
+            state, cert, epoch, matched_ca_index, now_ts);
     if (!slot)
         return;
 
+    bool protected_tier = slot->used && slot->protected_tier;
     memset(slot, 0, sizeof(*slot));
     slot->used = true;
+    slot->protected_tier = protected_tier;
     memcpy(slot->authority_id, epoch->authority_id, epoch->authority_id_len);
     slot->authority_id_len = epoch->authority_id_len;
     slot->pinned_ca_index = matched_ca_index;
@@ -1347,6 +1566,7 @@ static void pki_client_evidence_cache_store(sm2_pki_client_state_t *state,
     slot->valid_until = valid_until;
     state->evidence_cache_counter++;
     slot->last_used_counter = state->evidence_cache_counter;
+    state->evidence_cache_stats.store_count++;
 }
 
 static sm2_pki_error_t pki_client_get_cached_epoch_root(
@@ -1823,7 +2043,7 @@ static sm2_pki_error_t pki_client_verify_epoch_evidence_bundle(
     {
         pki_client_evidence_cache_store(state, cert, cached_epoch,
             evidence->epoch_digest, cert_commitment, proof_digest,
-            matched_ca_index);
+            matched_ca_index, now_ts);
     }
     return ret;
 }
@@ -1952,6 +2172,14 @@ sm2_pki_error_t sm2_pki_client_create(sm2_pki_client_ctx_t **ctx,
         }
     }
 
+    sm2_pki_error_t cache_ret = pki_client_cache_configure(
+        state, SM2_PKI_EVIDENCE_CACHE_DEFAULT_CAPACITY);
+    if (cache_ret != SM2_PKI_SUCCESS)
+    {
+        sm2_pki_client_destroy(&state);
+        return cache_ret;
+    }
+
     state->initialized = true;
     *ctx = state;
     if (revocation_service)
@@ -1976,6 +2204,7 @@ void sm2_pki_client_destroy(sm2_pki_client_ctx_t **ctx)
     if (state)
     {
         pki_client_release_bound_service(state);
+        pki_client_cache_release(state);
         sm2_secure_memzero(state, sizeof(*state));
         free(state);
     }
@@ -2529,6 +2758,45 @@ sm2_pki_error_t sm2_pki_client_get_public_key(
         || !public_key)
         return SM2_PKI_ERR_PARAM;
     *public_key = &state->public_key;
+    return SM2_PKI_SUCCESS;
+}
+
+sm2_pki_error_t sm2_pki_client_configure_evidence_cache(
+    sm2_pki_client_ctx_t *ctx, size_t capacity)
+{
+    sm2_pki_client_state_t *state = pki_client_state(ctx);
+    if (!ctx || !ctx->initialized || !state)
+        return SM2_PKI_ERR_PARAM;
+    return pki_client_cache_configure(state, capacity);
+}
+
+sm2_pki_error_t sm2_pki_client_get_evidence_cache_stats(
+    const sm2_pki_client_ctx_t *ctx, sm2_pki_evidence_cache_stats_t *stats)
+{
+    const sm2_pki_client_state_t *state = pki_client_state_const(ctx);
+    if (!ctx || !ctx->initialized || !state || !stats)
+        return SM2_PKI_ERR_PARAM;
+
+    *stats = state->evidence_cache_stats;
+    stats->capacity = state->evidence_cache_capacity;
+    stats->protected_capacity = state->evidence_cache_protected_capacity;
+    stats->probationary_capacity
+        = pki_client_cache_probationary_capacity(state);
+    stats->used_count = 0;
+    stats->protected_count = 0;
+    stats->probationary_count = 0;
+    for (size_t i = 0; i < state->evidence_cache_capacity; i++)
+    {
+        const sm2_pki_verified_evidence_cache_entry_t *entry
+            = &state->evidence_cache[i];
+        if (!entry->used)
+            continue;
+        stats->used_count++;
+        if (entry->protected_tier)
+            stats->protected_count++;
+        else
+            stats->probationary_count++;
+    }
     return SM2_PKI_SUCCESS;
 }
 

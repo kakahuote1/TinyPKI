@@ -142,7 +142,6 @@ typedef struct
 } sm2_pki_identity_entry_t;
 
 #define SM2_PKI_INITIAL_CERT_CAPACITY 16U
-#define SM2_PKI_VERIFIED_EVIDENCE_CACHE_CAPACITY 16U
 
 typedef struct
 {
@@ -156,6 +155,7 @@ typedef struct
 typedef struct
 {
     bool used;
+    bool protected_tier;
     uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
     size_t authority_id_len;
     size_t pinned_ca_index;
@@ -222,9 +222,11 @@ struct sm2_pki_client_ctx_st
     sm2_auth_trust_store_t trust_store;
     sm2_pki_service_state_t *revocation_service;
     sm2_pki_epoch_cache_entry_t epoch_root_cache[SM2_AUTH_MAX_CA_STORE];
-    sm2_pki_verified_evidence_cache_entry_t
-        evidence_cache[SM2_PKI_VERIFIED_EVIDENCE_CACHE_CAPACITY];
+    sm2_pki_verified_evidence_cache_entry_t *evidence_cache;
+    size_t evidence_cache_capacity;
+    size_t evidence_cache_protected_capacity;
     uint64_t evidence_cache_counter;
+    sm2_pki_evidence_cache_stats_t evidence_cache_stats;
 
     sm2_pki_transparency_witness_t
         transparency_witnesses[SM2_PKI_TRANSPARENCY_MAX_WITNESSES];
