@@ -67,6 +67,14 @@ extern "C"
         size_t directory_signature_len;
     };
 
+    typedef struct
+    {
+        size_t node_alloc_count;
+        size_t node_free_count;
+        size_t root_refresh_count;
+        size_t root_refresh_node_visit_count;
+    } sm2_rev_tree_debug_stats_t;
+
     /* ---- hash primitives (domain-separated SM3) ---- */
     void merkle_u64_to_be(uint64_t v, uint8_t out[8]);
 
@@ -82,6 +90,8 @@ extern "C"
     void merkle_tree_set_root_version(sm2_rev_tree_t *tree, uint64_t version);
     sm2_ic_error_t merkle_tree_clone(
         const sm2_rev_tree_t *src, sm2_rev_tree_t **dst);
+    void merkle_tree_debug_stats_reset(void);
+    void merkle_tree_debug_stats_get(sm2_rev_tree_debug_stats_t *stats);
 
     /* ---- sort comparators ---- */
     int merkle_cmp_u64(const void *a, const void *b);

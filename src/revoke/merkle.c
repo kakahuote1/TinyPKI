@@ -25,6 +25,20 @@ typedef struct sm2_rev_sparse_node_st
     bool hash_valid;
 } sm2_rev_sparse_node_t;
 
+static sm2_rev_tree_debug_stats_t g_sparse_debug_stats;
+
+void merkle_tree_debug_stats_reset(void)
+{
+    memset(&g_sparse_debug_stats, 0, sizeof(g_sparse_debug_stats));
+}
+
+void merkle_tree_debug_stats_get(sm2_rev_tree_debug_stats_t *stats)
+{
+    if (!stats)
+        return;
+    *stats = g_sparse_debug_stats;
+}
+
 static uint8_t sparse_key_bit(
     const uint8_t key[SM2_REV_MERKLE_HASH_LEN], size_t depth)
 {
@@ -85,6 +99,7 @@ static sm2_rev_sparse_node_t *sparse_node_new_leaf(
         = (sm2_rev_sparse_node_t *)calloc(1, sizeof(*node));
     if (!node)
         return NULL;
+    g_sparse_debug_stats.node_alloc_count++;
     node->type = SM2_REV_SPARSE_LEAF;
     node->depth = SM2_REV_MERKLE_MAX_DEPTH;
     node->serial_number = serial_number;
@@ -99,6 +114,7 @@ static sm2_rev_sparse_node_t *sparse_node_new_branch(
         = (sm2_rev_sparse_node_t *)calloc(1, sizeof(*node));
     if (!node)
         return NULL;
+    g_sparse_debug_stats.node_alloc_count++;
     node->type = SM2_REV_SPARSE_BRANCH;
     node->depth = (uint16_t)depth;
     memcpy(node->key, key, SM2_REV_MERKLE_HASH_LEN);
@@ -111,6 +127,7 @@ static void sparse_node_free(sm2_rev_sparse_node_t *node)
         return;
     sparse_node_free(node->left);
     sparse_node_free(node->right);
+    g_sparse_debug_stats.node_free_count++;
     free(node);
 }
 
@@ -256,6 +273,7 @@ static sm2_ic_error_t sparse_node_refresh_hash(sm2_rev_sparse_node_t *node)
 {
     if (!node)
         return SM2_IC_SUCCESS;
+    g_sparse_debug_stats.root_refresh_node_visit_count++;
 
     if (node->type == SM2_REV_SPARSE_LEAF)
     {
@@ -299,6 +317,7 @@ static sm2_ic_error_t sparse_tree_refresh_root(sm2_rev_tree_t *tree)
 {
     if (!tree)
         return SM2_IC_ERR_PARAM;
+    g_sparse_debug_stats.root_refresh_count++;
     if (!tree->root)
         return merkle_hash_empty_subtree(0, tree->root_hash);
 
