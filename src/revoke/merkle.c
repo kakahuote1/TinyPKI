@@ -33,6 +33,13 @@ typedef struct sm2_rev_sparse_pool_block_st
     sm2_rev_sparse_node_t nodes[SM2_REV_SPARSE_POOL_BLOCK_NODES];
 } sm2_rev_sparse_pool_block_t;
 
+typedef struct
+{
+    sm2_rev_delta_item_t item;
+    size_t original_index;
+    uint8_t key[SM2_REV_MERKLE_HASH_LEN];
+} sm2_rev_sparse_delta_work_item_t;
+
 static sm2_rev_tree_debug_stats_t g_sparse_debug_stats;
 
 void merkle_tree_debug_stats_reset(void)
@@ -57,6 +64,22 @@ static bool sparse_key_equal(const uint8_t a[SM2_REV_MERKLE_HASH_LEN],
     const uint8_t b[SM2_REV_MERKLE_HASH_LEN])
 {
     return memcmp(a, b, SM2_REV_MERKLE_HASH_LEN) == 0;
+}
+
+static int sparse_delta_work_cmp_key(const void *a, const void *b)
+{
+    const sm2_rev_sparse_delta_work_item_t *lhs
+        = (const sm2_rev_sparse_delta_work_item_t *)a;
+    const sm2_rev_sparse_delta_work_item_t *rhs
+        = (const sm2_rev_sparse_delta_work_item_t *)b;
+    int key_cmp = memcmp(lhs->key, rhs->key, SM2_REV_MERKLE_HASH_LEN);
+    if (key_cmp != 0)
+        return key_cmp;
+    if (lhs->original_index < rhs->original_index)
+        return -1;
+    if (lhs->original_index > rhs->original_index)
+        return 1;
+    return 0;
 }
 
 static size_t sparse_first_diff_depth(const uint8_t a[SM2_REV_MERKLE_HASH_LEN],
@@ -348,6 +371,8 @@ static sm2_ic_error_t sparse_node_refresh_hash(sm2_rev_sparse_node_t *node)
 {
     if (!node)
         return SM2_IC_SUCCESS;
+    if (node->hash_valid)
+        return SM2_IC_SUCCESS;
     g_sparse_debug_stats.root_refresh_node_visit_count++;
 
     if (node->type == SM2_REV_SPARSE_LEAF)
@@ -422,6 +447,7 @@ static sm2_ic_error_t sparse_insert_node(sm2_rev_tree_t *tree,
         if (sparse_key_equal(cur->key, leaf->key))
         {
             cur->serial_number = leaf->serial_number;
+            cur->hash_valid = false;
             sparse_node_free(tree, leaf);
             *inserted = false;
             return SM2_IC_SUCCESS;
@@ -476,8 +502,11 @@ static sm2_ic_error_t sparse_insert_node(sm2_rev_tree_t *tree,
     }
 
     uint8_t bit = sparse_key_bit(leaf->key, cur->depth);
-    return sparse_insert_node(tree, bit == 0 ? &cur->left : &cur->right, leaf,
-        cur->depth + 1U, inserted);
+    sm2_ic_error_t ret = sparse_insert_node(tree,
+        bit == 0 ? &cur->left : &cur->right, leaf, cur->depth + 1U, inserted);
+    if (ret == SM2_IC_SUCCESS)
+        cur->hash_valid = false;
+    return ret;
 }
 
 static sm2_ic_error_t sparse_delete_node(sm2_rev_tree_t *tree,
@@ -510,6 +539,7 @@ static sm2_ic_error_t sparse_delete_node(sm2_rev_tree_t *tree,
     if (ret != SM2_IC_SUCCESS || !*removed)
         return ret;
 
+    cur->hash_valid = false;
     if (cur->left && cur->right)
         return SM2_IC_SUCCESS;
 
@@ -877,17 +907,13 @@ sm2_ic_error_t sm2_rev_tree_get_root_hash(
     return SM2_IC_SUCCESS;
 }
 
-static sm2_ic_error_t merkle_tree_update_serial_no_refresh(
-    sm2_rev_tree_t *tree, uint64_t serial, bool revoked)
+static sm2_ic_error_t merkle_tree_update_key_no_refresh(sm2_rev_tree_t *tree,
+    uint64_t serial, const uint8_t key[SM2_REV_MERKLE_HASH_LEN], bool revoked)
 {
-    if (!tree || serial == 0)
+    if (!tree || serial == 0 || !key)
         return SM2_IC_ERR_PARAM;
 
-    uint8_t key[SM2_REV_MERKLE_HASH_LEN];
-    sm2_ic_error_t ret = merkle_serial_key(serial, key);
-    if (ret != SM2_IC_SUCCESS)
-        return ret;
-
+    sm2_ic_error_t ret = SM2_IC_SUCCESS;
     if (revoked)
     {
         sm2_rev_sparse_node_t *leaf = sparse_node_new_leaf(tree, serial, key);
@@ -916,6 +942,20 @@ static sm2_ic_error_t merkle_tree_update_serial_no_refresh(
     return SM2_IC_SUCCESS;
 }
 
+static sm2_ic_error_t merkle_tree_update_serial_no_refresh(
+    sm2_rev_tree_t *tree, uint64_t serial, bool revoked)
+{
+    if (!tree || serial == 0)
+        return SM2_IC_ERR_PARAM;
+
+    uint8_t key[SM2_REV_MERKLE_HASH_LEN];
+    sm2_ic_error_t ret = merkle_serial_key(serial, key);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    return merkle_tree_update_key_no_refresh(tree, serial, key, revoked);
+}
+
 sm2_ic_error_t merkle_tree_update_serial(
     sm2_rev_tree_t *tree, uint64_t serial, bool revoked)
 {
@@ -934,14 +974,42 @@ sm2_ic_error_t merkle_tree_apply_delta_items(
     if (item_count > 0 && !items)
         return SM2_IC_ERR_PARAM;
 
+    if (item_count == 0)
+        return sparse_tree_refresh_root(tree);
+    if (item_count > SIZE_MAX / sizeof(sm2_rev_sparse_delta_work_item_t))
+        return SM2_IC_ERR_MEMORY;
+
+    sm2_rev_sparse_delta_work_item_t *work
+        = (sm2_rev_sparse_delta_work_item_t *)calloc(item_count, sizeof(*work));
+    if (!work)
+        return SM2_IC_ERR_MEMORY;
+
     for (size_t i = 0; i < item_count; i++)
     {
-        sm2_ic_error_t ret = merkle_tree_update_serial_no_refresh(
-            tree, items[i].serial_number, items[i].revoked);
+        work[i].item = items[i];
+        work[i].original_index = i;
+        sm2_ic_error_t ret
+            = merkle_serial_key(items[i].serial_number, work[i].key);
         if (ret != SM2_IC_SUCCESS)
+        {
+            free(work);
             return ret;
+        }
+    }
+    qsort(work, item_count, sizeof(*work), sparse_delta_work_cmp_key);
+
+    for (size_t i = 0; i < item_count; i++)
+    {
+        sm2_ic_error_t ret = merkle_tree_update_key_no_refresh(tree,
+            work[i].item.serial_number, work[i].key, work[i].item.revoked);
+        if (ret != SM2_IC_SUCCESS)
+        {
+            free(work);
+            return ret;
+        }
     }
 
+    free(work);
     return sparse_tree_refresh_root(tree);
 }
 

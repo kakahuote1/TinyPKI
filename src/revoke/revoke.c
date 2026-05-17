@@ -9,6 +9,7 @@
 #include "revoke_internal.h"
 #include "sm2_secure_mem.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,6 +31,90 @@ static sm2_rev_congestion_signal_t calc_congestion_signal(
     if (ctx->query_inflight >= busy)
         return SM2_REV_CONGESTION_BUSY;
     return SM2_REV_CONGESTION_NORMAL;
+}
+
+typedef struct
+{
+    sm2_rev_delta_item_t item;
+    size_t original_index;
+} rev_delta_work_item_t;
+
+static int rev_delta_work_cmp_serial_index(const void *a, const void *b)
+{
+    const rev_delta_work_item_t *lhs = (const rev_delta_work_item_t *)a;
+    const rev_delta_work_item_t *rhs = (const rev_delta_work_item_t *)b;
+    if (lhs->item.serial_number < rhs->item.serial_number)
+        return -1;
+    if (lhs->item.serial_number > rhs->item.serial_number)
+        return 1;
+    if (lhs->original_index < rhs->original_index)
+        return -1;
+    if (lhs->original_index > rhs->original_index)
+        return 1;
+    return 0;
+}
+
+static sm2_ic_error_t rev_delta_canonicalize_items(
+    const sm2_rev_delta_item_t *items, size_t item_count,
+    sm2_rev_delta_item_t **canonical_items, size_t *canonical_count)
+{
+    if (!canonical_items || !canonical_count)
+        return SM2_IC_ERR_PARAM;
+    if (item_count > 0 && !items)
+        return SM2_IC_ERR_PARAM;
+
+    *canonical_items = NULL;
+    *canonical_count = 0;
+    if (item_count == 0)
+        return SM2_IC_SUCCESS;
+    if (item_count > SIZE_MAX / sizeof(rev_delta_work_item_t)
+        || item_count > SIZE_MAX / sizeof(sm2_rev_delta_item_t))
+    {
+        return SM2_IC_ERR_MEMORY;
+    }
+
+    rev_delta_work_item_t *work
+        = (rev_delta_work_item_t *)calloc(item_count, sizeof(*work));
+    sm2_rev_delta_item_t *out
+        = (sm2_rev_delta_item_t *)calloc(item_count, sizeof(*out));
+    if (!work || !out)
+    {
+        free(work);
+        free(out);
+        return SM2_IC_ERR_MEMORY;
+    }
+
+    for (size_t i = 0; i < item_count; i++)
+    {
+        if (items[i].serial_number == 0)
+        {
+            free(work);
+            free(out);
+            return SM2_IC_ERR_PARAM;
+        }
+        work[i].item = items[i];
+        work[i].original_index = i;
+    }
+    qsort(work, item_count, sizeof(*work), rev_delta_work_cmp_serial_index);
+
+    size_t out_count = 0;
+    size_t i = 0;
+    while (i < item_count)
+    {
+        size_t j = i + 1U;
+        while (j < item_count
+            && work[j].item.serial_number == work[i].item.serial_number)
+        {
+            j++;
+        }
+        out[out_count++] = work[j - 1U].item;
+        i = j;
+    }
+
+    free(work);
+    *canonical_items = out;
+    *canonical_count = out_count;
+    return SM2_IC_SUCCESS;
 }
 
 static sm2_ic_error_t local_list_reserve(
@@ -58,22 +143,51 @@ static sm2_ic_error_t local_list_reserve(
     return SM2_IC_SUCCESS;
 }
 
+static bool local_list_find_index(
+    const sm2_rev_ctx_t *ctx, uint64_t serial, size_t *index)
+{
+    if (index)
+        *index = 0;
+    if (!ctx)
+        return false;
+
+    size_t lo = 0;
+    size_t hi = ctx->revoked_count;
+    while (lo < hi)
+    {
+        size_t mid = lo + (hi - lo) / 2U;
+        if (ctx->revoked_serials[mid] < serial)
+            lo = mid + 1U;
+        else
+            hi = mid;
+    }
+
+    if (index)
+        *index = lo;
+    return lo < ctx->revoked_count && ctx->revoked_serials[lo] == serial;
+}
+
 static sm2_ic_error_t local_list_add(sm2_rev_ctx_t *ctx, uint64_t serial)
 {
     if (!ctx)
         return SM2_IC_ERR_PARAM;
 
-    for (size_t i = 0; i < ctx->revoked_count; i++)
-    {
-        if (ctx->revoked_serials[i] == serial)
-            return SM2_IC_SUCCESS;
-    }
+    size_t insert_at = 0;
+    if (local_list_find_index(ctx, serial, &insert_at))
+        return SM2_IC_SUCCESS;
 
     sm2_ic_error_t ret = local_list_reserve(ctx, ctx->revoked_count + 1);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    ctx->revoked_serials[ctx->revoked_count++] = serial;
+    if (insert_at < ctx->revoked_count)
+    {
+        memmove(&ctx->revoked_serials[insert_at + 1U],
+            &ctx->revoked_serials[insert_at],
+            (ctx->revoked_count - insert_at) * sizeof(uint64_t));
+    }
+    ctx->revoked_serials[insert_at] = serial;
+    ctx->revoked_count++;
     return SM2_IC_SUCCESS;
 }
 
@@ -82,19 +196,16 @@ static void local_list_remove(sm2_rev_ctx_t *ctx, uint64_t serial)
     if (!ctx)
         return;
 
-    for (size_t i = 0; i < ctx->revoked_count; i++)
+    size_t remove_at = 0;
+    if (!local_list_find_index(ctx, serial, &remove_at))
+        return;
+    if (remove_at + 1U < ctx->revoked_count)
     {
-        if (ctx->revoked_serials[i] == serial)
-        {
-            if (i + 1 < ctx->revoked_count)
-            {
-                memmove(&ctx->revoked_serials[i], &ctx->revoked_serials[i + 1],
-                    (ctx->revoked_count - i - 1) * sizeof(uint64_t));
-            }
-            ctx->revoked_count--;
-            return;
-        }
+        memmove(&ctx->revoked_serials[remove_at],
+            &ctx->revoked_serials[remove_at + 1U],
+            (ctx->revoked_count - remove_at - 1U) * sizeof(uint64_t));
     }
+    ctx->revoked_count--;
 }
 
 static bool local_list_contains(const sm2_rev_ctx_t *ctx, uint64_t serial)
@@ -102,12 +213,7 @@ static bool local_list_contains(const sm2_rev_ctx_t *ctx, uint64_t serial)
     if (!ctx)
         return false;
 
-    for (size_t i = 0; i < ctx->revoked_count; i++)
-    {
-        if (ctx->revoked_serials[i] == serial)
-            return true;
-    }
-    return false;
+    return local_list_find_index(ctx, serial, NULL);
 }
 
 static void rev_local_list_release(uint64_t **revoked_serials)
@@ -466,19 +572,30 @@ sm2_ic_error_t sm2_rev_apply_delta(
     if (delta->new_version <= delta->base_version)
         return SM2_IC_ERR_PARAM;
 
-    sm2_rev_ctx_t scratch;
-    sm2_ic_error_t ret = rev_ctx_clone_local_state(ctx, &scratch);
+    sm2_rev_delta_item_t *canonical_items = NULL;
+    size_t canonical_count = 0;
+    sm2_ic_error_t ret = rev_delta_canonicalize_items(
+        delta->items, delta->item_count, &canonical_items, &canonical_count);
     if (ret != SM2_IC_SUCCESS)
         return ret;
 
-    for (size_t i = 0; i < delta->item_count; i++)
+    sm2_rev_ctx_t scratch;
+    ret = rev_ctx_clone_local_state(ctx, &scratch);
+    if (ret != SM2_IC_SUCCESS)
     {
-        const sm2_rev_delta_item_t *it = &delta->items[i];
+        free(canonical_items);
+        return ret;
+    }
+
+    for (size_t i = 0; i < canonical_count; i++)
+    {
+        const sm2_rev_delta_item_t *it = &canonical_items[i];
         if (it->revoked)
         {
             ret = local_list_add(&scratch, it->serial_number);
             if (ret != SM2_IC_SUCCESS)
             {
+                free(canonical_items);
                 rev_local_list_release(&scratch.revoked_serials);
                 sm2_rev_tree_cleanup(&scratch.rev_tree);
                 return ret;
@@ -491,9 +608,10 @@ sm2_ic_error_t sm2_rev_apply_delta(
     }
 
     ret = merkle_tree_apply_delta_items(
-        scratch.rev_tree, delta->items, delta->item_count);
+        scratch.rev_tree, canonical_items, canonical_count);
     if (ret != SM2_IC_SUCCESS)
     {
+        free(canonical_items);
         rev_local_list_release(&scratch.revoked_serials);
         sm2_rev_tree_cleanup(&scratch.rev_tree);
         return ret;
@@ -505,6 +623,7 @@ sm2_ic_error_t sm2_rev_apply_delta(
     ret = rev_ctx_refresh_root_hash(&scratch);
     if (ret != SM2_IC_SUCCESS)
     {
+        free(canonical_items);
         rev_local_list_release(&scratch.revoked_serials);
         sm2_rev_tree_cleanup(&scratch.rev_tree);
         return ret;
@@ -521,6 +640,7 @@ sm2_ic_error_t sm2_rev_apply_delta(
     memcpy(ctx->root_hash, scratch.root_hash, sizeof(ctx->root_hash));
     scratch.revoked_serials = NULL;
     scratch.rev_tree = NULL;
+    free(canonical_items);
     return SM2_IC_SUCCESS;
 }
 

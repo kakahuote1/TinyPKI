@@ -121,6 +121,10 @@ static void test_revocation_batch_update_baseline_metrics(void)
             updates[i].revoked = false;
         }
     }
+    updates[UPDATE_ITEMS - 2U].serial_number = 200000U;
+    updates[UPDATE_ITEMS - 2U].revoked = false;
+    updates[UPDATE_ITEMS - 1U].serial_number = 100001U;
+    updates[UPDATE_ITEMS - 1U].revoked = true;
     sm2_rev_delta_t update_delta = { 1, 2, updates, UPDATE_ITEMS };
 
     merkle_tree_debug_stats_reset();
@@ -145,19 +149,30 @@ static void test_revocation_batch_update_baseline_metrics(void)
         "Pool Block Allocations Recorded");
     TEST_ASSERT(stats.root_refresh_count > 0, "Root Refreshes Recorded");
     TEST_ASSERT(stats.root_refresh_count <= 4, "Batch Root Refresh Coalesced");
+    TEST_ASSERT(stats.root_refresh_node_visit_count <= 1800,
+        "Batch Refresh Reuses Cached Paths");
     TEST_ASSERT(
         sm2_rev_local_count(ctx) == INITIAL_REVOKED, "Final Revoked Count");
 
     sm2_rev_status_t status;
     sm2_rev_source_t source;
     TEST_ASSERT(
-        sm2_rev_query(ctx, 200000U, 130, &status, &source) == SM2_IC_SUCCESS,
+        sm2_rev_query(ctx, 200002U, 130, &status, &source) == SM2_IC_SUCCESS,
         "Query Added Serial");
     TEST_ASSERT(status == SM2_REV_STATUS_REVOKED, "Added Serial Revoked");
     TEST_ASSERT(
-        sm2_rev_query(ctx, 100001U, 130, &status, &source) == SM2_IC_SUCCESS,
+        sm2_rev_query(ctx, 100003U, 130, &status, &source) == SM2_IC_SUCCESS,
         "Query Removed Serial");
     TEST_ASSERT(status == SM2_REV_STATUS_GOOD, "Removed Serial Good");
+    TEST_ASSERT(
+        sm2_rev_query(ctx, 200000U, 130, &status, &source) == SM2_IC_SUCCESS,
+        "Query Duplicate Final Remove");
+    TEST_ASSERT(status == SM2_REV_STATUS_GOOD, "Duplicate Final Remove Good");
+    TEST_ASSERT(
+        sm2_rev_query(ctx, 100001U, 130, &status, &source) == SM2_IC_SUCCESS,
+        "Query Duplicate Final Revoke");
+    TEST_ASSERT(
+        status == SM2_REV_STATUS_REVOKED, "Duplicate Final Revoke Revoked");
 
     sm2_rev_cleanup(&ctx);
     TEST_PASS();
