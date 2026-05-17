@@ -44,6 +44,10 @@ extern "C"
         uint64_t root_version;
         size_t leaf_count;
         struct sm2_rev_sparse_node_st *root;
+        struct sm2_rev_sparse_node_st *free_nodes;
+        struct sm2_rev_sparse_pool_block_st *node_pool_blocks;
+        size_t node_pool_live_count;
+        size_t node_pool_peak_live_count;
         uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN];
     };
 
@@ -71,6 +75,7 @@ extern "C"
     {
         size_t node_alloc_count;
         size_t node_free_count;
+        size_t node_pool_block_alloc_count;
         size_t root_refresh_count;
         size_t root_refresh_node_visit_count;
     } sm2_rev_tree_debug_stats_t;

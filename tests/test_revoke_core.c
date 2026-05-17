@@ -133,12 +133,16 @@ static void test_revocation_batch_update_baseline_metrics(void)
     memset(&stats, 0, sizeof(stats));
     merkle_tree_debug_stats_get(&stats);
     printf("   [REV-BATCH-BASELINE] initial=%u, updates=%u, elapsed=%.3f ms, "
-           "alloc=%zu, free=%zu, refresh=%zu, refresh_visits=%zu\n",
+           "alloc=%zu, free=%zu, pool_blocks=%zu, refresh=%zu, "
+           "refresh_visits=%zu\n",
         (unsigned)INITIAL_REVOKED, (unsigned)UPDATE_ITEMS, elapsed_ms,
-        stats.node_alloc_count, stats.node_free_count, stats.root_refresh_count,
+        stats.node_alloc_count, stats.node_free_count,
+        stats.node_pool_block_alloc_count, stats.root_refresh_count,
         stats.root_refresh_node_visit_count);
 
     TEST_ASSERT(stats.node_alloc_count > 0, "Node Allocations Recorded");
+    TEST_ASSERT(stats.node_pool_block_alloc_count > 0,
+        "Pool Block Allocations Recorded");
     TEST_ASSERT(stats.root_refresh_count > 0, "Root Refreshes Recorded");
     TEST_ASSERT(
         sm2_rev_local_count(ctx) == INITIAL_REVOKED, "Final Revoked Count");
