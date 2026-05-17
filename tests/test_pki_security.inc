@@ -2162,6 +2162,12 @@ static void test_phase142_epoch_witness_append_only_and_quorum()
             sizeof(witness_id) - 1, &witness_priv, &witness_sig)
             == SM2_PKI_SUCCESS,
         "Initial Append-Only Witness Sign");
+    TEST_ASSERT(witness_state.issuance_frontier.leaf_count == 2,
+        "Witness Frontier Initial Leaf Count");
+    TEST_ASSERT(witness_state.issuance_frontier.peak_count == 1,
+        "Witness Frontier Initial Peak Count");
+    TEST_ASSERT(witness_state.issuance_frontier.peak_heights[0] == 1,
+        "Witness Frontier Initial Peak Height");
 
     sm2_pki_epoch_root_record_t rollback_root = root_ab;
     rollback_root.epoch_version--;
@@ -2200,6 +2206,21 @@ static void test_phase142_epoch_witness_append_only_and_quorum()
             sizeof(witness_id) - 1, &witness_priv, &witness_sig)
             == SM2_PKI_SUCCESS,
         "Accept Append Batch");
+    TEST_ASSERT(witness_state.issuance_frontier.leaf_count == 3,
+        "Witness Frontier Appended Leaf Count");
+    TEST_ASSERT(witness_state.issuance_frontier.peak_count == 2,
+        "Witness Frontier Appended Peak Count");
+    TEST_ASSERT(witness_state.issuance_frontier.peak_heights[0] == 1
+            && witness_state.issuance_frontier.peak_heights[1] == 0,
+        "Witness Frontier Appended Peak Heights");
+
+    sm2_pki_epoch_witness_state_t tampered_frontier = witness_state;
+    tampered_frontier.issuance_frontier.peak_hashes[0][0] ^= 0x01U;
+    TEST_ASSERT(sm2_pki_epoch_witness_sign_append_only(&tampered_frontier,
+                    &root_abc, &ca_pub, base_now, NULL, 0, witness_id,
+                    sizeof(witness_id) - 1, &witness_priv, &witness_sig)
+            == SM2_PKI_ERR_VERIFY,
+        "Reject Tampered Witness Frontier");
 
     uint8_t digest_ab[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];
     uint8_t digest_abc[SM2_PKI_EPOCH_ROOT_DIGEST_LEN];

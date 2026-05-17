@@ -97,6 +97,15 @@ extern "C"
 
     typedef struct
     {
+        size_t leaf_count;
+        size_t peak_count;
+        uint8_t peak_heights[SM2_PKI_ISSUANCE_MAX_PEAKS];
+        uint8_t peak_hashes[SM2_PKI_ISSUANCE_MAX_PEAKS]
+                           [SM2_REV_MERKLE_HASH_LEN];
+    } sm2_pki_issuance_frontier_t;
+
+    typedef struct
+    {
         bool initialized;
         bool has_authority;
         uint8_t authority_id[SM2_REV_ROOT_AUTHORITY_ID_MAX_LEN];
@@ -107,9 +116,7 @@ extern "C"
         uint8_t latest_revocation_root_hash[SM2_REV_MERKLE_HASH_LEN];
         uint64_t latest_issuance_root_version;
         uint8_t latest_issuance_root_hash[SM2_REV_MERKLE_HASH_LEN];
-        sm2_pki_issuance_commitment_t *commitments;
-        size_t commitment_count;
-        size_t commitment_capacity;
+        sm2_pki_issuance_frontier_t issuance_frontier;
     } sm2_pki_epoch_witness_state_t;
 
     typedef struct

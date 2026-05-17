@@ -66,6 +66,11 @@ sm2_ic_error_t sm2_pki_issuance_tree_append(sm2_pki_issuance_tree_t **tree,
 sm2_ic_error_t sm2_pki_issuance_tree_get_root_hash(
     const sm2_pki_issuance_tree_t *tree,
     uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN]);
+sm2_ic_error_t sm2_pki_issuance_frontier_append(
+    const sm2_pki_issuance_frontier_t *current,
+    const sm2_pki_issuance_commitment_t *new_commitments,
+    size_t new_commitment_count, sm2_pki_issuance_frontier_t *next,
+    uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN]);
 sm2_ic_error_t sm2_pki_issuance_tree_prove_member(
     const sm2_pki_issuance_tree_t *tree,
     const uint8_t commitment[SM2_PKI_ISSUANCE_COMMITMENT_LEN],

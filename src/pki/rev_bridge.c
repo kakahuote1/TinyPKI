@@ -10,6 +10,7 @@
 #define SM2_PKI_EPOCH_ROOT_AUTH_MAX 384U
 
 static void pki_issuance_u64_to_be(uint64_t v, uint8_t out[8]);
+static size_t pki_issuance_floor_log2_size(size_t v);
 
 sm2_ic_error_t sm2_pki_rev_snapshot_create(
     const sm2_rev_ctx_t *src, sm2_rev_ctx_t **snapshot)
@@ -517,6 +518,122 @@ static sm2_ic_error_t pki_issuance_hash_root(size_t leaf_count,
         off += SM2_REV_MERKLE_HASH_LEN;
     }
     return sm2_ic_sm3_hash(buf, off, out_hash);
+}
+
+static sm2_ic_error_t pki_issuance_frontier_validate(
+    const sm2_pki_issuance_frontier_t *frontier)
+{
+    if (!frontier)
+        return SM2_IC_ERR_PARAM;
+    if (frontier->leaf_count == 0)
+        return frontier->peak_count == 0 ? SM2_IC_SUCCESS : SM2_IC_ERR_VERIFY;
+    if (frontier->peak_count == 0
+        || frontier->peak_count > SM2_PKI_ISSUANCE_MAX_PEAKS)
+    {
+        return SM2_IC_ERR_VERIFY;
+    }
+
+    size_t remaining = frontier->leaf_count;
+    size_t expected_peak_count = 0;
+    while (remaining > 0)
+    {
+        if (expected_peak_count >= SM2_PKI_ISSUANCE_MAX_PEAKS)
+            return SM2_IC_ERR_VERIFY;
+
+        size_t height = pki_issuance_floor_log2_size(remaining);
+        if (height > UINT8_MAX
+            || frontier->peak_heights[expected_peak_count] != (uint8_t)height)
+        {
+            return SM2_IC_ERR_VERIFY;
+        }
+        remaining -= ((size_t)1U) << height;
+        expected_peak_count++;
+    }
+
+    return expected_peak_count == frontier->peak_count ? SM2_IC_SUCCESS
+                                                       : SM2_IC_ERR_VERIFY;
+}
+
+sm2_ic_error_t sm2_pki_issuance_frontier_append(
+    const sm2_pki_issuance_frontier_t *current,
+    const sm2_pki_issuance_commitment_t *new_commitments,
+    size_t new_commitment_count, sm2_pki_issuance_frontier_t *next,
+    uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN])
+{
+    if (!current || !next || !root_hash)
+        return SM2_IC_ERR_PARAM;
+    if (new_commitment_count > 0 && !new_commitments)
+        return SM2_IC_ERR_PARAM;
+
+    sm2_ic_error_t ret = pki_issuance_frontier_validate(current);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+
+    sm2_pki_issuance_frontier_t candidate = *current;
+    for (size_t i = 0; i < new_commitment_count; i++)
+    {
+        if (candidate.leaf_count == SIZE_MAX
+            || candidate.peak_count >= SM2_PKI_ISSUANCE_MAX_PEAKS)
+        {
+            memset(&candidate, 0, sizeof(candidate));
+            return SM2_IC_ERR_MEMORY;
+        }
+
+        uint8_t leaf_hash[SM2_REV_MERKLE_HASH_LEN];
+        ret = pki_issuance_hash_leaf(
+            new_commitments[i], candidate.leaf_count, leaf_hash);
+        if (ret != SM2_IC_SUCCESS)
+        {
+            memset(&candidate, 0, sizeof(candidate));
+            return ret;
+        }
+
+        memcpy(candidate.peak_hashes[candidate.peak_count], leaf_hash,
+            sizeof(leaf_hash));
+        candidate.peak_heights[candidate.peak_count] = 0;
+        candidate.peak_count++;
+        candidate.leaf_count++;
+
+        while (candidate.peak_count >= 2U)
+        {
+            size_t right = candidate.peak_count - 1U;
+            size_t left = candidate.peak_count - 2U;
+            if (candidate.peak_heights[left] != candidate.peak_heights[right])
+                break;
+            if (candidate.peak_heights[left] == UINT8_MAX)
+            {
+                memset(&candidate, 0, sizeof(candidate));
+                return SM2_IC_ERR_MEMORY;
+            }
+
+            uint8_t parent_hash[SM2_REV_MERKLE_HASH_LEN];
+            ret = pki_issuance_hash_parent(candidate.peak_hashes[left],
+                candidate.peak_hashes[right], parent_hash);
+            if (ret != SM2_IC_SUCCESS)
+            {
+                memset(&candidate, 0, sizeof(candidate));
+                return ret;
+            }
+            memcpy(
+                candidate.peak_hashes[left], parent_hash, sizeof(parent_hash));
+            candidate.peak_heights[left]++;
+            memset(candidate.peak_hashes[right], 0,
+                sizeof(candidate.peak_hashes[right]));
+            candidate.peak_heights[right] = 0;
+            candidate.peak_count--;
+        }
+    }
+
+    ret = pki_issuance_hash_root(candidate.leaf_count, candidate.peak_count,
+        candidate.peak_hashes, root_hash);
+    if (ret != SM2_IC_SUCCESS)
+    {
+        memset(&candidate, 0, sizeof(candidate));
+        return ret;
+    }
+
+    *next = candidate;
+    return SM2_IC_SUCCESS;
 }
 
 sm2_ic_error_t sm2_pki_issuance_tree_build(sm2_pki_issuance_tree_t **tree,

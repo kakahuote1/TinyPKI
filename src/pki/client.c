@@ -2661,46 +2661,7 @@ void sm2_pki_epoch_witness_state_cleanup(sm2_pki_epoch_witness_state_t *state)
 {
     if (!state)
         return;
-    free(state->commitments);
     memset(state, 0, sizeof(*state));
-}
-
-static sm2_pki_error_t pki_witness_build_candidate_commitments(
-    const sm2_pki_epoch_witness_state_t *state,
-    const sm2_pki_issuance_commitment_t *new_commitments,
-    size_t new_commitment_count, sm2_pki_issuance_commitment_t **candidate,
-    size_t *candidate_count)
-{
-    if (!state || !candidate || !candidate_count)
-        return SM2_PKI_ERR_PARAM;
-    if (new_commitment_count > 0 && !new_commitments)
-        return SM2_PKI_ERR_PARAM;
-    if (new_commitment_count > SIZE_MAX - state->commitment_count)
-        return SM2_PKI_ERR_MEMORY;
-
-    size_t total_count = state->commitment_count + new_commitment_count;
-    *candidate = NULL;
-    *candidate_count = total_count;
-    if (total_count == 0)
-        return SM2_PKI_SUCCESS;
-    if (total_count > SIZE_MAX / sizeof(**candidate))
-        return SM2_PKI_ERR_MEMORY;
-
-    sm2_pki_issuance_commitment_t *buf = malloc(total_count * sizeof(*buf));
-    if (!buf)
-        return SM2_PKI_ERR_MEMORY;
-    if (state->commitment_count > 0)
-    {
-        memcpy(buf, state->commitments, state->commitment_count * sizeof(*buf));
-    }
-    if (new_commitment_count > 0)
-    {
-        memcpy(buf + state->commitment_count, new_commitments,
-            new_commitment_count * sizeof(*buf));
-    }
-
-    *candidate = buf;
-    return SM2_PKI_SUCCESS;
 }
 
 static sm2_ic_error_t pki_witness_ca_verify_cb(void *user_ctx,
@@ -2799,53 +2760,53 @@ sm2_pki_error_t sm2_pki_epoch_witness_sign_append_only(
         }
     }
 
-    sm2_pki_issuance_commitment_t *candidate = NULL;
-    size_t candidate_count = 0;
-    sm2_pki_error_t ret = pki_witness_build_candidate_commitments(state,
-        new_commitments, new_commitment_count, &candidate, &candidate_count);
-    if (ret != SM2_PKI_SUCCESS)
-        return ret;
-    if (candidate_count != (size_t)root_record->issuance_root_version)
+    if (state->has_authority
+        && state->issuance_frontier.leaf_count
+            != (size_t)state->latest_issuance_root_version)
     {
-        free(candidate);
         return SM2_PKI_ERR_VERIFY;
     }
 
-    sm2_pki_issuance_tree_t *tree = NULL;
-    ic_ret = sm2_pki_issuance_tree_build(
-        &tree, candidate, candidate_count, root_record->issuance_root_version);
-    if (ic_ret != SM2_IC_SUCCESS)
+    if (state->has_authority)
     {
-        free(candidate);
-        return sm2_pki_error_from_ic(ic_ret);
+        sm2_pki_issuance_frontier_t current_frontier;
+        uint8_t current_root_hash[SM2_REV_MERKLE_HASH_LEN];
+        ic_ret = sm2_pki_issuance_frontier_append(&state->issuance_frontier,
+            NULL, 0, &current_frontier, current_root_hash);
+        if (ic_ret != SM2_IC_SUCCESS)
+            return sm2_pki_error_from_ic(ic_ret);
+        if (memcmp(current_root_hash, state->latest_issuance_root_hash,
+                sizeof(current_root_hash))
+            != 0)
+        {
+            return SM2_PKI_ERR_VERIFY;
+        }
     }
+
+    sm2_pki_issuance_frontier_t candidate_frontier;
     uint8_t root_hash[SM2_REV_MERKLE_HASH_LEN];
-    ic_ret = sm2_pki_issuance_tree_get_root_hash(tree, root_hash);
-    sm2_pki_issuance_tree_cleanup(&tree);
+    ic_ret = sm2_pki_issuance_frontier_append(&state->issuance_frontier,
+        new_commitments, new_commitment_count, &candidate_frontier, root_hash);
     if (ic_ret != SM2_IC_SUCCESS)
-    {
-        free(candidate);
         return sm2_pki_error_from_ic(ic_ret);
+
+    if (candidate_frontier.leaf_count
+        != (size_t)root_record->issuance_root_version)
+    {
+        return SM2_PKI_ERR_VERIFY;
     }
     if (memcmp(root_hash, root_record->issuance_root_hash, sizeof(root_hash))
         != 0)
     {
-        free(candidate);
         return SM2_PKI_ERR_VERIFY;
     }
 
-    ret = pki_epoch_witness_sign_raw(root_record, witness_id, witness_id_len,
-        witness_private_key, signature);
+    sm2_pki_error_t ret = pki_epoch_witness_sign_raw(root_record, witness_id,
+        witness_id_len, witness_private_key, signature);
     if (ret != SM2_PKI_SUCCESS)
-    {
-        free(candidate);
         return ret;
-    }
 
-    free(state->commitments);
-    state->commitments = candidate;
-    state->commitment_count = candidate_count;
-    state->commitment_capacity = candidate_count;
+    state->issuance_frontier = candidate_frontier;
     memcpy(state->authority_id, root_record->authority_id,
         root_record->authority_id_len);
     state->authority_id_len = root_record->authority_id_len;
