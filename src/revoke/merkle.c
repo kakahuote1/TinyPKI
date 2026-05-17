@@ -877,7 +877,7 @@ sm2_ic_error_t sm2_rev_tree_get_root_hash(
     return SM2_IC_SUCCESS;
 }
 
-sm2_ic_error_t merkle_tree_update_serial(
+static sm2_ic_error_t merkle_tree_update_serial_no_refresh(
     sm2_rev_tree_t *tree, uint64_t serial, bool revoked)
 {
     if (!tree || serial == 0)
@@ -911,6 +911,35 @@ sm2_ic_error_t merkle_tree_update_serial(
             return ret;
         if (removed && tree->leaf_count > 0)
             tree->leaf_count--;
+    }
+
+    return SM2_IC_SUCCESS;
+}
+
+sm2_ic_error_t merkle_tree_update_serial(
+    sm2_rev_tree_t *tree, uint64_t serial, bool revoked)
+{
+    sm2_ic_error_t ret
+        = merkle_tree_update_serial_no_refresh(tree, serial, revoked);
+    if (ret != SM2_IC_SUCCESS)
+        return ret;
+    return sparse_tree_refresh_root(tree);
+}
+
+sm2_ic_error_t merkle_tree_apply_delta_items(
+    sm2_rev_tree_t *tree, const sm2_rev_delta_item_t *items, size_t item_count)
+{
+    if (!tree)
+        return SM2_IC_ERR_PARAM;
+    if (item_count > 0 && !items)
+        return SM2_IC_ERR_PARAM;
+
+    for (size_t i = 0; i < item_count; i++)
+    {
+        sm2_ic_error_t ret = merkle_tree_update_serial_no_refresh(
+            tree, items[i].serial_number, items[i].revoked);
+        if (ret != SM2_IC_SUCCESS)
+            return ret;
     }
 
     return sparse_tree_refresh_root(tree);

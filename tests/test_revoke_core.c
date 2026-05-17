@@ -144,6 +144,7 @@ static void test_revocation_batch_update_baseline_metrics(void)
     TEST_ASSERT(stats.node_pool_block_alloc_count > 0,
         "Pool Block Allocations Recorded");
     TEST_ASSERT(stats.root_refresh_count > 0, "Root Refreshes Recorded");
+    TEST_ASSERT(stats.root_refresh_count <= 4, "Batch Root Refresh Coalesced");
     TEST_ASSERT(
         sm2_rev_local_count(ctx) == INITIAL_REVOKED, "Final Revoked Count");
 

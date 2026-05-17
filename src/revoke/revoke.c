@@ -483,21 +483,20 @@ sm2_ic_error_t sm2_rev_apply_delta(
                 sm2_rev_tree_cleanup(&scratch.rev_tree);
                 return ret;
             }
-            ret = merkle_tree_update_serial(
-                scratch.rev_tree, it->serial_number, true);
         }
         else
         {
             local_list_remove(&scratch, it->serial_number);
-            ret = merkle_tree_update_serial(
-                scratch.rev_tree, it->serial_number, false);
         }
-        if (ret != SM2_IC_SUCCESS)
-        {
-            rev_local_list_release(&scratch.revoked_serials);
-            sm2_rev_tree_cleanup(&scratch.rev_tree);
-            return ret;
-        }
+    }
+
+    ret = merkle_tree_apply_delta_items(
+        scratch.rev_tree, delta->items, delta->item_count);
+    if (ret != SM2_IC_SUCCESS)
+    {
+        rev_local_list_release(&scratch.revoked_serials);
+        sm2_rev_tree_cleanup(&scratch.rev_tree);
+        return ret;
     }
 
     scratch.rev_version = delta->new_version;

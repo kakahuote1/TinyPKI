@@ -92,6 +92,8 @@ extern "C"
 
     sm2_ic_error_t merkle_tree_update_serial(
         sm2_rev_tree_t *tree, uint64_t serial, bool revoked);
+    sm2_ic_error_t merkle_tree_apply_delta_items(sm2_rev_tree_t *tree,
+        const sm2_rev_delta_item_t *items, size_t item_count);
     void merkle_tree_set_root_version(sm2_rev_tree_t *tree, uint64_t version);
     sm2_ic_error_t merkle_tree_clone(
         const sm2_rev_tree_t *src, sm2_rev_tree_t **dst);
